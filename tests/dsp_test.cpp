@@ -1,12 +1,10 @@
-// dsp_test.cpp — BandPassCore 离线自测 v0.2 (零依赖, 只验证 DSP 核心)
+// dsp_test.cpp — BandPassCore 离线自测 (纯带通, 零依赖, 只验证 DSP 核心)
 // 验证:
 //   1) BP 模式峰值出现在中心频率
 //   2) 带宽(octave) 影响通带宽度
-//   3) HP/LP 截止整形生效
-//   4) pass 模式切换 (BP/HP/LP)
-//   5) link 模式 R 跟随 L
-//   6) mix 干湿混合
-//   7) 高 Q 稳定性
+//   3) link 模式 R 跟随 L
+//   4) mix 干湿混合
+//   5) 高 Q 稳定性
 // 构建:  c++ -std=c++17 -O2 -o dsp_test dsp_test.cpp
 #include "../plugins/BandPass/src/dsp/BandPassCore.h"
 #include <cstdio>
@@ -47,12 +45,8 @@ static double measureGain(BandPassCore& core, double freqHz, double seconds = 1.
 static BandPassCore::Params MakeParams()
 {
     BandPassCore::Params p;
-    p.freqL = 1000.0; p.bwL = 1.0;
-    p.hpL = 20.0; p.lpL = 20000.0;
-    p.passL = 0; p.gainL = 1.0f;
-    p.freqR = 1000.0; p.bwR = 1.0;
-    p.hpR = 20.0; p.lpR = 20000.0;
-    p.passR = 0; p.gainR = 1.0f;
+    p.freqL = 1000.0; p.bwL = 1.0; p.gainL = 1.0f;
+    p.freqR = 1000.0; p.bwR = 1.0; p.gainR = 1.0f;
     p.mix = 1.0f;
     return p;
 }
@@ -112,36 +106,7 @@ int main()
         printf("   -3dB BW: 0.2oct=%.1f Hz, 2oct=%.1f Hz\n", bwNarrow, bwWide);
     }
 
-    // ---- 3) HP/LP 截止整形 ----
-    {
-        BandPassCore core;
-        core.prepare(kFs, kBlock);
-        BandPassCore::Params p = MakeParams();
-        p.freqL = 2000.0; p.bwL = 2.0;
-        p.hpL = 800.0;  // 高通 800: 500Hz 应明显衰减
-        p.lpL = 20000.0;
-        core.setParams(p);
-        const double g2000 = measureGain(core, 2000.0);
-        const double g500  = measureGain(core, 500.0);
-        check("HP 800 rolls off 500Hz", g500 < g2000 * 0.35);
-        printf("   HP=800: gain@2k=%.3f gain@500=%.3f\n", g2000, g500);
-    }
-
-    // ---- 4) pass 模式切换 ----
-    {
-        BandPassCore core;
-        core.prepare(kFs, kBlock);
-        BandPassCore::Params p = MakeParams();
-        p.freqL = 1000.0; p.bwL = 1.0; p.hpL = 20.0; p.lpL = 20000.0;
-        p.passL = 2; // LP: 低频应通过
-        core.setParams(p);
-        const double g100 = measureGain(core, 100.0);
-        const double g2k  = measureGain(core, 2000.0);
-        check("pass=LP passes lows better than highs", g100 > g2k);
-        printf("   pass=LP: gain@100=%.3f gain@2k=%.3f\n", g100, g2k);
-    }
-
-    // ---- 5) link: R 跟随 L ----
+    // ---- 3) link: R 跟随 L ----
     {
         BandPassCore core;
         core.prepare(kFs, kBlock);
@@ -171,7 +136,7 @@ int main()
         printf("   linked RMS: L=%.4f R=%.4f\n", rL, rR);
     }
 
-    // ---- 6) mix 干湿 ----
+    // ---- 4) mix 干湿 ----
     {
         BandPassCore core;
         core.prepare(kFs, kBlock);
@@ -187,7 +152,7 @@ int main()
         printf("   mix: dry=%.3f wet=%.3f\n", gDry, gWet);
     }
 
-    // ---- 7) 稳定性: 白噪声高 Q ----
+    // ---- 5) 稳定性: 白噪声高 Q ----
     {
         BandPassCore core;
         core.prepare(kFs, kBlock);

@@ -12,16 +12,10 @@ enum EParams
   // LEFT 模块
   kFreqL = 0,
   kBwL,      // 带宽 octave
-  kHpL,      // 高通截止
-  kLpL,      // 低通截止
-  kPassL,    // 0=BP 1=HP 2=LP
   kGainL,
   // RIGHT 模块
   kFreqR,
   kBwR,
-  kHpR,
-  kLpR,
-  kPassR,
   kGainR,
   // 全局
   kLink,
@@ -33,10 +27,6 @@ enum EParams
   // 时间区 (预留)
   kTime1,
   kTime2,
-  // 声像
-  kPanLR,
-  kPanRL,
-  kPanFlip,
   kNumParams
 };
 
@@ -52,6 +42,7 @@ namespace iplug { namespace igraphics {
   class IVXYPadControl;
   class ITextControl;
   class IVButtonControl;
+  class FilterNodePad;
 } }
 
 class GRMBandPass final : public Plugin
@@ -74,8 +65,8 @@ private:
   ITextControl*   mBwLText   = nullptr;
   ITextControl*   mFreqRText = nullptr;
   ITextControl*   mBwRText   = nullptr;
-  IVButtonControl* mPassLBtn = nullptr;
-  IVButtonControl* mPassRBtn = nullptr;
+  FilterNodePad*  mPadL = nullptr;
+  FilterNodePad*  mPadR = nullptr;
 
   // 预设 / undo / redo
   std::array<ParamSnapshot, kNumPresets> mPresets;
@@ -84,6 +75,7 @@ private:
 
   void SyncParamsToCore();
   void UpdateParamDisplays();
+  void UpdatePads();
 
   ParamSnapshot Snapshot() const;
   void ApplySnapshot(const ParamSnapshot& s);
@@ -92,7 +84,11 @@ private:
   void Redo();
   void SaveToSlot(int idx);
   void LoadSlot(int idx);
-  void CyclePass(IVButtonControl* btn, int paramIdx);
-  static const char* PassName(int mode);
+
+  // 声像区: 数值拷贝/交换 (click 触发, 非开关)
+  void CopyLtoR();   // 把当前 L 的数值发送给 R
+  void CopyRtoL();   // 把当前 R 的数值发送给 L
+  void FlipLR();     // 一次性互换 L / R
+
   static void FormatFreq(char* buf, int n, double hz);
 };

@@ -5,6 +5,7 @@
 
 #include <cstring>
 #include <cstdio>
+#include <functional>
 
 // ---------------------------------------------------------------------------
 // GRM 深色扁平配色 (Valhalla 风格基础 + GRM 琥珀/冷灰)
@@ -39,23 +40,47 @@ static IVStyle MakeSectionTitleStyle()
 }
 
 // ---------------------------------------------------------------------------
+// 按钮专用深色配色: 深底 + 浅字, 避免 "浅底配浅字" 看不清
+//   kFG(常态填充) 用深色面板色, kPR(按下) 用琥珀, kHL(hover) 轻微提亮
+//   滑块/旋钮仍用 MakeGRMStyle (kFG=琥珀 作手柄/弧线), 与按钮区分
+// ---------------------------------------------------------------------------
+static const IColor COL_HOVER(255, 78, 78, 82);   // hover 轻微提亮
+
+static IVStyle MakeButtonStyle()
+{
+  IVColorSpec colors = { COL_PANEL, COL_PANEL, COL_ACCENT, COL_FRAME,
+                         COL_HOVER, COL_BG, COL_ACCENT, COL_ACCENT, COL_ACCENT };
+  const IText labelText(11, COL_TEXT, "Roboto-Regular", EAlign::Center, EVAlign::Middle);
+  const IText valueText(11, COL_TEXT, "Roboto-Regular", EAlign::Center, EVAlign::Middle);
+  return IVStyle(true, true, colors, labelText, valueText, true, true, false, false,
+                 0.f, 1.f, 0.f, 1.f, 0.f);
+}
+
+// 瞬时按钮: 点击执行动作后立即把值复位为 0, 规避 iPlug2
+// IButtonControlBase 在缺少动画时 "按下后永久停留在浅色态" 的行为
+static IVButtonControl* MakeMomentary(const IRECT& r,
+                                       std::function<void(IControl*)> fn,
+                                       const char* label, const IVStyle& st)
+{
+  return new IVButtonControl(r, [fn](IControl* p) {
+    fn(p);
+    p->SetValue(0.0);
+    p->SetDirty(false);
+  }, label, st);
+}
+
+// ---------------------------------------------------------------------------
 // 构造
 // ---------------------------------------------------------------------------
 GRMBandPass::GRMBandPass(const InstanceInfo& info)
 : Plugin(info, MakeConfig(kNumParams, 1))
 {
-  // ---- 参数注册 ----
+  // ---- 参数注册 (纯带通: 仅 freq / bw / gain) ----
   GetParam(kFreqL)->InitDouble("FreqL", 1000., 20., 20000., 0.01, "Hz", 0, "", IParam::ShapeExp());
   GetParam(kBwL)  ->InitDouble("BW L", 1., 0.05, 4., 0.01, "oct");
-  GetParam(kHpL)  ->InitDouble("HP L", 20., 20., 20000., 1., "Hz", 0, "", IParam::ShapeExp());
-  GetParam(kLpL)  ->InitDouble("LP L", 20000., 20., 20000., 1., "Hz", 0, "", IParam::ShapeExp());
-  GetParam(kPassL)->InitInt("Pass L", 0, 0, 2);
   GetParam(kGainL)->InitDouble("Gain L", 1., 0., 2., 0.01, "");
   GetParam(kFreqR)->InitDouble("FreqR", 1000., 20., 20000., 0.01, "Hz", 0, "", IParam::ShapeExp());
   GetParam(kBwR)  ->InitDouble("BW R", 1., 0.05, 4., 0.01, "oct");
-  GetParam(kHpR)  ->InitDouble("HP R", 20., 20., 20000., 1., "Hz", 0, "", IParam::ShapeExp());
-  GetParam(kLpR)  ->InitDouble("LP R", 20000., 20., 20000., 1., "Hz", 0, "", IParam::ShapeExp());
-  GetParam(kPassR)->InitInt("Pass R", 0, 0, 2);
   GetParam(kGainR)->InitDouble("Gain R", 1., 0., 2., 0.01, "");
   GetParam(kLink) ->InitBool("Link", false);
   GetParam(kMix)  ->InitDouble("Mix", 1., 0., 1., 0.01, "");
@@ -64,9 +89,6 @@ GRMBandPass::GRMBandPass(const InstanceInfo& info)
   GetParam(kAgRate)->InitDouble("Ag Rate", 1., 0.05, 20., 0.01, "Hz");
   GetParam(kTime1)->InitDouble("Time A", 0.5, 0., 5., 0.01, "s");
   GetParam(kTime2)->InitDouble("Time B", 1., 0., 5., 0.01, "s");
-  GetParam(kPanLR)->InitBool("L->R", false);
-  GetParam(kPanRL)->InitBool("R->L", false);
-  GetParam(kPanFlip)->InitBool("Flip", false);
 
   // ---- 16 预设槽位: 先填默认快照 ----
   for (auto& p : mPresets)
@@ -96,8 +118,7 @@ GRMBandPass::GRMBandPass(const InstanceInfo& info)
   {
     ParamSnapshot s = Snapshot();
     s[kFreqL] = 150.; s[kBwL] = 2.5; s[kFreqR] = 150.; s[kBwR] = 2.5; s[kLink] = 1.;
-    s[kHpL] = 60.; s[kHpR] = 60.; s[kLpL] = 400.; s[kLpR] = 400.;
-    mPresets[5] = s; // 低频啜
+    mPresets[5] = s; // 低频
   }
 
 #if IPLUG_EDITOR
@@ -113,8 +134,9 @@ GRMBandPass::GRMBandPass(const InstanceInfo& info)
     pGraphics->AttachPanelBackground(COL_BG);
     pGraphics->LoadFont("Roboto-Regular", ROBOTO_FN);
 
-    const IVStyle style = MakeGRMStyle();
-    const IVStyle sec   = MakeSectionTitleStyle();
+    const IVStyle style   = MakeGRMStyle();
+    const IVStyle sec     = MakeSectionTitleStyle();
+    const IVStyle btnStyle= MakeButtonStyle();
 
     // ================= 主控区: LEFT / RIGHT 双通道 =================
     // LEFT 模块
@@ -127,15 +149,9 @@ GRMBandPass::GRMBandPass(const InstanceInfo& info)
       "BW 1.00", IText(12, COL_ACCENT, "Roboto-Regular", EAlign::Far, EVAlign::Middle));
     pGraphics->AttachControl(mBwLText);
 
-    mPassLBtn = new IVButtonControl(IRECT(24, 44, 112, 68), [&](IControl* pCaller) {
-      PushUndo();
-      CyclePass(static_cast<IVButtonControl*>(pCaller), kPassL);
-    }, PassName(0), style);
-    pGraphics->AttachControl(mPassLBtn);
-
-    pGraphics->AttachControl(new FilterNodePad(IRECT(24, 76, 324, 374), { kFreqL, kBwL }, "LEFT", style));
-    pGraphics->AttachControl(new IVSliderControl(IRECT(24, 388, 166, 416), kHpL, "HP", style, false, EDirection::Horizontal));
-    pGraphics->AttachControl(new IVSliderControl(IRECT(182, 388, 324, 416), kLpL, "LP", style, false, EDirection::Horizontal));
+    // LEFT 滤波节点板 (纯带通: X=中心频率, Y=带宽). 移除原 pass 按钮与 HP/LP 滑块, 直接放大填充足区域
+    mPadL = new FilterNodePad(IRECT(24, 52, 324, 416), { kFreqL, kBwL }, "LEFT", style);
+    pGraphics->AttachControl(mPadL);
 
     // RIGHT 模块 (x 偏移 +348)
     mFreqRText = new ITextControl(IRECT(372, 12, 548, 34),
@@ -145,15 +161,9 @@ GRMBandPass::GRMBandPass(const InstanceInfo& info)
       "BW 1.00", IText(12, COL_ACCENT, "Roboto-Regular", EAlign::Far, EVAlign::Middle));
     pGraphics->AttachControl(mBwRText);
 
-    mPassRBtn = new IVButtonControl(IRECT(588, 44, 676, 68), [&](IControl* pCaller) {
-      PushUndo();
-      CyclePass(static_cast<IVButtonControl*>(pCaller), kPassR);
-    }, PassName(0), style);
-    pGraphics->AttachControl(mPassRBtn);
-
-    pGraphics->AttachControl(new FilterNodePad(IRECT(372, 76, 672, 374), { kFreqR, kBwR }, "RIGHT", style));
-    pGraphics->AttachControl(new IVSliderControl(IRECT(372, 388, 514, 416), kHpR, "HP", style, false, EDirection::Horizontal));
-    pGraphics->AttachControl(new IVSliderControl(IRECT(530, 388, 672, 416), kLpR, "LP", style, false, EDirection::Horizontal));
+    // RIGHT 滤波节点板 (同 LEFT)
+    mPadR = new FilterNodePad(IRECT(372, 52, 672, 416), { kFreqR, kBwR }, "RIGHT", style);
+    pGraphics->AttachControl(mPadR);
 
     // gain 纵向列 (最右侧)
     pGraphics->AttachControl(new IVSliderControl(IRECT(700, 76, 724, 222), kGainL, "GAIN L", style, false, EDirection::Vertical));
@@ -163,7 +173,6 @@ GRMBandPass::GRMBandPass(const InstanceInfo& info)
     pGraphics->AttachControl(new ITextControl(IRECT(748, 10, 908, 30), "PRESETS",
       IText(12, COL_TITLE, "Roboto-Regular", EAlign::Near, EVAlign::Middle)));
 
-    IVButtonControl* slotBtns[kNumPresets] = {};
     for (int r = 0; r < 8; ++r)
     {
       for (int c = 0; c < 2; ++c)
@@ -171,11 +180,9 @@ GRMBandPass::GRMBandPass(const InstanceInfo& info)
         const int idx = r * 2 + c;
         char label[8];
         snprintf(label, 8, "%d", idx + 1);
-        auto* btn = new IVButtonControl(
+        pGraphics->AttachControl(MakeMomentary(
           IRECT(748 + c * 64, 36 + r * 26, 806 + c * 64, 56 + r * 26),
-          [this, idx](IControl*) { LoadSlot(idx); }, label, style);
-        slotBtns[idx] = btn;
-        pGraphics->AttachControl(btn);
+          [this, idx](IControl*) { LoadSlot(idx); }, label, btnStyle));
       }
     }
 
@@ -188,35 +195,36 @@ GRMBandPass::GRMBandPass(const InstanceInfo& info)
     // Agitation 区
     pGraphics->AttachControl(new ITextControl(IRECT(748, 338, 908, 356), "AGITATION",
       IText(11, COL_TITLE, "Roboto-Regular", EAlign::Near, EVAlign::Middle)));
-    pGraphics->AttachControl(new IVSwitchControl(IRECT(748, 358, 804, 380), kAgOn, "ON", style));
+    pGraphics->AttachControl(new IVSwitchControl(IRECT(748, 358, 804, 380), kAgOn, "ON", btnStyle));
     pGraphics->AttachControl(new IVKnobControl(IRECT(812, 356, 890, 414), kAgAmount, "INTENSITY", style));
     pGraphics->AttachControl(new IVKnobControl(IRECT(898, 356, 976, 414), kAgRate, "DURATION", style));
 
     // 声像区
     pGraphics->AttachControl(new ITextControl(IRECT(748, 422, 908, 440), "PAN",
       IText(11, COL_TITLE, "Roboto-Regular", EAlign::Near, EVAlign::Middle)));
-    pGraphics->AttachControl(new IVSwitchControl(IRECT(748, 442, 804, 464), kPanLR, "L->R", style));
-    pGraphics->AttachControl(new IVSwitchControl(IRECT(812, 442, 868, 464), kPanRL, "R->L", style));
-    pGraphics->AttachControl(new IVSwitchControl(IRECT(876, 442, 932, 464), kLink, "LINK", style));
-    pGraphics->AttachControl(new IVSwitchControl(IRECT(940, 442, 996, 464), kPanFlip, "FLIP", style));
+    // L->R / R->L / FLIP 现在是 click 触发: 拷贝/交换 L,R 数值 (非开关)
+    pGraphics->AttachControl(MakeMomentary(IRECT(748, 442, 804, 464), [this](IControl*) { CopyLtoR(); }, "L->R", btnStyle));
+    pGraphics->AttachControl(MakeMomentary(IRECT(812, 442, 868, 464), [this](IControl*) { CopyRtoL(); }, "R->L", btnStyle));
+    pGraphics->AttachControl(new IVSwitchControl(IRECT(876, 442, 932, 464), kLink, "LINK", btnStyle)); // 仍是开关
+    pGraphics->AttachControl(MakeMomentary(IRECT(940, 442, 996, 464), [this](IControl*) { FlipLR(); }, "FLIP", btnStyle));
     pGraphics->AttachControl(new IVSliderControl(IRECT(748, 474, 996, 500), kMix, "MIX", style, false, EDirection::Horizontal));
 
     // undo / redo
-    pGraphics->AttachControl(new IVButtonControl(IRECT(748, 512, 822, 540), [this](IControl*) { Undo(); }, "UNDO", style));
-    pGraphics->AttachControl(new IVButtonControl(IRECT(830, 512, 904, 540), [this](IControl*) { Redo(); }, "REDO", style));
+    pGraphics->AttachControl(MakeMomentary(IRECT(748, 512, 822, 540), [this](IControl*) { Undo(); }, "UNDO", btnStyle));
+    pGraphics->AttachControl(MakeMomentary(IRECT(830, 512, 904, 540), [this](IControl*) { Redo(); }, "REDO", btnStyle));
 
     // ================= 底部条 =================
     for (int i = 0; i < kNumQuick; ++i)
     {
       char label[8];
       snprintf(label, 8, "Q%d", i + 1);
-      pGraphics->AttachControl(new IVButtonControl(
+      pGraphics->AttachControl(MakeMomentary(
         IRECT(24 + i * 78, 602, 90 + i * 78, 630),
-        [this, i](IControl*) { LoadSlot(i); }, label, style));
+        [this, i](IControl*) { LoadSlot(i); }, label, btnStyle));
     }
-    pGraphics->AttachControl(new IVButtonControl(IRECT(748, 602, 822, 630), [this](IControl*) { SaveToSlot(mCurrentPreset); }, "SAVE", style));
-    pGraphics->AttachControl(new IVButtonControl(IRECT(830, 602, 904, 630), [this](IControl*) { LoadSlot(mCurrentPreset); }, "LOAD", style));
-    pGraphics->AttachControl(new IVButtonControl(IRECT(912, 602, 986, 630), [](IControl*) {}, "MIDI", style));
+    pGraphics->AttachControl(MakeMomentary(IRECT(748, 602, 822, 630), [this](IControl*) { SaveToSlot(mCurrentPreset); }, "SAVE", btnStyle));
+    pGraphics->AttachControl(MakeMomentary(IRECT(830, 602, 904, 630), [this](IControl*) { LoadSlot(mCurrentPreset); }, "LOAD", btnStyle));
+    pGraphics->AttachControl(MakeMomentary(IRECT(912, 602, 986, 630), [](IControl*) {}, "MIDI", btnStyle));
 
     // 品牌标识
     pGraphics->AttachControl(new ITextControl(IRECT(960, 604, 1152, 640), "GRM BANDPASS",
@@ -269,24 +277,15 @@ void GRMBandPass::SyncParamsToCore()
   grm::BandPassCore::Params p;
   p.freqL  = GetParam(kFreqL)->Value();
   p.bwL    = GetParam(kBwL)->Value();
-  p.hpL    = GetParam(kHpL)->Value();
-  p.lpL    = GetParam(kLpL)->Value();
-  p.passL  = GetParam(kPassL)->Int();
   p.gainL  = static_cast<float>(GetParam(kGainL)->Value());
   p.freqR  = GetParam(kFreqR)->Value();
   p.bwR    = GetParam(kBwR)->Value();
-  p.hpR    = GetParam(kHpR)->Value();
-  p.lpR    = GetParam(kLpR)->Value();
-  p.passR  = GetParam(kPassR)->Int();
   p.gainR  = static_cast<float>(GetParam(kGainR)->Value());
   p.linked = GetParam(kLink)->Value() > 0.5;
   p.mix    = static_cast<float>(GetParam(kMix)->Value());
   p.agOn   = GetParam(kAgOn)->Value() > 0.5;
   p.agAmount = static_cast<float>(GetParam(kAgAmount)->Value());
   p.agRate = GetParam(kAgRate)->Value();
-  p.panLR  = GetParam(kPanLR)->Value() > 0.5;
-  p.panRL  = GetParam(kPanRL)->Value() > 0.5;
-  p.panFlip = GetParam(kPanFlip)->Value() > 0.5;
   mCore.setParams(p);
 }
 
@@ -313,8 +312,25 @@ void GRMBandPass::UpdateParamDisplays()
     snprintf(buf, 32, "%.2f", GetParam(kBwR)->Value());
     mBwRText->SetStrFmt(32, "BW %s", buf);
   }
-  if (mPassLBtn) mPassLBtn->SetLabelStr(PassName(GetParam(kPassL)->Int()));
-  if (mPassRBtn) mPassRBtn->SetLabelStr(PassName(GetParam(kPassR)->Int()));
+  UpdatePads();
+}
+
+// 把 freq/bw 参数同步到 XY 手柄位置: 通过 SetValueFromDelegate (只写控件内部值, 不回写参数)
+// 解决 "预设/同步/翻转等改值时 XY 轴手柄与显示不跟随" 的问题
+void GRMBandPass::UpdatePads()
+{
+  if (mPadL)
+  {
+    mPadL->SetValueFromDelegate(GetParam(kFreqL)->GetNormalized(), 0);
+    mPadL->SetValueFromDelegate(GetParam(kBwL)->GetNormalized(), 1);
+    mPadL->SetDirty(false);
+  }
+  if (mPadR)
+  {
+    mPadR->SetValueFromDelegate(GetParam(kFreqR)->GetNormalized(), 0);
+    mPadR->SetValueFromDelegate(GetParam(kBwR)->GetNormalized(), 1);
+    mPadR->SetDirty(false);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -378,22 +394,49 @@ void GRMBandPass::LoadSlot(int idx)
   ApplySnapshot(mPresets[idx]);
 }
 
-void GRMBandPass::CyclePass(IVButtonControl* btn, int paramIdx)
+// 声像区: 数值拷贝 / 交换 (click 触发)
+// 直接写参数值 + 同步 DSP + 刷新显示与 XY 宏控制; 不在 DSP 里做音频路由
+void GRMBandPass::CopyLtoR()
 {
-  int v = GetParam(paramIdx)->Int();
-  v = (v + 1) % 3;
-  GetParam(paramIdx)->Set(v);
-  if (btn) btn->SetLabelStr(PassName(v));
+  PushUndo();
+  GetParam(kFreqR)->Set(GetParam(kFreqL)->Value());
+  GetParam(kBwR)  ->Set(GetParam(kBwL)->Value());
+  GetParam(kGainR)->Set(GetParam(kGainL)->Value());
+  SyncParamsToCore();
+  UpdateParamDisplays();
+#if IPLUG_EDITOR
+  if (GetUI()) GetUI()->SetAllControlsDirty();
+#endif
 }
 
-const char* GRMBandPass::PassName(int mode)
+void GRMBandPass::CopyRtoL()
 {
-  switch (mode)
-  {
-    case 1: return "HP";
-    case 2: return "LP";
-    default: return "BP";
-  }
+  PushUndo();
+  GetParam(kFreqL)->Set(GetParam(kFreqR)->Value());
+  GetParam(kBwL)  ->Set(GetParam(kBwR)->Value());
+  GetParam(kGainL)->Set(GetParam(kGainR)->Value());
+  SyncParamsToCore();
+  UpdateParamDisplays();
+#if IPLUG_EDITOR
+  if (GetUI()) GetUI()->SetAllControlsDirty();
+#endif
+}
+
+void GRMBandPass::FlipLR()
+{
+  PushUndo();
+  const double fL = GetParam(kFreqL)->Value(), bL = GetParam(kBwL)->Value(), gL = GetParam(kGainL)->Value();
+  GetParam(kFreqL)->Set(GetParam(kFreqR)->Value());
+  GetParam(kBwL)  ->Set(GetParam(kBwR)->Value());
+  GetParam(kGainL)->Set(GetParam(kGainR)->Value());
+  GetParam(kFreqR)->Set(fL);
+  GetParam(kBwR)  ->Set(bL);
+  GetParam(kGainR)->Set(gL);
+  SyncParamsToCore();
+  UpdateParamDisplays();
+#if IPLUG_EDITOR
+  if (GetUI()) GetUI()->SetAllControlsDirty();
+#endif
 }
 
 void GRMBandPass::FormatFreq(char* buf, int n, double hz)
