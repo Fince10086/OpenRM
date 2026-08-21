@@ -59,6 +59,14 @@ public:
     SetTextEntryLength(20);
   }
 
+  // 去掉 widgetFrac 的垂直缩放余量: 描边框/绘图区上下撑满控件矩形
+  // (水平方向保留原缩放; 否则黑框上下与 pad 边缘之间会有空隙)
+  void OnResize() override
+  {
+    IVXYPadControl::OnResize();
+    mWidgetBounds = IRECT(mWidgetBounds.L, mRECT.T, mWidgetBounds.R, mRECT.B);
+  }
+
   void Draw(IGraphics& g) override
   {
     IVXYPadControl::Draw(g); // 背景 + 边框 + 网格 + 节点 (label 留空故不画)
