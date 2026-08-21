@@ -13,10 +13,6 @@
 #include <cmath>
 #include <algorithm>
 
-// 配色与字体规格统一见 Theme.h (黑白极简: 纯白底 + 纯黑边框/文字, #ccc 网格, hover #f0f0f0)
-
-// 旋钮/滑条/XY pad 主样式: kFG=白(手柄, 黑框描边), kX1=黑(滑轨/弧线填充), kSH=浅灰轨底
-// 注意: iPlug2 的 roundness 是比例 (乘以短边一半), 不是像素值
 static IVStyle MakeGRMStyle()
 {
   IVColorSpec colors = { COL_BG, COL_BG, COL_DIM, COL_BLACK,
@@ -27,7 +23,6 @@ static IVStyle MakeGRMStyle()
                  true, true, false, false, 0.2f, 1.5f, 0.f, 1.f, 0.f);
 }
 
-// 按钮: 常态白底黑字黑框, hover #f0f0f0, 按下黑白反转 (黑底)
 static IVStyle MakeButtonStyle()
 {
   IVColorSpec colors = { COL_BG, COL_BG, COL_BLACK, COL_BLACK,
@@ -38,8 +33,6 @@ static IVStyle MakeButtonStyle()
                  0.2f, 2.f, 0.f, 1.f, 0.f);
 }
 
-// 瞬时按钮: 点击执行动作后立即把值复位为 0, 规避 iPlug2
-// IButtonControlBase 在缺少动画时 "按下后永久停留在浅色态" 的行为
 static IVButtonControl* MakeMomentary(const IRECT& r,
                                        std::function<void(IControl*)> fn,
                                        const char* label, const IVStyle& st)
@@ -51,10 +44,6 @@ static IVButtonControl* MakeMomentary(const IRECT& r,
   }, label, st);
 }
 
-// ---------------------------------------------------------------------------
-// 预设 morph 条: 贯穿 Q1..Q8 的水平拖动条, 位置对应 8 个槽位刻度,
-// 在相邻槽位参数之间连续插值 (无参绑定, 纯 UI 驱动)
-// ---------------------------------------------------------------------------
 class PresetMorphSlider : public IVSliderControl
 {
 public:
@@ -67,7 +56,6 @@ public:
   {
     IVSliderControl::DrawTrack(g, filledArea);
 
-    // 8 个槽位刻度 (与下方 Q1..Q8 按钮对齐)
     const float x0 = mTrackBounds.L, w = mTrackBounds.W();
     for (int i = 0; i < kNumQuick; ++i)
     {
@@ -78,16 +66,6 @@ public:
   }
 };
 
-// ---------------------------------------------------------------------------
-// 极简滑块: 轨道浅灰、无黑描边; 已填充电平用黑; 圆形手柄白底黑描边.
-//   标题/数值自绘为统一 header, 随轨道方向旋转:
-//     横条 (rot=0)   → header 为轨道上方水平行 (标题左对齐, 数值右对齐)
-//     竖条 (rot=-90) → header 为轨道左侧竖排行 (文字自下而上)
-//   点击数值区域弹行内编辑 (iPlug2 自动 StringToValue 回写 + 通知宿主).
-// ⚠ iPlug2 绘制控件时裁剪到控件矩形 (IGraphics::DrawControl), 且鼠标派发
-//   依赖 IsHit (IGraphics::GetMouseControlIdx) → header 画在矩形内部,
-//   并覆写 IsHit 为整矩形命中 (否则数值点击到不了 OnMouseDown).
-// ---------------------------------------------------------------------------
 class GRMSlider : public IVSliderControl
 {
 public:
@@ -96,35 +74,31 @@ public:
   : IVSliderControl(bounds, paramIdx, label, style, false, dir)
   , mHeaderLabel(label ? label : "")
   {
-    // 标题/数值全部自绘 (关闭内置 label/value 显示)
+
     mStyle.showLabel = false;
     mStyle.showValue = false;
   }
 
   void OnResize() override
   {
-    // 故意不调 IVSliderControl::OnResize(): 基类把 mWidgetBounds 设为 mRECT
-    // (依赖 mStyle.widgetFrac=1.0) 后会与 header 区重叠. 这里手动设 widget 后
-    // 用基类同款公式 (IControls.cpp:885-888) 重算轨道.
+
     if (mDirection == EDirection::Horizontal)
     {
-      mWidgetBounds = mRECT.GetReducedFromTop(kHeaderH);           // 顶部留 header 行
+      mWidgetBounds = mRECT.GetReducedFromTop(kHeaderH);
       mTrackBounds  = mWidgetBounds.GetPadded(-mHandleSize)
                                    .GetMidVPadded(mTrackSize);
     }
     else
     {
-      mWidgetBounds = mRECT.GetReducedFromLeft(kHeaderW);          // 左侧留竖排 header
+      mWidgetBounds = mRECT.GetReducedFromLeft(kHeaderW);
       mTrackBounds  = mWidgetBounds.GetPadded(-mHandleSize)
                                    .GetMidHPadded(mTrackSize);
     }
-    SetTargetRECT(mRECT);     // 命中区 = 整控件 (含 header)
-    mValueBounds = IRECT();   // 不调 MakeRects → 清空, 基类 showValue 分支不触发
+    SetTargetRECT(mRECT);
+    mValueBounds = IRECT();
     SetDirty(false);
   }
 
-  // 命中区含 header: iPlug2 用 IsHit 派发鼠标 (IGraphics.cpp:1320),
-  // 否则点击数值区域到不了 OnMouseDown
   bool IsHit(float x, float y) const override
   {
     return mRECT.Contains(x, y);
@@ -132,25 +106,24 @@ public:
 
   void Draw(IGraphics& g) override
   {
-    IVSliderControl::Draw(g);   // 背景 + 轨道/手柄
+    IVSliderControl::Draw(g);
     DrawHeader(g, mDirection == EDirection::Vertical ? -90.f : 0.f);
   }
 
   void OnMouseDown(float x, float y, const IMouseMod& mod) override
   {
-    // 点击数值区域 → 行内编辑 (iPlug2 自动 StringToValue 回写 + 通知宿主)
+
     if (mod.L && !mod.R && !mod.A && ValueRect().Contains(x, y))
     {
       PromptUserInput(ValueRect());
       return;
     }
-    IVSliderControl::OnMouseDown(x, y, mod);   // 其余区域正常拖动
+    IVSliderControl::OnMouseDown(x, y, mod);
   }
 
   void DrawTrack(IGraphics& g, const IRECT& filledArea) override
   {
     const float cr = GetRoundedCornerRadius(mTrackBounds);
-    // 轨道底: 浅灰, 无黑描边; 已填充部分: 黑
     g.FillRoundRect(COL_TRACK, mTrackBounds, cr, &mBlend);
     if (filledArea.W() > 0.5f && filledArea.H() > 0.5f)
       g.FillRoundRect(COL_BLACK, filledArea, cr, &mBlend);
@@ -160,21 +133,19 @@ public:
   {
     const float cx = bounds.MW(), cy = bounds.MH();
     const float r  = bounds.W() * 0.5f;
-    // 圆形手柄: 白底 + 黑色描边 (与 pad 节点一致)
     g.FillCircle(COLOR_WHITE, cx, cy, r);
     g.DrawCircle(COL_BLACK, cx, cy, r - 0.75f, nullptr, 1.5f);
   }
 
 private:
-  static constexpr float kHeaderH = 14.f;   // header 行高/宽 (容纳字号 10 + 边距)
+  static constexpr float kHeaderH = 14.f;
   static constexpr float kHeaderW = 14.f;
 
-  // 数值可点击区域 (与 DrawHeader 数值绘制位置一致)
   IRECT ValueRect() const
   {
     if (mDirection == EDirection::Horizontal)
-      return IRECT(mRECT.L, mRECT.T, mRECT.R, mRECT.T + kHeaderH);            // 顶部整行
-    return IRECT(mRECT.L, mRECT.T, mRECT.L + kHeaderW + 4.f, mRECT.T + 28.f); // 竖条数值区 (左上)
+      return IRECT(mRECT.L, mRECT.T, mRECT.R, mRECT.T + kHeaderH);
+    return IRECT(mRECT.L, mRECT.T, mRECT.L + kHeaderW + 4.f, mRECT.T + 28.f);
   }
 
   void DrawHeader(IGraphics& g, float rot)
@@ -182,7 +153,7 @@ private:
     WDL_String ds;
     if (GetParam()) GetParam()->GetDisplay(ds, false);
 
-    if (rot == 0.f)  // 横条: 顶部行, 标题 Near / 数值 Far
+    if (rot == 0.f)
     {
       const IRECT hdr(mRECT.L, mRECT.T, mRECT.R, mRECT.T + kHeaderH);
       g.DrawText(IText(10, COL_BLACK, "Outfit-SemiBold", EAlign::Near, EVAlign::Middle),
@@ -190,7 +161,7 @@ private:
       g.DrawText(IText(10, COL_DIM, "Outfit", EAlign::Far, EVAlign::Middle),
                  ds.Get(), IRECT(hdr.MW(), hdr.T, hdr.R, hdr.B));
     }
-    else  // 竖条: 左侧竖排, 文字自下而上 (rot=-90: Near/Bottom 起点贴左下, Far/Top 终点贴右上)
+    else
     {
       const IRECT hdr(mRECT.L, mRECT.T, mRECT.L + kHeaderW, mRECT.B);
       g.DrawText(IText(10, COL_BLACK, "Outfit-SemiBold", EAlign::Near, EVAlign::Bottom, rot),
@@ -203,10 +174,6 @@ private:
   WDL_String mHeaderLabel;
 };
 
-// ---------------------------------------------------------------------------
-// 锁定开关: ON 时黑白反转 (黑底白字), 对应 nono 的 .btn.active 语言;
-// IVToggleControl 只反转填充不反转文字, ON 时会黑字配黑底, 故重写 DrawValue
-// ---------------------------------------------------------------------------
 class InvertToggleControl : public IVToggleControl
 {
 public:
@@ -214,16 +181,11 @@ public:
                       const IVStyle& style, const char* offText, const char* onText)
   : IVToggleControl(bounds, paramIdx, label, style, offText, onText)
   {
-    // 关闭 IVToggleControl 默认的 splash 扩散动画 (param 构造硬编码绑定
-    // SplashClickActionFunc). 注意: 不能改用 aF 构造 + SetParamIdx ——
-    // SetParamIdx 在构造期触发 SetDirty → GetParam, delegate 参数表未
-    // 就绪会空指针崩溃 (已实测 SIGSEGV). SetActionFunction 只是赋值, 安全.
     SetActionFunction(EmptyClickActionFunc);
   }
 
   void DrawValue(IGraphics& g, bool) override
   {
-    // 文本画在按钮本体中央 (showLabel/showValue 关闭后 widget 即整个矩形)
     const bool on = GetValue() > 0.5;
     IText t = mStyle.valueText;
     t.mFGColor = on ? COLOR_WHITE : COL_BLACK;
@@ -231,13 +193,9 @@ public:
   }
 };
 
-// ---------------------------------------------------------------------------
-// 构造
-// ---------------------------------------------------------------------------
 GRMBandPass::GRMBandPass(const InstanceInfo& info)
 : Plugin(info, MakeConfig(kNumParams, 1))
 {
-  // ---- 参数注册 (纯带通: 仅 freq / bw / gain) ----
   GetParam(kFreqL)->InitDouble("FreqL", 1000., 20., 20000., 0.01, "Hz", 0, "", IParam::ShapeExp());
   GetParam(kBwL)  ->InitDouble("BW L", 1., 0.05, 4., 0.01, "oct");
   GetParam(kGainL)->InitDouble("Gain L", 1., 0., 2., 0.01, "");
@@ -250,41 +208,40 @@ GRMBandPass::GRMBandPass(const InstanceInfo& info)
   GetParam(kAgAmount)->InitDouble("Ag Amount", 0.1, 0., 1., 0.01, "");
   GetParam(kAgRate)->InitDouble("Ag Rate", 1., 0.05, 20., 0.01, "Hz");
 
-  // ---- 24 预设槽位: 先填默认快照 (纯数字, 无名字) ----
   for (int i = 0; i < kNumPresets; ++i)
   {
     mPresets[i] = Snapshot();
-    mSlotNumber[i] = i;   // 初始: 位置 i 显示编号 i+1
+    mSlotNumber[i] = i;
   }
 
-  mDefaultSnapshot = Snapshot();   // 出厂默认 (右键"恢复默认"用)
+  mDefaultSnapshot = Snapshot();
   mStableSnapshot  = Snapshot();
 
   {
     ParamSnapshot s = Snapshot();
     s[kFreqL] = 500.;  s[kBwL] = 0.2;  s[kFreqR] = 500.; s[kBwR] = 0.2; s[kLink] = 1.;
-    mPresets[1] = s; // 窄带 500
+    mPresets[1] = s;
   }
   {
     ParamSnapshot s = Snapshot();
     s[kFreqL] = 2000.; s[kBwL] = 3.0;  s[kFreqR] = 2000.; s[kBwR] = 3.0; s[kLink] = 1.;
-    mPresets[2] = s; // 宽带 2k
+    mPresets[2] = s;
   }
   {
     ParamSnapshot s = Snapshot();
     s[kFreqL] = 400.; s[kBwL] = 0.3; s[kFreqR] = 4000.; s[kBwR] = 1.5;
-    mPresets[3] = s; // 分离 L/R
+    mPresets[3] = s;
   }
   {
     ParamSnapshot s = Snapshot();
     s[kFreqL] = 3000.; s[kBwL] = 0.5; s[kFreqR] = 3000.; s[kBwR] = 0.5; s[kLink] = 1.;
     s[kAgOn] = 1.; s[kAgAmount] = 0.3; s[kAgRate] = 4.;
-    mPresets[4] = s; // 抖动
+    mPresets[4] = s;
   }
   {
     ParamSnapshot s = Snapshot();
     s[kFreqL] = 150.; s[kBwL] = 2.5; s[kFreqR] = 150.; s[kBwR] = 2.5; s[kLink] = 1.;
-    mPresets[5] = s; // 低频
+    mPresets[5] = s;
   }
 
 #if IPLUG_EDITOR
@@ -304,24 +261,17 @@ GRMBandPass::GRMBandPass(const InstanceInfo& info)
 
     const IVStyle style   = MakeGRMStyle();
     const IVStyle btnStyle= MakeButtonStyle();
-    // 开关用: 关闭标签条预留, 让可点区域占满整个按钮矩形
     IVStyle toggleStyle = btnStyle;
     toggleStyle.showLabel = false;
     toggleStyle.showValue = false;
 
-    // ================= 右面板统一布局常量 =================
-    // 行距统一 6px, 区块间 12px; 所有坐标由常量推导, 不再散落魔法数字
-    constexpr float kCol1X     = 740.f;   // 列1 左缘
-    constexpr float kCol2X     = 804.f;   // 列2 左缘 (56 + 8 gap)
-    constexpr float kBtnW      = 56.f;    // 按钮/开关/槽 宽
-    constexpr float kBtnH      = 22.f;    // 按钮/开关/槽 高
-    constexpr float kSlotPitch = 24.f;    // 右侧槽行距 (h22 + 2 gap)
-    constexpr float kSliderH   = 34.f;    // 滑块行高 (header 14 + 轨道区 20)
+    constexpr float kCol1X     = 740.f;
+    constexpr float kCol2X     = 804.f;
+    constexpr float kBtnW      = 56.f;
+    constexpr float kBtnH      = 22.f;
+    constexpr float kSlotPitch = 24.f;
+    constexpr float kSliderH   = 34.f;
 
-    // ================= 主控区: LEFT / RIGHT 双通道 (上下堆叠) =================
-    // 栅格: 页边距 20, 列间距 24; 左列 pad x20..668, gain 列 x692..716, 右面板 x740..988
-    // pad 内四角可编辑 (CENTER/BANDWIDTH/LOWCUT/HIGHCUT) + 网格下方双点范围滑块;
-    // 交互换算经 hooks 交回插件层, 底层仍由 kFreq + kBw 两个自由度驱动 (low/high 为派生视图)
     auto padHooks = [&](int kF, int kB) -> FilterNodePad::Hooks {
       return FilterNodePad::Hooks{
         [this] { MaybePushGestureUndo(); },
@@ -330,25 +280,18 @@ GRMBandPass::GRMBandPass(const InstanceInfo& info)
       };
     };
 
-    // LEFT 滤波节点板 (纯带通: X=中心频率, Y=带宽), 横长纵短
     mPadL = new FilterNodePad(IRECT(20, 38, 668, 270), { kFreqL, kBwL }, "LEFT", style, padHooks(kFreqL, kBwL));
     pGraphics->AttachControl(mPadL);
 
-    // RIGHT 模块
     mPadR = new FilterNodePad(IRECT(20, 302, 668, 534), { kFreqR, kBwR }, "RIGHT", style, padHooks(kFreqR, kBwR));
     pGraphics->AttachControl(mPadR);
 
-    // gain 纵向列 (紧贴 pad 右侧; 上下边与 pad 对齐; 竖条 header 在轨道左侧竖排, 数值可点击编辑)
     pGraphics->AttachControl(new GRMSlider(IRECT(672, 38, 730, 270), kGainL, "GAIN L", style, EDirection::Vertical));
     pGraphics->AttachControl(new GRMSlider(IRECT(672, 302, 730, 534), kGainR, "GAIN R", style, EDirection::Vertical));
 
-    // ================= 右侧控制面板 =================
     pGraphics->AttachControl(new ITextControl(IRECT(kCol1X, 14, 900, 34), "PRESETS",
       IText(11, COL_BLACK, "Outfit-Bold", EAlign::Near, EVAlign::Middle)));
 
-    // 预设槽交互工厂 (底部 1..8 固定 + 右侧 9..24 共用):
-    // 单击加载 · 拖拽交换(编号+内容整体对调) · ⌘+点击保存 · ⌥+点击恢复默认 · 右键菜单 · 悬停提示
-    // 闭包捕获"按钮位置", 编号经 mSlotNumber 查表 (交换后按钮仍绑定原位置)
     auto makeSlotHooks = [this](int pos) -> PresetSlotControl::Hooks
     {
       return PresetSlotControl::Hooks{
@@ -366,12 +309,11 @@ GRMBandPass::GRMBandPass(const InstanceInfo& info)
       };
     };
 
-    // 右侧预设库: 槽 9..24 (2 列 x 8 行)
     for (int r = 0; r < 8; ++r)
     {
       for (int c = 0; c < 2; ++c)
       {
-        const int pos = kNumBottom + r * 2 + c;   // 按钮位置 8..23 (初始编号 9..24)
+        const int pos = kNumBottom + r * 2 + c;
         char label[8];
         snprintf(label, 8, "%d", mSlotNumber[pos] + 1);
         PresetSlotControl* btn = new PresetSlotControl(
@@ -383,27 +325,21 @@ GRMBandPass::GRMBandPass(const InstanceInfo& info)
       }
     }
 
-    // Agitation 区 (开关 + 两个滑块, 滑块 header 在轨道上方)
     pGraphics->AttachControl(new ITextControl(IRECT(kCol1X, 242, 900, 262), "AGITATION",
       IText(11, COL_BLACK, "Outfit-Bold", EAlign::Near, EVAlign::Middle)));
     pGraphics->AttachControl(new InvertToggleControl(IRECT(kCol1X, 268, kCol1X + kBtnW, 290), kAgOn, " ", toggleStyle, "OFF", "ON"));
     pGraphics->AttachControl(new GRMSlider(IRECT(kCol1X, 296, 988, 330), kAgAmount, "INTENSITY", style, EDirection::Horizontal));
     pGraphics->AttachControl(new GRMSlider(IRECT(kCol1X, 336, 988, 370), kAgRate, "RATE", style, EDirection::Horizontal));
 
-    // 声像区 (无标题): L->R / R->L / LINK / FLIP 2x2 排列 (click 触发, 非开关)
     pGraphics->AttachControl(MakeMomentary(IRECT(kCol1X, 376, kCol1X + kBtnW, 398), [this](IControl*) { CopyLtoR(); }, "L->R", btnStyle));
     pGraphics->AttachControl(MakeMomentary(IRECT(kCol2X, 376, kCol2X + kBtnW, 398), [this](IControl*) { CopyRtoL(); }, "R->L", btnStyle));
-    pGraphics->AttachControl(new InvertToggleControl(IRECT(kCol1X, 404, kCol1X + kBtnW, 426), kLink, " ", toggleStyle, "LINK", "LINK")); // 黑白反转表示状态
+    pGraphics->AttachControl(new InvertToggleControl(IRECT(kCol1X, 404, kCol1X + kBtnW, 426), kLink, " ", toggleStyle, "LINK", "LINK"));
     pGraphics->AttachControl(MakeMomentary(IRECT(kCol2X, 404, kCol2X + kBtnW, 426), [this](IControl*) { FlipLR(); }, "FLIP", btnStyle));
     pGraphics->AttachControl(new GRMSlider(IRECT(kCol1X, 432, 988, 466), kMix, "MIX", style, EDirection::Horizontal));
 
-    // undo / redo (统一按钮尺寸 56x22)
     pGraphics->AttachControl(MakeMomentary(IRECT(kCol1X, 472, kCol1X + kBtnW, 494), [this](IControl*) { Undo(); }, "UNDO", btnStyle));
     pGraphics->AttachControl(MakeMomentary(IRECT(kCol2X, 472, kCol2X + kBtnW, 494), [this](IControl*) { Redo(); }, "REDO", btnStyle));
 
-    // ================= 底部条 (固定槽 1..8 + morph 条) =================
-    // 底部固定显示 8 个按钮, 初始编号 1..8; 拖拽交换后按钮位置不变,
-    // 编号与内容整体互换 (mSlotNumber 映射)
     for (int i = 0; i < kNumBottom; ++i)
     {
       char label[8];
@@ -414,26 +350,23 @@ GRMBandPass::GRMBandPass(const InstanceInfo& info)
       mSlotButtons[i] = btn;
       pGraphics->AttachControl(btn);
     }
-    // 预设 morph 条: 在槽 1..8 相邻参数间平滑插值; 控件矩形两端内缩 handleSize(8px),
-    // 使轨道/刻度/手柄正好落在底部按钮中心线上 (57 + i*82)
+
     mMorphSlider = new PresetMorphSlider(IRECT(49, 572, 639, 592),
       [this](IControl* pCtrl) {
-        MaybePushGestureUndo();          // 新手势起点记录 morph 前状态
-        mMorphPos = pCtrl->GetValue(0) * (kNumQuick - 1.0);   // 记录位置供 JSON 保存
+        MaybePushGestureUndo();
+        mMorphPos = pCtrl->GetValue(0) * (kNumQuick - 1.0);
         OnMorphDrag(pCtrl->GetValue(0));
       }, btnStyle);
     pGraphics->AttachControl(mMorphSlider);
     pGraphics->AttachControl(MakeMomentary(IRECT(740, 546, 796, 568), [this](IControl*) { SaveFile(); }, "SAVE", btnStyle));
     pGraphics->AttachControl(MakeMomentary(IRECT(804, 546, 860, 568), [this](IControl*) { LoadFile(); }, "LOAD", btnStyle));
 
-    // 品牌标识 + 版本号 (右下角, 矩形避开 SAVE/LOAD 的命中区域)
     pGraphics->AttachControl(new ITextControl(IRECT(kCol1X, 500, 988, 524), "GRM BANDPASS",
       IText(16, COL_BLACK, "Outfit-Bold", EAlign::Far, EVAlign::Middle)));
     pGraphics->AttachControl(new ITextControl(IRECT(868, 528, 988, 544), "v" PLUG_VERSION_STR,
       IText(9, COL_FAINT, "Outfit", EAlign::Far, EVAlign::Middle)));
 
-    // 初始状态
-    pGraphics->EnableTooltips(true);   // 预设槽悬停提示 (系统 tooltip)
+    pGraphics->EnableTooltips(true);
     UpdatePads();
   };
 #endif
@@ -442,14 +375,12 @@ GRMBandPass::GRMBandPass(const InstanceInfo& info)
 #if IPLUG_DSP
 void GRMBandPass::ProcessBlock(sample** inputs, sample** outputs, int nFrames)
 {
-  // 音频线程: 取走编辑器线程发布的最新参数 (写入中则沿用上一块)
   grm::BandPassCore::Params p;
   if (mParamMailbox.consume(p))
     mCore.setParams(p);
 
   mCore.updateSmoothing(nFrames);
 
-  // 防护: 只有在输入输出都连了至少 2 声道时才走立体声路径, 否则按单声道处理并复制
   const int nOuts = NOutChansConnected();
   const int nIns = NInChansConnected();
 
@@ -469,7 +400,6 @@ void GRMBandPass::ProcessBlock(sample** inputs, sample** outputs, int nFrames)
 
 void GRMBandPass::OnReset()
 {
-  // 先同步参数再 prepare: 让平滑状态快照取到真实参数, 避免载入后从默认值滑音
   mCore.setParams(CollectParams());
   mCore.prepare(GetSampleRate(), GetBlockSize());
 }
@@ -478,7 +408,6 @@ void GRMBandPass::OnParamChange(int paramIdx, EParamSource source, int sampleOff
 {
   if (source == EParamSource::kHost)
   {
-    // 宿主自动化在音频线程回调: 直接写核心, 与 ProcessBlock 天然串行, 不经信箱
     mCore.setParams(CollectParams());
   }
   else
@@ -489,20 +418,16 @@ void GRMBandPass::OnParamChange(int paramIdx, EParamSource source, int sampleOff
 
 void GRMBandPass::OnParamChangeUI(int paramIdx, EParamSource source)
 {
-  // 兜底发布: 部分格式 (如 APP) 的 UI 拖动不经宿主回合到 OnParamChange
   PublishParamsToCore();
   if (source == EParamSource::kUI)
   {
     MaybePushGestureUndo();
-    MirrorLinkedParams(paramIdx);  // LINK 跟随仅响应真实 UI 手势
+    MirrorLinkedParams(paramIdx);
   }
   UpdatePads();
 }
 #endif
 
-// ---------------------------------------------------------------------------
-// 参数同步与显示
-// ---------------------------------------------------------------------------
 grm::BandPassCore::Params GRMBandPass::CollectParams() const
 {
   grm::BandPassCore::Params p;
@@ -537,7 +462,6 @@ void GRMBandPass::RefreshAfterEdit()
 #if IPLUG_EDITOR
   if (GetUI())
   {
-    // 让所有绑定参数的控件 (滑条/旋钮/开关/XY pad) 从参数回读最新值
     SendCurrentParamValuesFromDelegate();
     GetUI()->SetAllControlsDirty();
   }
@@ -546,11 +470,6 @@ void GRMBandPass::RefreshAfterEdit()
   MarkStateStable();
 }
 
-// ---------------------------------------------------------------------------
-// pad 四角 / 范围滑块换算: 保持底层 kFreq + kBw 两个自由度, low/high 为派生视图
-//   low  = center * 2^(-bw/2),  high = center * 2^(+bw/2)
-//   center = sqrt(low*high),    bw = log2(high/low)
-// ---------------------------------------------------------------------------
 void GRMBandPass::EditCorner(int kFreq, int kBw, int cornerId, double value)
 {
   PushUndo();
@@ -593,8 +512,6 @@ void GRMBandPass::ClampAndSet(int kFreq, int kBw, double centerHz, double bwOct)
   RefreshAfterEdit();
 }
 
-// 把 freq/bw 参数同步到 XY 手柄位置: 通过 SetValueFromDelegate (只写控件内部值, 不回写参数)
-// 解决 "预设/同步/翻转等改值时 XY 轴手柄与显示不跟随" 的问题
 void GRMBandPass::UpdatePads()
 {
   if (mPadL)
@@ -611,9 +528,6 @@ void GRMBandPass::UpdatePads()
   }
 }
 
-// ---------------------------------------------------------------------------
-// 预设 / undo / redo
-// ---------------------------------------------------------------------------
 ParamSnapshot GRMBandPass::Snapshot() const
 {
   ParamSnapshot s;
@@ -636,15 +550,12 @@ void GRMBandPass::PushUndo()
 
 void GRMBandPass::PushUndoSnapshot(const ParamSnapshot& s)
 {
-  if (!mUndoStack.empty() && mUndoStack.back() == s) return;  // 与栈顶相同则不入栈
+  if (!mUndoStack.empty() && mUndoStack.back() == s) return;
   mUndoStack.push_back(s);
   if (mUndoStack.size() > 100) mUndoStack.pop_front();
   mRedoStack.clear();
 }
 
-// iPlug2 无手势开始/结束回调: 以 kUI 参数事件的到达间隔判断,
-// 超过 kGestureGapSec 视为一次新手势, 入栈"手势前"的稳定快照;
-// 手势结束后由 OnIdle 把最终状态固化为新的稳定快照
 static constexpr double kGestureGapSec = 0.4;
 
 void GRMBandPass::MaybePushGestureUndo()
@@ -709,17 +620,14 @@ void GRMBandPass::LoadSlot(int idx)
 void GRMBandPass::RestoreDefault(int idx)
 {
   if (idx < 0 || idx >= kNumPresets) return;
-  mPresets[idx] = mDefaultSnapshot;   // 参数恢复出厂
+  mPresets[idx] = mDefaultSnapshot;
   if (idx == mCurrentPreset)
   {
-    // 恢复的是当前选中槽: 立即应用便于试听 (可撤销)
     PushUndo();
     ApplySnapshot(mDefaultSnapshot);
   }
 }
 
-// 拖拽交换: 两个按钮位置的编号绑定互换 = 编号与内容整体对调
-// (按钮位置不变, 但显示的编号和加载的内容都换成对方的)
 void GRMBandPass::SwapSlots(int posA, int posB)
 {
   if (posA == posB) return;
@@ -728,7 +636,6 @@ void GRMBandPass::SwapSlots(int posA, int posB)
   RefreshSlotLabels();
 }
 
-// 刷新全部按钮的编号标签 (编号随交换/LOAD 变化)
 void GRMBandPass::RefreshSlotLabels()
 {
   for (int i = 0; i < kNumPresets; ++i)
@@ -740,22 +647,17 @@ void GRMBandPass::RefreshSlotLabels()
   }
 }
 
-// ---------------------------------------------------------------------------
-// 预设文件 (JSON) / 拖拽
-// ---------------------------------------------------------------------------
-
 void GRMBandPass::SaveFile()
 {
   if (!GetUI()) return;
   mDialogFileName.Set("GRMBandPass Presets");
-  mDialogPath.Set("");   // 默认目录: 最近一次使用的目录
+  mDialogPath.Set("");
   GetUI()->PromptForFile(mDialogFileName, mDialogPath, EFileAction::Save, "json",
     [this](const WDL_String& fileName, const WDL_String& path) {
-      if (fileName.GetLength() == 0) return;   // 用户取消
-      // 注意: macOS 回调里 fileName 是完整路径, path 只是目录
+      if (fileName.GetLength() == 0) return;
       std::string full = fileName.Get();
       if (full.size() < 5 || full.compare(full.size() - 5, 5, ".json") != 0)
-        full += ".json";                       // NSSavePanel 不自动补扩展名
+        full += ".json";
       std::string err;
       WritePresetFileTo(full, err);
       if (!err.empty() && GetUI())
@@ -769,7 +671,7 @@ void GRMBandPass::LoadFile()
   mDialogFileName.Set("");
   GetUI()->PromptForFile(mDialogFileName, mDialogPath, EFileAction::Open, "json",
     [this](const WDL_String& fileName, const WDL_String& path) {
-      if (fileName.GetLength() == 0) return;   // 用户取消
+      if (fileName.GetLength() == 0) return;
       std::string err;
       ReadPresetFileFrom(fileName.Get(), err);
       if (!err.empty() && GetUI())
@@ -799,13 +701,12 @@ void GRMBandPass::ReadPresetFileFrom(const std::string& path, std::string& err)
   PresetFileData data;
   if (!ReadPresetFile(path, data, err)) return;
 
-  // 字段校验
   if ((int) data.presets.size() != kNumPresets) { err = "Preset count mismatch (expected 24)"; return; }
   for (const auto& e : data.presets)
     if ((int) e.size() != kNumParams)           { err = "Preset parameter count mismatch (expected 11)"; return; }
   if ((int) data.currentValues.size() != kNumParams) { err = "Current values count mismatch (expected 11)"; return; }
 
-  PushUndo();   // LOAD 对当前参数的改变可撤销 (库数据变化不撤销)
+  PushUndo();
 
   for (int i = 0; i < kNumPresets; ++i)
     std::copy(data.presets[i].begin(), data.presets[i].end(), mPresets[i].begin());
@@ -813,9 +714,8 @@ void GRMBandPass::ReadPresetFileFrom(const std::string& path, std::string& err)
 
   ParamSnapshot cur {};
   std::copy(data.currentValues.begin(), data.currentValues.end(), cur.begin());
-  ApplySnapshot(cur);   // 恢复当前参数 (不被 morph 位置覆盖)
+  ApplySnapshot(cur);
 
-  // morph 条位置只恢复 UI 显示, 不重新触发插值 (参数以 currentValues 为准)
   mMorphPos = std::clamp(data.morphPos, 0.0, (double) (kNumQuick - 1));
   if (mMorphSlider)
   {
@@ -823,7 +723,6 @@ void GRMBandPass::ReadPresetFileFrom(const std::string& path, std::string& err)
     mMorphSlider->SetDirty(true);
   }
 
-  // 按钮排列不随文件保存: LOAD 后重置为默认 (底部 1..8, 右侧 9..24)
   for (int i = 0; i < kNumPresets; ++i)
     mSlotNumber[i] = i;
   RefreshSlotLabels();
@@ -831,14 +730,12 @@ void GRMBandPass::ReadPresetFileFrom(const std::string& path, std::string& err)
   err.clear();
 }
 
-// 拖拽: 源槽开始拖拽
 void GRMBandPass::OnDragBegin(int src)
 {
   mDragSourceSlot = src;
   mDragTargetSlot = -1;
 }
 
-// 命中测试: 返回 (x,y) 所在的槽按钮位置, 未命中返回 -1
 int GRMBandPass::HitTestSlot(float x, float y)
 {
   for (int i = 0; i < kNumPresets; ++i)
@@ -847,12 +744,11 @@ int GRMBandPass::HitTestSlot(float x, float y)
   return -1;
 }
 
-// 拖拽移动: 实时更新目标槽高亮
 void GRMBandPass::OnDragMove(float x, float y)
 {
   if (mDragSourceSlot < 0) return;
   int target = HitTestSlot(x, y);
-  if (target == mDragSourceSlot) target = -1;   // 源槽本身不算目标
+  if (target == mDragSourceSlot) target = -1;
   if (target == mDragTargetSlot) return;
 
   if (mDragTargetSlot >= 0 && mSlotButtons[mDragTargetSlot])
@@ -862,7 +758,6 @@ void GRMBandPass::OnDragMove(float x, float y)
     mSlotButtons[mDragTargetSlot]->SetDragTarget(true);
 }
 
-// 松手: 判定落点并交换
 void GRMBandPass::OnDragDrop(int src, float x, float y)
 {
   if (mDragTargetSlot >= 0 && mSlotButtons[mDragTargetSlot])
@@ -875,8 +770,6 @@ void GRMBandPass::OnDragDrop(int src, float x, float y)
     SwapSlots(src, target);
 }
 
-// 声像区: 数值拷贝 / 交换 (click 触发)
-// 经 SetParamFromEditor 写值: 同步 DSP 信箱 + 通知宿主; 不在 DSP 里做音频路由
 void GRMBandPass::CopyLtoR()
 {
   PushUndo();
@@ -908,10 +801,6 @@ void GRMBandPass::FlipLR()
   RefreshAfterEdit();
 }
 
-// ---------------------------------------------------------------------------
-// LINK 跟随: 开启 LINK 后拖动一个通道的 freq/bw/gain, 另一通道参数实时同步,
-// 使对侧 pad/滑条显示与 DSP 一致地跟随移动
-// ---------------------------------------------------------------------------
 void GRMBandPass::MirrorLinkedParams(int paramIdx)
 {
   if (GetParam(kLink)->Value() < 0.5) return;
@@ -928,21 +817,15 @@ void GRMBandPass::MirrorLinkedParams(int paramIdx)
     default: return;
   }
 
-  // 值已一致则不写, 防止 L<->R 往返
   if (std::fabs(GetParam(mirror)->Value() - GetParam(paramIdx)->Value()) < 1e-9) return;
 
   SetParamFromEditor(mirror, GetParam(paramIdx)->Value());
 #if IPLUG_EDITOR
-  // 把镜像值推给绑定该参数的控件 (对侧 pad / GAIN 滑条), 让显示立即跟随
   if (GetUI())
     SendParameterValueFromDelegate(mirror, GetParam(mirror)->GetNormalized(), true);
 #endif
 }
 
-// ---------------------------------------------------------------------------
-// 预设 morph 条: 在 Q1..Q8 相邻槽位之间对全部参数做线性插值
-// (freq 等指数形参数在归一化域插值, 保证听感对数平滑)
-// ---------------------------------------------------------------------------
 ParamSnapshot GRMBandPass::InterpolatePresets(double pos)
 {
   const int i0 = std::clamp(static_cast<int>(std::floor(pos)), 0, kNumQuick - 1);
@@ -953,7 +836,6 @@ ParamSnapshot GRMBandPass::InterpolatePresets(double pos)
   for (int i = 0; i < kNumParams; ++i)
   {
     const IParam* p = GetParam(i);
-    // morph 条对齐底部按钮: 插值"底部位置当前显示的编号"对应的内容 (跟随交换)
     const int n0 = mSlotNumber[i0], n1 = mSlotNumber[i1];
     const double a = p->FromNormalized(p->ToNormalized(mPresets[n0][i]));
     const double b = p->FromNormalized(p->ToNormalized(mPresets[n1][i]));

@@ -1,10 +1,4 @@
 #pragma once
-// ============================================================================
-// PresetFileIO.h — 预设库 JSON 读写 (header-only, 不依赖插件类型)
-//
-// 通用容器: presets 存"参数值数组" (无名字), 由插件层负责数量校验
-// (kNumPresets / kNumParams)。文件格式见 WritePresetFile 注释。
-// ============================================================================
 #include <nlohmann/json.hpp>
 
 #include <fstream>
@@ -14,22 +8,12 @@
 
 struct PresetFileData
 {
-  std::vector<std::vector<double>> presets;  // 期望 kNumPresets 个, 每个 kNumParams 个
-  std::vector<double> currentValues;         // 当前参数快照 (期望 kNumParams 个)
-  int currentPreset = 0;                     // 当前选中槽位
-  double morphPos = 0.0;                     // morph 条位置
+  std::vector<std::vector<double>> presets;
+  std::vector<double> currentValues;
+  int currentPreset = 0;
+  double morphPos = 0.0;
 };
 
-// JSON 格式 (schema v2 — 无预设名, 纯数字槽位):
-// {
-//   "version": 2,
-//   "presets": [ [ ...11 个数... ], ... 24 个 ],
-//   "currentPreset": 3,
-//   "currentValues": [ ...11 个数... ],
-//   "morphPos": 0.25
-// }
-
-// 写文件。成功返回 true; 失败时 err 填原因。
 inline bool WritePresetFile(const std::string& path, const PresetFileData& data, std::string& err)
 {
   try
@@ -57,8 +41,6 @@ inline bool WritePresetFile(const std::string& path, const PresetFileData& data,
   }
 }
 
-// 读文件。成功返回 true; 失败时 err 填原因。只做结构解析,
-// 字段数量/范围校验由插件层完成 (见 GRMBandPass::ReadPresetFileFrom)。
 inline bool ReadPresetFile(const std::string& path, PresetFileData& out, std::string& err)
 {
   std::ifstream f(path, std::ios::binary);
