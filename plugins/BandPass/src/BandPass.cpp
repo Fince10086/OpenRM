@@ -34,11 +34,32 @@ static IVStyle MakeButtonStyle()
                  0.2f, 2.f, 0.f, 1.f, 0.f);
 }
 
+// Flat variants used inside merged button grids (see PresetGridFrame): no own
+// border/background, just hover shade, inverted colors while active/pressed.
+class FlatActionButton : public IVButtonControl
+{
+public:
+  FlatActionButton(const IRECT& bounds, IActionFunction aF, const char* label,
+                   const IVStyle& style)
+  : IVButtonControl(bounds, aF, label, style) {}
+
+  void Draw(IGraphics& g) override
+  {
+    const IRECT b = GetWidgetBounds();
+    const bool pressed = GetValue() > 0.5;
+    if (pressed || GetMouseIsOver())
+      g.FillRect(pressed ? COL_BLACK : COL_HOVER, b);
+    IText t = mStyle.valueText;
+    t.mFGColor = pressed ? COLOR_WHITE : COL_BLACK;
+    g.DrawText(t, mLabelStr.Get(), b);
+  }
+};
+
 static IVButtonControl* MakeMomentary(const IRECT& r,
                                        std::function<void(IControl*)> fn,
                                        const char* label, const IVStyle& st)
 {
-  return new IVButtonControl(r, [fn](IControl* p) {
+  return new FlatActionButton(r, [fn](IControl* p) {
     fn(p);
     p->SetValue(0.0);
     p->SetDirty(false);
@@ -85,7 +106,10 @@ public:
 
   void Draw(IGraphics& g) override
   {
-    g.DrawRoundRect(COL_BLACK, mRECT, 6.f, nullptr, 2.f);
+    // Match the corner radius of individual buttons:
+    // IVStyle roundness (0.2) * cell height / 2.
+    const float cr = 0.2f * (mCellH / 2.f);
+    g.DrawRoundRect(COL_BLACK, mRECT, cr, nullptr, 2.f);
     for (int c = 1; c < mCols; ++c)
     {
       const float x = mRECT.L + c * mCellW;
@@ -271,6 +295,23 @@ public:
   }
 };
 
+// Flat variant of InvertToggleControl for merged button grids: black cell
+// with white text while on, hover shade while off.
+class FlatToggleControl : public InvertToggleControl
+{
+public:
+  using InvertToggleControl::InvertToggleControl;
+
+  void Draw(IGraphics& g) override
+  {
+    const IRECT b = GetWidgetBounds();
+    const bool on = GetValue() > 0.5;
+    if (on || GetMouseIsOver())
+      g.FillRect(on ? COL_BLACK : COL_HOVER, b);
+    DrawValue(g, false);
+  }
+};
+
 ORMBandPass::ORMBandPass(const InstanceInfo& info)
 : Plugin(info, MakeConfig(kNumParams, 1))
 {
@@ -422,16 +463,18 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
     pGraphics->AttachControl(new ORMSlider(IRECT(kCol1X, 254, kPanelR, 296), kAgAmount, "INTENSITY", style, EDirection::Horizontal));
     pGraphics->AttachControl(new ORMSlider(IRECT(kCol1X, 302, kPanelR, 344), kAgRate, "RATE", style, EDirection::Horizontal));
 
-    pGraphics->AttachControl(MakeMomentary(IRECT(kCol1X, 352, kCol1X + kBtnW, 382), [this](IControl*) { CopyLtoR(); }, "L->R", btnStyle));
-    pGraphics->AttachControl(MakeMomentary(IRECT(kCol2X, 352, kCol2X + kBtnW, 382), [this](IControl*) { CopyRtoL(); }, "R->L", btnStyle));
-    pGraphics->AttachControl(new InvertToggleControl(IRECT(kCol1X, 388, kCol1X + kBtnW, 418), kLink, " ", toggleStyle, "LINK", "LINK"));
-    pGraphics->AttachControl(MakeMomentary(IRECT(kCol2X, 388, kCol2X + kBtnW, 418), [this](IControl*) { FlipLR(); }, "FLIP", btnStyle));
+    pGraphics->AttachControl(MakeMomentary(IRECT(kCol1X, 352, kCol1X + 78, 382), [this](IControl*) { CopyLtoR(); }, "L->R", btnStyle));
+    pGraphics->AttachControl(MakeMomentary(IRECT(kCol1X + 78, 352, kPanelR, 382), [this](IControl*) { CopyRtoL(); }, "R->L", btnStyle));
+    pGraphics->AttachControl(new FlatToggleControl(IRECT(kCol1X, 382, kCol1X + 78, 412), kLink, " ", toggleStyle, "LINK", "LINK"));
+    pGraphics->AttachControl(MakeMomentary(IRECT(kCol1X + 78, 382, kPanelR, 412), [this](IControl*) { FlipLR(); }, "FLIP", btnStyle));
     pGraphics->AttachControl(new ORMSlider(IRECT(kCol1X, 424, kPanelR, 466), kMix, "MIX", style, EDirection::Horizontal));
 
-    pGraphics->AttachControl(MakeMomentary(IRECT(kCol1X, 474, kCol1X + kBtnW, 504), [this](IControl*) { Undo(); }, "UNDO", btnStyle));
-    pGraphics->AttachControl(MakeMomentary(IRECT(kCol2X, 474, kCol2X + kBtnW, 504), [this](IControl*) { Redo(); }, "REDO", btnStyle));
-    pGraphics->AttachControl(MakeMomentary(IRECT(kCol1X, 510, kCol1X + kBtnW, 540), [this](IControl*) { SaveFile(); }, "SAVE", btnStyle));
-    pGraphics->AttachControl(MakeMomentary(IRECT(kCol2X, 510, kCol2X + kBtnW, 540), [this](IControl*) { LoadFile(); }, "LOAD", btnStyle));
+    pGraphics->AttachControl(MakeMomentary(IRECT(kCol1X, 474, kCol1X + 78, 504), [this](IControl*) { Undo(); }, "UNDO", btnStyle));
+    pGraphics->AttachControl(MakeMomentary(IRECT(kCol1X + 78, 474, kPanelR, 504), [this](IControl*) { Redo(); }, "REDO", btnStyle));
+    pGraphics->AttachControl(MakeMomentary(IRECT(kCol1X, 504, kCol1X + 78, 534), [this](IControl*) { SaveFile(); }, "SAVE", btnStyle));
+    pGraphics->AttachControl(MakeMomentary(IRECT(kCol1X + 78, 504, kPanelR, 534), [this](IControl*) { LoadFile(); }, "LOAD", btnStyle));
+    pGraphics->AttachControl(new PresetGridFrame(IRECT(kCol1X, 352, kPanelR, 412), 2, 2, 78.f, 30.f));
+    pGraphics->AttachControl(new PresetGridFrame(IRECT(kCol1X, 474, kPanelR, 534), 2, 2, 78.f, 30.f));
 
     for (int i = 0; i < kNumBottom; ++i)
     {
