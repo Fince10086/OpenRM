@@ -1,2 +1,0 @@
-# Hashes of file build rules.
-20365f8f462c286f713d157f626ccda4 plugins/BandPass/GRMBandPass-macOS-MainMenu.nib
