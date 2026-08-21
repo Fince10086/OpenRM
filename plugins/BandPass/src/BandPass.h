@@ -85,7 +85,7 @@ private:
 
   void EditCorner(int kFreq, int kBw, int cornerId, double value);
   void EditBand(int kFreq, int kBw, double lowNorm, double highNorm);
-  void ClampAndSet(int kFreq, int kBw, double centerHz, double bwOct);
+  void ClampAndSet(int kFreq, int kBw, double centerHz, double bw);
 
   ParamSnapshot Snapshot() const;
   void ApplySnapshot(const ParamSnapshot& s);

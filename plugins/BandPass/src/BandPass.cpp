@@ -45,6 +45,10 @@ static IVButtonControl* MakeMomentary(const IRECT& r,
   }, label, st);
 }
 
+// Bandwidth is stored/displayed as a multiplier (1–31, exponential shape);
+// the DSP core still works in octaves.
+static double BwMultToOct(double m) { return 2. * std::log2(m); }
+
 class PresetMorphSlider : public IVSliderControl
 {
 public:
@@ -198,10 +202,10 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
 : Plugin(info, MakeConfig(kNumParams, 1))
 {
   GetParam(kFreqL)->InitDouble("FreqL", 1000., 20., 20000., 0.01, "Hz", 0, "", IParam::ShapeExp());
-  GetParam(kBwL)  ->InitDouble("BW L", 1., 0.05, 4., 0.01, "oct");
+  GetParam(kBwL)  ->InitDouble("BW L", 1.41, 1., 31., 0.01, "x", 0, "", IParam::ShapeExp());
   GetParam(kGainL)->InitDouble("Gain L", 1., 0., 2., 0.01, "");
   GetParam(kFreqR)->InitDouble("FreqR", 1000., 20., 20000., 0.01, "Hz", 0, "", IParam::ShapeExp());
-  GetParam(kBwR)  ->InitDouble("BW R", 1., 0.05, 4., 0.01, "oct");
+  GetParam(kBwR)  ->InitDouble("BW R", 1.41, 1., 31., 0.01, "x", 0, "", IParam::ShapeExp());
   GetParam(kGainR)->InitDouble("Gain R", 1., 0., 2., 0.01, "");
   GetParam(kLink) ->InitBool("Link", false);
   GetParam(kMix)  ->InitDouble("Mix", 1., 0., 1., 0.01, "");
@@ -220,28 +224,28 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
 
   {
     ParamSnapshot s = Snapshot();
-    s[kFreqL] = 500.;  s[kBwL] = 0.2;  s[kFreqR] = 500.; s[kBwR] = 0.2; s[kLink] = 1.;
+    s[kFreqL] = 500.;  s[kBwL] = 1.07; s[kFreqR] = 500.; s[kBwR] = 1.07; s[kLink] = 1.;
     mPresets[1] = s;
   }
   {
     ParamSnapshot s = Snapshot();
-    s[kFreqL] = 2000.; s[kBwL] = 3.0;  s[kFreqR] = 2000.; s[kBwR] = 3.0; s[kLink] = 1.;
+    s[kFreqL] = 2000.; s[kBwL] = 2.83; s[kFreqR] = 2000.; s[kBwR] = 2.83; s[kLink] = 1.;
     mPresets[2] = s;
   }
   {
     ParamSnapshot s = Snapshot();
-    s[kFreqL] = 400.; s[kBwL] = 0.3; s[kFreqR] = 4000.; s[kBwR] = 1.5;
+    s[kFreqL] = 400.; s[kBwL] = 1.11; s[kFreqR] = 4000.; s[kBwR] = 1.69;
     mPresets[3] = s;
   }
   {
     ParamSnapshot s = Snapshot();
-    s[kFreqL] = 3000.; s[kBwL] = 0.5; s[kFreqR] = 3000.; s[kBwR] = 0.5; s[kLink] = 1.;
+    s[kFreqL] = 3000.; s[kBwL] = 1.19; s[kFreqR] = 3000.; s[kBwR] = 1.19; s[kLink] = 1.;
     s[kAgOn] = 1.; s[kAgAmount] = 0.3; s[kAgRate] = 4.;
     mPresets[4] = s;
   }
   {
     ParamSnapshot s = Snapshot();
-    s[kFreqL] = 150.; s[kBwL] = 2.5; s[kFreqR] = 150.; s[kBwR] = 2.5; s[kLink] = 1.;
+    s[kFreqL] = 150.; s[kBwL] = 2.38; s[kFreqR] = 150.; s[kBwR] = 2.38; s[kLink] = 1.;
     mPresets[5] = s;
   }
 
@@ -444,10 +448,10 @@ orm::BandPassCore::Params ORMBandPass::CollectParams() const
 {
   orm::BandPassCore::Params p;
   p.freqL  = GetParam(kFreqL)->Value();
-  p.bwL    = GetParam(kBwL)->Value();
+  p.bwL    = BwMultToOct(GetParam(kBwL)->Value());
   p.gainL  = static_cast<float>(GetParam(kGainL)->Value());
   p.freqR  = GetParam(kFreqR)->Value();
-  p.bwR    = GetParam(kBwR)->Value();
+  p.bwR    = BwMultToOct(GetParam(kBwR)->Value());
   p.gainR  = static_cast<float>(GetParam(kGainR)->Value());
   p.linked = GetParam(kLink)->Value() > 0.5;
   p.mix    = static_cast<float>(GetParam(kMix)->Value());
@@ -488,15 +492,15 @@ void ORMBandPass::EditCorner(int kFreq, int kBw, int cornerId, double value)
   const IParam* pf = GetParam(kFreq);
   const double center = pf->FromNormalized(GetParam(kFreq)->GetNormalized());
   const double bw = GetParam(kBw)->Value();
-  double lowHz = center * std::pow(2., -bw / 2.);
-  double highHz = center * std::pow(2., bw / 2.);
+  double lowHz = center / bw;
+  double highHz = center * bw;
   double nc = center, nb = bw;
   switch (cornerId)
   {
-    case kCornerCenter: nc = value;                                  nb = bw;    break;
-    case kCornerBw:     nc = center;                                nb = value; break;
-    case kCornerLow:    lowHz = value;  nc = std::sqrt(lowHz * highHz); nb = std::log2(highHz / lowHz); break;
-    case kCornerHigh:   highHz = value; nc = std::sqrt(lowHz * highHz); nb = std::log2(highHz / lowHz); break;
+    case kCornerCenter: nc = value;     break;
+    case kCornerBw:     nb = value;     break;
+    case kCornerLow:    lowHz = value;  nc = std::sqrt(lowHz * highHz); nb = highHz / lowHz; break;
+    case kCornerHigh:   highHz = value; nc = std::sqrt(lowHz * highHz); nb = highHz / lowHz; break;
   }
   ClampAndSet(kFreq, kBw, nc, nb);
 }
@@ -507,20 +511,20 @@ void ORMBandPass::EditBand(int kFreq, int kBw, double lowNorm, double highNorm)
   const double lowHz = pf->FromNormalized(lowNorm);
   const double highHz = pf->FromNormalized(highNorm);
   const double center = std::sqrt(lowHz * highHz);
-  const double bw = std::log2(highHz / lowHz);
+  const double bw = highHz / lowHz;
   ClampAndSet(kFreq, kBw, center, bw);
 }
 
-void ORMBandPass::ClampAndSet(int kFreq, int kBw, double centerHz, double bwOct)
+void ORMBandPass::ClampAndSet(int kFreq, int kBw, double centerHz, double bw)
 {
   centerHz = std::clamp(centerHz, 20., 20000.);
-  bwOct    = std::clamp(bwOct, 0.05, 4.);
-  double lowHz = centerHz * std::pow(2., -bwOct / 2.);
-  double highHz = centerHz * std::pow(2., bwOct / 2.);
-  if (lowHz < 20.)     { lowHz = 20.;   centerHz = highHz * std::pow(2., -bwOct / 2.); }
-  if (highHz > 20000.) { highHz = 20000.; centerHz = lowHz * std::pow(2., bwOct / 2.); }
+  bw       = std::clamp(bw, 1., 31.);
+  double lowHz = centerHz / bw;
+  double highHz = centerHz * bw;
+  if (lowHz < 20.)     { lowHz = 20.;   centerHz = highHz / bw; }
+  if (highHz > 20000.) { highHz = 20000.; centerHz = lowHz * bw; }
   SetParamFromEditor(kFreq, centerHz);
-  SetParamFromEditor(kBw, bwOct);
+  SetParamFromEditor(kBw, bw);
   RefreshAfterEdit();
 }
 

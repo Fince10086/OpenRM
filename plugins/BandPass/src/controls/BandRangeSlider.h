@@ -132,7 +132,7 @@ private:
     const IParam* pf = GetParam(0);
     const double centerHz = pf->FromNormalized(GetValue(0));
     const double bw = GetParam(1)->FromNormalized(GetValue(1));
-    return (float) pf->ToNormalized(centerHz * std::pow(2., -bw / 2.));
+    return (float) pf->ToNormalized(centerHz / bw);
   }
 
   float HighNorm() const
@@ -140,7 +140,7 @@ private:
     const IParam* pf = GetParam(0);
     const double centerHz = pf->FromNormalized(GetValue(0));
     const double bw = GetParam(1)->FromNormalized(GetValue(1));
-    return (float) pf->ToNormalized(centerHz * std::pow(2., bw / 2.));
+    return (float) pf->ToNormalized(centerHz * bw);
   }
 
   void SyncFromParams()
@@ -192,8 +192,8 @@ private:
     const double c = pf->FromNormalized(GetValue(0));
     const double bw = GetParam(1)->FromNormalized(GetValue(1));
     char buf[32];
-    if (id == kCornerLow) FormatFreq(buf, 32, c * std::pow(2., -bw/2.));
-    else                  FormatFreq(buf, 32, c * std::pow(2.,  bw/2.));
+    if (id == kCornerLow) FormatFreq(buf, 32, c / bw);
+    else                  FormatFreq(buf, 32, c * bw);
     out.SetFormatted(64, "%s%s", id == kCornerLow ? "LOWCUT " : "HIGHCUT ", buf);
   }
 
