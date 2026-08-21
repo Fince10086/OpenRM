@@ -55,6 +55,9 @@ public:
     IVXYPadControl::OnMouseDown(x, y, mod);
   }
 
+  // Don't inherit the base-class double-click reset-to-default behavior.
+  void OnMouseDblClick(float x, float y, const IMouseMod& mod) override {}
+
   void OnMouseOver(float x, float y, const IMouseMod& mod) override
   {
     int hit = -1;

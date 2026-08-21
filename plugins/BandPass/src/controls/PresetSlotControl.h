@@ -38,10 +38,6 @@ public:
       {
         if (mHooks.onSaveHere) mHooks.onSaveHere();
       }
-      else if (mod.A)
-      {
-        if (mHooks.onRestoreDefault) mHooks.onRestoreDefault();
-      }
       else
       {
         mPotentialDrag = true;
@@ -133,7 +129,7 @@ private:
   {
     std::string s = mHooks.getTooltipPrefix ? mHooks.getTooltipPrefix() : std::string();
     if (!s.empty()) s += "\n";
-    s += "Drag onto another slot to swap · ⌘Click: save here · ⌥Click: restore default";
+    s += "Drag onto another slot to swap · ⌘Click: save here · Right-click: menu";
     return s;
   }
 

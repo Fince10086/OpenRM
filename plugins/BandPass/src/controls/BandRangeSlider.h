@@ -95,6 +95,9 @@ public:
     mActiveHandle = -1;
   }
 
+  // Don't inherit the base-class double-click reset-to-default behavior.
+  void OnMouseDblClick(float x, float y, const IMouseMod& mod) override {}
+
   void OnTextEntryCompletion(const char* str, int valIdx) override
   {
     const int id = mEditingCorner;
