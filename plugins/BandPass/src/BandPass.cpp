@@ -406,15 +406,15 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
         char label[8];
         snprintf(label, 8, "%d", mSlotNumber[pos] + 1);
         PresetSlotControl* btn = new PresetSlotControl(
-          IRECT(kCol1X + c * 80, 46 + r * 32,
-                kCol1X + c * 80 + 80, 46 + r * 32 + 32),
+          IRECT(kCol1X + c * 39, 46 + r * 32,
+                kCol1X + c * 39 + 39, 46 + r * 32 + 32),
           makeSlotHooks(pos), label, btnStyle);
         btn->SetFlatGrid(true);
         mSlotButtons[pos] = btn;
         pGraphics->AttachControl(btn);
       }
     }
-    pGraphics->AttachControl(new PresetGridFrame(IRECT(kCol1X, 46, kCol1X + 320, 46 + 128), 4, 4, 80.f, 32.f));
+    pGraphics->AttachControl(new PresetGridFrame(IRECT(kCol1X, 46, kPanelR, 46 + 128), 4, 4, 39.f, 32.f));
 
     pGraphics->AttachControl(new ITextControl(IRECT(kCol1X, 186, 1050, 214), "AGITATION",
       IText(20, COL_BLACK, "Outfit-Bold", EAlign::Near, EVAlign::Middle)));
