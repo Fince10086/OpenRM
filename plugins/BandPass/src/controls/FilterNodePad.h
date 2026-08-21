@@ -46,7 +46,7 @@ public:
       {
         WDL_String init; GetCornerLabel(id, init);
         EAlign align = (id == kCornerBw) ? EAlign::Far : EAlign::Near;
-        IText t(10, COL_BLACK, "Outfit-SemiBold", align, EVAlign::Middle);
+        IText t(20, COL_BLACK, "Outfit-SemiBold", align, EVAlign::Middle);
         mEditingCorner = id;
         GetUI()->CreateTextEntry(*this, t, CornerRect(id), init.Get(), kNoValIdx);
         return;
@@ -137,7 +137,7 @@ public:
   {
     if (mSideLabel.GetLength() == 0) return;
     const IRECT r = SideLabelRect();
-    IText t(10, COL_BLACK, "Outfit-SemiBold", EAlign::Center, EVAlign::Middle, -90.f);
+    IText t(20, COL_BLACK, "Outfit-SemiBold", EAlign::Center, EVAlign::Middle, -90.f);
     g.DrawText(t, mSideLabel.Get(), r);
   }
 
@@ -173,7 +173,7 @@ private:
       g.FillRoundRect(COL_HOVER, r.GetPadded(-2.f), 4.f);
     WDL_String label; GetCornerLabel(id, label);
     const EAlign align = (id == kCornerBw) ? EAlign::Far : EAlign::Near;
-    const IText t(10, COL_BLACK, "Outfit-SemiBold", align, EVAlign::Middle);
+    const IText t(20, COL_BLACK, "Outfit-SemiBold", align, EVAlign::Middle);
     g.DrawText(t, label.Get(), r);
   }
 
@@ -208,11 +208,11 @@ private:
     return true;
   }
 
-  static constexpr float kCornerW = 80.f;
-  static constexpr float kCornerTextH = 10.f;
-  static constexpr float kSideW    = 22.f;
+  static constexpr float kCornerW = 170.f;
+  static constexpr float kCornerTextH = 22.f;
+  static constexpr float kSideW    = 36.f;
   static constexpr float kSideH    = 0.f;
-  static constexpr float kTopPad   = 18.f;
+  static constexpr float kTopPad   = 30.f;
 
   Hooks mHooks;
   WDL_String mSideLabel;

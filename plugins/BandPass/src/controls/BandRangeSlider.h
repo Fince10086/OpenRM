@@ -47,7 +47,7 @@ public:
       const int id = x < HeaderRect().MW() ? kCornerLow : kCornerHigh;
       WDL_String init; GetCutLabel(id, init);
       const EAlign align = (id == kCornerLow) ? EAlign::Near : EAlign::Far;
-      const IText t(10, COL_BLACK, "Outfit-SemiBold", align, EVAlign::Middle);
+      const IText t(20, COL_BLACK, "Outfit-SemiBold", align, EVAlign::Middle);
       mEditingCorner = id;
       GetUI()->CreateTextEntry(*this, t, HeaderRect(), init.Get(), kNoValIdx);
       return;
@@ -110,7 +110,7 @@ public:
   }
 
 private:
-  static constexpr float kHeaderH = 14.f;
+  static constexpr float kHeaderH = 26.f;
   static constexpr float kTrackInset = 2.f;
   static constexpr float kMinGap   = 0.01f;
 
@@ -166,9 +166,9 @@ private:
     GetCutLabel(kCornerLow, low);
     GetCutLabel(kCornerHigh, high);
     const IRECT hdr = HeaderRect();
-    g.DrawText(IText(10, COL_BLACK, "Outfit-SemiBold", EAlign::Near, EVAlign::Middle),
+    g.DrawText(IText(20, COL_BLACK, "Outfit-SemiBold", EAlign::Near, EVAlign::Middle),
                low.Get(), IRECT(hdr.L, hdr.T, hdr.MW(), hdr.B));
-    g.DrawText(IText(10, COL_BLACK, "Outfit-SemiBold", EAlign::Far, EVAlign::Middle),
+    g.DrawText(IText(20, COL_BLACK, "Outfit-SemiBold", EAlign::Far, EVAlign::Middle),
                high.Get(), IRECT(hdr.MW(), hdr.T, hdr.R, hdr.B));
   }
 

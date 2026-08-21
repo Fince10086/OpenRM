@@ -18,8 +18,8 @@ static IVStyle MakeORMStyle()
 {
   IVColorSpec colors = { COL_BG, COL_BG, COL_DIM, COL_BLACK,
                          COL_HOVER, COL_TRACK, COL_BLACK, COL_BLACK, COL_BLACK };
-  const IText labelText(10, COL_DIM, "Outfit", EAlign::Center, EVAlign::Bottom);
-  const IText valueText(10, COL_BLACK, "Outfit-SemiBold", EAlign::Center, EVAlign::Top);
+  const IText labelText(20, COL_DIM, "Outfit", EAlign::Center, EVAlign::Bottom);
+  const IText valueText(20, COL_BLACK, "Outfit-SemiBold", EAlign::Center, EVAlign::Top);
   return IVStyle(true, true, colors, labelText, valueText,
                  true, true, false, false, 0.2f, 1.5f, 0.f, 1.f, 0.f);
 }
@@ -28,8 +28,8 @@ static IVStyle MakeButtonStyle()
 {
   IVColorSpec colors = { COL_BG, COL_BG, COL_BLACK, COL_BLACK,
                          COL_HOVER, COL_BG, COL_BLACK, COL_BLACK, COL_BLACK };
-  const IText labelText(10, COL_BLACK, "Outfit-SemiBold", EAlign::Center, EVAlign::Middle);
-  const IText valueText(10, COL_BLACK, "Outfit-SemiBold", EAlign::Center, EVAlign::Middle);
+  const IText labelText(20, COL_BLACK, "Outfit-SemiBold", EAlign::Center, EVAlign::Middle);
+  const IText valueText(20, COL_BLACK, "Outfit-SemiBold", EAlign::Center, EVAlign::Middle);
   return IVStyle(true, true, colors, labelText, valueText, true, true, false, false,
                  0.2f, 2.f, 0.f, 1.f, 0.f);
 }
@@ -69,6 +69,38 @@ public:
       g.FillRect(COL_BLACK, IRECT(x - 1.f, mTrackBounds.B, x + 1.f, mTrackBounds.B + 3.f));
     }
   }
+};
+
+// Shared outer frame for a block of preset slots: one rounded border around
+// the whole grid, with plain separator lines between cells.
+class PresetGridFrame : public IControl
+{
+public:
+  PresetGridFrame(const IRECT& bounds, int cols, int rows, float cellW, float cellH)
+  : IControl(bounds), mCols(cols), mRows(rows), mCellW(cellW), mCellH(cellH)
+  {
+    // Purely decorative overlay: let all clicks pass through to the slots.
+    SetIgnoreMouse(true);
+  }
+
+  void Draw(IGraphics& g) override
+  {
+    g.DrawRoundRect(COL_BLACK, mRECT, 6.f, nullptr, 2.f);
+    for (int c = 1; c < mCols; ++c)
+    {
+      const float x = mRECT.L + c * mCellW;
+      g.DrawLine(COL_BLACK, x, mRECT.T, x, mRECT.B, nullptr, 1.5f);
+    }
+    for (int r = 1; r < mRows; ++r)
+    {
+      const float y = mRECT.T + r * mCellH;
+      g.DrawLine(COL_BLACK, mRECT.L, y, mRECT.R, y, nullptr, 1.5f);
+    }
+  }
+
+private:
+  int mCols, mRows;
+  float mCellW, mCellH;
 };
 
 class ORMSlider : public IVSliderControl
@@ -142,18 +174,18 @@ public:
     g.DrawCircle(COL_BLACK, cx, cy, r - 0.75f, nullptr, 1.5f);
   }
 
-private:
-  static constexpr float kHeaderH = 14.f;
-  static constexpr float kHeaderW = 14.f;
+protected:
+  static constexpr float kHeaderH = 26.f;
+  static constexpr float kHeaderW = 26.f;
 
-  IRECT ValueRect() const
+  virtual IRECT ValueRect() const
   {
     if (mDirection == EDirection::Horizontal)
       return IRECT(mRECT.L, mRECT.T, mRECT.R, mRECT.T + kHeaderH);
-    return IRECT(mRECT.L, mRECT.T, mRECT.L + kHeaderW + 4.f, mRECT.T + 28.f);
+    return IRECT(mRECT.L, mRECT.T, mRECT.L + kHeaderW + 4.f, mRECT.T + 44.f);
   }
 
-  void DrawHeader(IGraphics& g, float rot)
+  virtual void DrawHeader(IGraphics& g, float rot)
   {
     WDL_String ds;
     if (GetParam()) GetParam()->GetDisplay(ds, false);
@@ -161,22 +193,63 @@ private:
     if (rot == 0.f)
     {
       const IRECT hdr(mRECT.L, mRECT.T, mRECT.R, mRECT.T + kHeaderH);
-      g.DrawText(IText(10, COL_BLACK, "Outfit-SemiBold", EAlign::Near, EVAlign::Middle),
+      g.DrawText(IText(20, COL_BLACK, "Outfit-SemiBold", EAlign::Near, EVAlign::Middle),
                  mHeaderLabel.Get(), IRECT(hdr.L, hdr.T, hdr.MW(), hdr.B));
-      g.DrawText(IText(10, COL_DIM, "Outfit", EAlign::Far, EVAlign::Middle),
+      g.DrawText(IText(20, COL_DIM, "Outfit", EAlign::Far, EVAlign::Middle),
                  ds.Get(), IRECT(hdr.MW(), hdr.T, hdr.R, hdr.B));
     }
     else
     {
       const IRECT hdr(mRECT.L, mRECT.T, mRECT.L + kHeaderW, mRECT.B);
-      g.DrawText(IText(10, COL_BLACK, "Outfit-SemiBold", EAlign::Near, EVAlign::Bottom, rot),
+      g.DrawText(IText(20, COL_BLACK, "Outfit-SemiBold", EAlign::Near, EVAlign::Bottom, rot),
                  mHeaderLabel.Get(), hdr);
-      g.DrawText(IText(10, COL_DIM, "Outfit", EAlign::Far, EVAlign::Top, rot),
+      g.DrawText(IText(20, COL_DIM, "Outfit", EAlign::Far, EVAlign::Top, rot),
                  ds.Get(), hdr);
     }
   }
 
   WDL_String mHeaderLabel;
+};
+
+// Vertical gain slider variant: track on the left, text column on the right —
+// numeric value top-right, GAIN (L/R) label bottom-right. Both texts are
+// rotated so their bottoms face left (they read top-to-bottom).
+class GainSlider : public ORMSlider
+{
+public:
+  GainSlider(const IRECT& bounds, int paramIdx, const char* label, const IVStyle& style)
+  : ORMSlider(bounds, paramIdx, label, style, EDirection::Vertical) {}
+
+protected:
+  IRECT TextRect() const { return IRECT(mRECT.R - kHeaderW, mRECT.T, mRECT.R, mRECT.B); }
+
+  void OnResize() override
+  {
+    mWidgetBounds = mRECT.GetReducedFromRight(kHeaderW);
+    mTrackBounds  = mWidgetBounds.GetPadded(-mHandleSize)
+                                 .GetMidHPadded(mTrackSize);
+    SetTargetRECT(mRECT);
+    mValueBounds = IRECT();
+    SetDirty(false);
+  }
+
+  IRECT ValueRect() const override
+  {
+    const IRECT hdr = TextRect();
+    return IRECT(hdr.L - 4.f, hdr.T, hdr.R, hdr.MH());
+  }
+
+  void DrawHeader(IGraphics& g, float) override
+  {
+    WDL_String ds;
+    if (GetParam()) GetParam()->GetDisplay(ds, false);
+
+    const IRECT hdr = TextRect();
+    g.DrawText(IText(20, COL_DIM, "Outfit", EAlign::Center, EVAlign::Middle, 90.f),
+               ds.Get(), IRECT(hdr.L, hdr.T, hdr.R, hdr.MH()));
+    g.DrawText(IText(20, COL_BLACK, "Outfit-SemiBold", EAlign::Center, EVAlign::Middle, 90.f),
+               mHeaderLabel.Get(), IRECT(hdr.L, hdr.MH(), hdr.R, hdr.B));
+  }
 };
 
 class InvertToggleControl : public IVToggleControl
@@ -271,11 +344,11 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
     toggleStyle.showValue = false;
 
     constexpr float kCol1X     = 740.f;
-    constexpr float kCol2X     = 804.f;
-    constexpr float kBtnW      = 56.f;
-    constexpr float kBtnH      = 22.f;
-    constexpr float kSlotPitch = 24.f;
-    constexpr float kSliderH   = 34.f;
+    constexpr float kCol2X     = 824.f;
+    constexpr float kBtnW      = 72.f;
+    constexpr float kBtnH      = 30.f;
+    constexpr float kSlotPitch = 34.f;
+    constexpr float kSliderH   = 42.f;
     constexpr float kPanelR    = kCol2X + kBtnW;
 
     auto padHooks = [&](int kF, int kB) -> FilterNodePad::Hooks {
@@ -292,21 +365,21 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
       };
     };
 
-    mPadL = new FilterNodePad(IRECT(20, 38, 668, 236), { kFreqL, kBwL }, "LEFT", style, padHooks(kFreqL, kBwL));
+    mPadL = new FilterNodePad(IRECT(56, 38, 668, 218), { kFreqL, kBwL }, "LEFT", style, padHooks(kFreqL, kBwL));
     pGraphics->AttachControl(mPadL);
-    mBandL = new BandRangeSlider(IRECT(20, 242, 668, 270), { kFreqL, kBwL }, bandHooks(kFreqL, kBwL));
+    mBandL = new BandRangeSlider(IRECT(56, 224, 668, 270), { kFreqL, kBwL }, bandHooks(kFreqL, kBwL));
     pGraphics->AttachControl(mBandL);
 
-    mPadR = new FilterNodePad(IRECT(20, 302, 668, 500), { kFreqR, kBwR }, "RIGHT", style, padHooks(kFreqR, kBwR));
+    mPadR = new FilterNodePad(IRECT(56, 296, 668, 476), { kFreqR, kBwR }, "RIGHT", style, padHooks(kFreqR, kBwR));
     pGraphics->AttachControl(mPadR);
-    mBandR = new BandRangeSlider(IRECT(20, 506, 668, 534), { kFreqR, kBwR }, bandHooks(kFreqR, kBwR));
+    mBandR = new BandRangeSlider(IRECT(56, 482, 668, 528), { kFreqR, kBwR }, bandHooks(kFreqR, kBwR));
     pGraphics->AttachControl(mBandR);
 
-    pGraphics->AttachControl(new ORMSlider(IRECT(672, 38, 730, 270), kGainL, "GAIN L", style, EDirection::Vertical));
-    pGraphics->AttachControl(new ORMSlider(IRECT(672, 302, 730, 534), kGainR, "GAIN R", style, EDirection::Vertical));
+    pGraphics->AttachControl(new GainSlider(IRECT(672, 38, 730, 218), kGainL, "GAIN L", style));
+    pGraphics->AttachControl(new GainSlider(IRECT(672, 296, 730, 476), kGainR, "GAIN R", style));
 
-    pGraphics->AttachControl(new ITextControl(IRECT(kCol1X, 14, 900, 34), "PRESETS",
-      IText(10, COL_BLACK, "Outfit-Bold", EAlign::Near, EVAlign::Middle)));
+    pGraphics->AttachControl(new ITextControl(IRECT(kCol1X, 12, 1050, 40), "PRESETS",
+      IText(20, COL_BLACK, "Outfit-Bold", EAlign::Near, EVAlign::Middle)));
 
     auto makeSlotHooks = [this](int pos) -> PresetSlotControl::Hooks
     {
@@ -325,51 +398,53 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
       };
     };
 
-    for (int r = 0; r < 8; ++r)
+    for (int r = 0; r < 4; ++r)
     {
-      for (int c = 0; c < 2; ++c)
+      for (int c = 0; c < 4; ++c)
       {
-        const int pos = kNumBottom + r * 2 + c;
+        const int pos = kNumBottom + r * 4 + c;
         char label[8];
         snprintf(label, 8, "%d", mSlotNumber[pos] + 1);
         PresetSlotControl* btn = new PresetSlotControl(
-          IRECT(kCol1X + c * 64, 40 + r * kSlotPitch,
-                kCol1X + c * 64 + kBtnW, 40 + r * kSlotPitch + kBtnH),
+          IRECT(kCol1X + c * 80, 46 + r * 32,
+                kCol1X + c * 80 + 80, 46 + r * 32 + 32),
           makeSlotHooks(pos), label, btnStyle);
+        btn->SetFlatGrid(true);
         mSlotButtons[pos] = btn;
         pGraphics->AttachControl(btn);
       }
     }
+    pGraphics->AttachControl(new PresetGridFrame(IRECT(kCol1X, 46, kCol1X + 320, 46 + 128), 4, 4, 80.f, 32.f));
 
-    pGraphics->AttachControl(new ITextControl(IRECT(kCol1X, 242, 900, 262), "AGITATION",
-      IText(10, COL_BLACK, "Outfit-Bold", EAlign::Near, EVAlign::Middle)));
-    pGraphics->AttachControl(new InvertToggleControl(IRECT(kCol1X, 268, kCol1X + kBtnW, 290), kAgOn, " ", toggleStyle, "OFF", "ON"));
-    pGraphics->AttachControl(new ORMSlider(IRECT(kCol1X, 296, kPanelR, 330), kAgAmount, "INTENSITY", style, EDirection::Horizontal));
-    pGraphics->AttachControl(new ORMSlider(IRECT(kCol1X, 336, kPanelR, 370), kAgRate, "RATE", style, EDirection::Horizontal));
+    pGraphics->AttachControl(new ITextControl(IRECT(kCol1X, 186, 1050, 214), "AGITATION",
+      IText(20, COL_BLACK, "Outfit-Bold", EAlign::Near, EVAlign::Middle)));
+    pGraphics->AttachControl(new InvertToggleControl(IRECT(kCol1X, 218, kCol1X + kBtnW, 248), kAgOn, " ", toggleStyle, "OFF", "ON"));
+    pGraphics->AttachControl(new ORMSlider(IRECT(kCol1X, 254, kPanelR, 296), kAgAmount, "INTENSITY", style, EDirection::Horizontal));
+    pGraphics->AttachControl(new ORMSlider(IRECT(kCol1X, 302, kPanelR, 344), kAgRate, "RATE", style, EDirection::Horizontal));
 
-    pGraphics->AttachControl(MakeMomentary(IRECT(kCol1X, 376, kCol1X + kBtnW, 398), [this](IControl*) { CopyLtoR(); }, "L->R", btnStyle));
-    pGraphics->AttachControl(MakeMomentary(IRECT(kCol2X, 376, kCol2X + kBtnW, 398), [this](IControl*) { CopyRtoL(); }, "R->L", btnStyle));
-    pGraphics->AttachControl(new InvertToggleControl(IRECT(kCol1X, 404, kCol1X + kBtnW, 426), kLink, " ", toggleStyle, "LINK", "LINK"));
-    pGraphics->AttachControl(MakeMomentary(IRECT(kCol2X, 404, kCol2X + kBtnW, 426), [this](IControl*) { FlipLR(); }, "FLIP", btnStyle));
-    pGraphics->AttachControl(new ORMSlider(IRECT(kCol1X, 432, kPanelR, 466), kMix, "MIX", style, EDirection::Horizontal));
+    pGraphics->AttachControl(MakeMomentary(IRECT(kCol1X, 352, kCol1X + kBtnW, 382), [this](IControl*) { CopyLtoR(); }, "L->R", btnStyle));
+    pGraphics->AttachControl(MakeMomentary(IRECT(kCol2X, 352, kCol2X + kBtnW, 382), [this](IControl*) { CopyRtoL(); }, "R->L", btnStyle));
+    pGraphics->AttachControl(new InvertToggleControl(IRECT(kCol1X, 388, kCol1X + kBtnW, 418), kLink, " ", toggleStyle, "LINK", "LINK"));
+    pGraphics->AttachControl(MakeMomentary(IRECT(kCol2X, 388, kCol2X + kBtnW, 418), [this](IControl*) { FlipLR(); }, "FLIP", btnStyle));
+    pGraphics->AttachControl(new ORMSlider(IRECT(kCol1X, 424, kPanelR, 466), kMix, "MIX", style, EDirection::Horizontal));
 
-    pGraphics->AttachControl(MakeMomentary(IRECT(kCol1X, 472, kCol1X + kBtnW, 494), [this](IControl*) { Undo(); }, "UNDO", btnStyle));
-    pGraphics->AttachControl(MakeMomentary(IRECT(kCol2X, 472, kCol2X + kBtnW, 494), [this](IControl*) { Redo(); }, "REDO", btnStyle));
-    pGraphics->AttachControl(MakeMomentary(IRECT(kCol1X, 500, kCol1X + kBtnW, 522), [this](IControl*) { SaveFile(); }, "SAVE", btnStyle));
-    pGraphics->AttachControl(MakeMomentary(IRECT(kCol2X, 500, kCol2X + kBtnW, 522), [this](IControl*) { LoadFile(); }, "LOAD", btnStyle));
+    pGraphics->AttachControl(MakeMomentary(IRECT(kCol1X, 474, kCol1X + kBtnW, 504), [this](IControl*) { Undo(); }, "UNDO", btnStyle));
+    pGraphics->AttachControl(MakeMomentary(IRECT(kCol2X, 474, kCol2X + kBtnW, 504), [this](IControl*) { Redo(); }, "REDO", btnStyle));
+    pGraphics->AttachControl(MakeMomentary(IRECT(kCol1X, 510, kCol1X + kBtnW, 540), [this](IControl*) { SaveFile(); }, "SAVE", btnStyle));
+    pGraphics->AttachControl(MakeMomentary(IRECT(kCol2X, 510, kCol2X + kBtnW, 540), [this](IControl*) { LoadFile(); }, "LOAD", btnStyle));
 
     for (int i = 0; i < kNumBottom; ++i)
     {
       char label[8];
       snprintf(label, 8, "%d", mSlotNumber[i] + 1);
       PresetSlotControl* btn = new PresetSlotControl(
-        IRECT(20 + i * 82, 546, 94 + i * 82, 568),
+        IRECT(20 + i * 82, 560, 94 + i * 82, 590),
         makeSlotHooks(i), label, btnStyle);
       mSlotButtons[i] = btn;
       pGraphics->AttachControl(btn);
     }
 
-    mMorphSlider = new PresetMorphSlider(IRECT(49, 572, 639, 592),
+    mMorphSlider = new PresetMorphSlider(IRECT(56, 600, 668, 624),
       [this](IControl* pCtrl) {
         MaybePushGestureUndo();
         mMorphPos = pCtrl->GetValue(0) * (kNumQuick - 1.0);
@@ -377,10 +452,10 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
       }, btnStyle);
     pGraphics->AttachControl(mMorphSlider);
 
-    pGraphics->AttachControl(new ITextControl(IRECT(kCol1X, 534, kPanelR, 558), "ORM BandPass",
-      IText(16, COL_BLACK, "Outfit-Bold", EAlign::Near, EVAlign::Middle)));
-    pGraphics->AttachControl(new ITextControl(IRECT(kCol1X, 558, kPanelR, 574), "v" PLUG_VERSION_STR,
-      IText(10, COL_FAINT, "Outfit", EAlign::Near, EVAlign::Middle)));
+    pGraphics->AttachControl(new ITextControl(IRECT(kCol1X, 554, 1060, 598), "ORM BandPass",
+      IText(32, COL_BLACK, "Outfit-Bold", EAlign::Near, EVAlign::Middle)));
+    pGraphics->AttachControl(new ITextControl(IRECT(kCol1X, 598, 1060, 624), "v" PLUG_VERSION_STR,
+      IText(20, COL_FAINT, "Outfit", EAlign::Near, EVAlign::Middle)));
 
     pGraphics->EnableTooltips(true);
     UpdatePads();

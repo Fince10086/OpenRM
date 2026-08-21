@@ -1,5 +1,6 @@
 #pragma once
 #include "IControls.h"
+#include "../Theme.h"
 
 #include <cmath>
 #include <functional>
@@ -109,9 +110,26 @@ public:
     SetDirty(false);
   }
 
+  // Flat mode: draw without own border/background so a shared grid frame can
+  // wrap several slots into one outlined block (see PresetGridFrame).
+  void SetFlatGrid(bool on) { mFlatGrid = on; }
+
   void Draw(IGraphics& g) override
   {
-    IVButtonControl::Draw(g);
+    if (!mFlatGrid)
+    {
+      IVButtonControl::Draw(g);
+    }
+    else
+    {
+      const IRECT b = GetWidgetBounds();
+      const bool pressed = GetValue() > 0.5;
+      if (pressed || GetMouseIsOver())
+        g.FillRect(pressed ? COL_BLACK : COL_HOVER, b);
+      IText t = mStyle.valueText;
+      t.mFGColor = pressed ? COLOR_WHITE : COL_BLACK;
+      g.DrawText(t, mLabelStr.Get(), b);
+    }
     if (mDragging)
     {
       g.FillRect(IColor(70, 0, 0, 0), GetWidgetBounds());
@@ -153,6 +171,7 @@ private:
   bool mPotentialDrag = false;
   bool mDragging = false;
   bool mDragTarget = false;
+  bool mFlatGrid = false;
   float mDownX = 0.f, mDownY = 0.f;
   IPopupMenu mMenu;
 };
