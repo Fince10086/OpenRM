@@ -31,7 +31,7 @@ static IVStyle MakeButtonStyle()
   const IText labelText(20, COL_BLACK, "Outfit-SemiBold", EAlign::Center, EVAlign::Middle);
   const IText valueText(20, COL_BLACK, "Outfit-SemiBold", EAlign::Center, EVAlign::Middle);
   return IVStyle(true, true, colors, labelText, valueText, true, true, false, false,
-                 0.2f, 2.f, 0.f, 1.f, 0.f);
+                 0.f, 2.f, 0.f, 1.f, 0.f);
 }
 
 // Flat variants used inside merged button grids (see PresetGridFrame): no own
@@ -112,10 +112,8 @@ public:
 
   void Draw(IGraphics& g) override
   {
-    // Match the corner radius of individual buttons:
-    // IVStyle roundness (0.2) * cell height / 2.
-    const float cr = 0.2f * (mCellH / 2.f);
-    g.DrawRoundRect(COL_BLACK, mRECT, cr, nullptr, 2.f);
+    // Square corners, matching the flat buttons.
+    g.DrawRect(COL_BLACK, mRECT, nullptr, 2.f);
     for (int c = 1; c < mCols; ++c)
     {
       const float x = mRECT.L + c * mCellW;
