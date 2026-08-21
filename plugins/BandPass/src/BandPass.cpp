@@ -271,6 +271,7 @@ GRMBandPass::GRMBandPass(const InstanceInfo& info)
     constexpr float kBtnH      = 22.f;
     constexpr float kSlotPitch = 24.f;
     constexpr float kSliderH   = 34.f;
+    constexpr float kPanelR    = kCol2X + kBtnW;
 
     auto padHooks = [&](int kF, int kB) -> FilterNodePad::Hooks {
       return FilterNodePad::Hooks{
@@ -328,14 +329,14 @@ GRMBandPass::GRMBandPass(const InstanceInfo& info)
     pGraphics->AttachControl(new ITextControl(IRECT(kCol1X, 242, 900, 262), "AGITATION",
       IText(11, COL_BLACK, "Outfit-Bold", EAlign::Near, EVAlign::Middle)));
     pGraphics->AttachControl(new InvertToggleControl(IRECT(kCol1X, 268, kCol1X + kBtnW, 290), kAgOn, " ", toggleStyle, "OFF", "ON"));
-    pGraphics->AttachControl(new GRMSlider(IRECT(kCol1X, 296, 988, 330), kAgAmount, "INTENSITY", style, EDirection::Horizontal));
-    pGraphics->AttachControl(new GRMSlider(IRECT(kCol1X, 336, 988, 370), kAgRate, "RATE", style, EDirection::Horizontal));
+    pGraphics->AttachControl(new GRMSlider(IRECT(kCol1X, 296, kPanelR, 330), kAgAmount, "INTENSITY", style, EDirection::Horizontal));
+    pGraphics->AttachControl(new GRMSlider(IRECT(kCol1X, 336, kPanelR, 370), kAgRate, "RATE", style, EDirection::Horizontal));
 
     pGraphics->AttachControl(MakeMomentary(IRECT(kCol1X, 376, kCol1X + kBtnW, 398), [this](IControl*) { CopyLtoR(); }, "L->R", btnStyle));
     pGraphics->AttachControl(MakeMomentary(IRECT(kCol2X, 376, kCol2X + kBtnW, 398), [this](IControl*) { CopyRtoL(); }, "R->L", btnStyle));
     pGraphics->AttachControl(new InvertToggleControl(IRECT(kCol1X, 404, kCol1X + kBtnW, 426), kLink, " ", toggleStyle, "LINK", "LINK"));
     pGraphics->AttachControl(MakeMomentary(IRECT(kCol2X, 404, kCol2X + kBtnW, 426), [this](IControl*) { FlipLR(); }, "FLIP", btnStyle));
-    pGraphics->AttachControl(new GRMSlider(IRECT(kCol1X, 432, 988, 466), kMix, "MIX", style, EDirection::Horizontal));
+    pGraphics->AttachControl(new GRMSlider(IRECT(kCol1X, 432, kPanelR, 466), kMix, "MIX", style, EDirection::Horizontal));
 
     pGraphics->AttachControl(MakeMomentary(IRECT(kCol1X, 472, kCol1X + kBtnW, 494), [this](IControl*) { Undo(); }, "UNDO", btnStyle));
     pGraphics->AttachControl(MakeMomentary(IRECT(kCol2X, 472, kCol2X + kBtnW, 494), [this](IControl*) { Redo(); }, "REDO", btnStyle));
