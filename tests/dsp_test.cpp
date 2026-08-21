@@ -61,7 +61,7 @@ static void check(const std::string& name, bool ok)
 
 int main()
 {
-    printf("=== BandPassCore v0.2 自测 (fs=%d) ===\n", (int)kFs);
+    printf("=== BandPassCore v0.0.1 自测 (fs=%d) ===\n", (int)kFs);
 
     // ---- 1) BP 峰值在中心频率 ----
     {
@@ -190,8 +190,8 @@ int main()
         }
         bool stable = true;
         for (int i = 0; i < n; ++i)
-            if (!std::isfinite(out[i]) || std::fabs(out[i]) > 1e6f) { stable = false; break; }
-        check("stable under narrow-band noise + agitation (10s)", stable);
+            if (!std::isfinite(out[i]) || std::fabs(out[i]) > 16.0f) { stable = false; break; }
+        check("stable under narrow-band noise + agitation (10s, |out|<16)", stable);
     }
 
     printf("=== %s (%d failures) ===\n", failures == 0 ? "ALL PASS" : "FAILED", failures);

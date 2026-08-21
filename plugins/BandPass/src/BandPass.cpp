@@ -6,6 +6,7 @@
 #include <cstring>
 #include <cstdio>
 #include <functional>
+#include <chrono>
 
 // ---------------------------------------------------------------------------
 // GRM 深色扁平配色 (Valhalla 风格基础 + GRM 琥珀/冷灰)
@@ -87,12 +88,12 @@ GRMBandPass::GRMBandPass(const InstanceInfo& info)
   GetParam(kAgOn) ->InitBool("Agitation", false);
   GetParam(kAgAmount)->InitDouble("Ag Amount", 0.1, 0., 1., 0.01, "");
   GetParam(kAgRate)->InitDouble("Ag Rate", 1., 0.05, 20., 0.01, "Hz");
-  GetParam(kTime1)->InitDouble("Time A", 0.5, 0., 5., 0.01, "s");
-  GetParam(kTime2)->InitDouble("Time B", 1., 0., 5., 0.01, "s");
 
   // ---- 16 预设槽位: 先填默认快照 ----
   for (auto& p : mPresets)
     p = Snapshot();
+
+  mStableSnapshot = Snapshot();
 
   {
     ParamSnapshot s = Snapshot();
@@ -140,8 +141,6 @@ GRMBandPass::GRMBandPass(const InstanceInfo& info)
 
     // ================= 主控区: LEFT / RIGHT 双通道 =================
     // LEFT 模块
-    pGraphics->AttachControl(new ITextControl(IRECT(24, 12, 200, 34),
-      "", IText(11, COL_DIM, "Roboto-Regular", EAlign::Far, EVAlign::Middle)));
     mFreqLText = new ITextControl(IRECT(24, 12, 200, 34),
       "CENTER 1.00k", IText(12, COL_ACCENT, "Roboto-Regular", EAlign::Far, EVAlign::Middle));
     pGraphics->AttachControl(mFreqLText);
@@ -186,32 +185,26 @@ GRMBandPass::GRMBandPass(const InstanceInfo& info)
       }
     }
 
-    // 时间参数区
-    pGraphics->AttachControl(new ITextControl(IRECT(748, 250, 908, 268), "TIME",
+    // Agitation 区 (TIME 区已移除: kTime1/kTime2 为无 DSP 行为的死参数)
+    pGraphics->AttachControl(new ITextControl(IRECT(748, 250, 908, 268), "AGITATION",
       IText(11, COL_TITLE, "Roboto-Regular", EAlign::Near, EVAlign::Middle)));
-    pGraphics->AttachControl(new IVKnobControl(IRECT(748, 270, 826, 330), kTime1, "TIME A", style));
-    pGraphics->AttachControl(new IVKnobControl(IRECT(834, 270, 912, 330), kTime2, "TIME B", style));
-
-    // Agitation 区
-    pGraphics->AttachControl(new ITextControl(IRECT(748, 338, 908, 356), "AGITATION",
-      IText(11, COL_TITLE, "Roboto-Regular", EAlign::Near, EVAlign::Middle)));
-    pGraphics->AttachControl(new IVSwitchControl(IRECT(748, 358, 804, 380), kAgOn, "ON", btnStyle));
-    pGraphics->AttachControl(new IVKnobControl(IRECT(812, 356, 890, 414), kAgAmount, "INTENSITY", style));
-    pGraphics->AttachControl(new IVKnobControl(IRECT(898, 356, 976, 414), kAgRate, "DURATION", style));
+    pGraphics->AttachControl(new IVSwitchControl(IRECT(748, 272, 804, 294), kAgOn, "ON", btnStyle));
+    pGraphics->AttachControl(new IVKnobControl(IRECT(812, 268, 890, 326), kAgAmount, "INTENSITY", style));
+    pGraphics->AttachControl(new IVKnobControl(IRECT(898, 268, 976, 326), kAgRate, "RATE", style));
 
     // 声像区
-    pGraphics->AttachControl(new ITextControl(IRECT(748, 422, 908, 440), "PAN",
+    pGraphics->AttachControl(new ITextControl(IRECT(748, 334, 908, 352), "PAN",
       IText(11, COL_TITLE, "Roboto-Regular", EAlign::Near, EVAlign::Middle)));
     // L->R / R->L / FLIP 现在是 click 触发: 拷贝/交换 L,R 数值 (非开关)
-    pGraphics->AttachControl(MakeMomentary(IRECT(748, 442, 804, 464), [this](IControl*) { CopyLtoR(); }, "L->R", btnStyle));
-    pGraphics->AttachControl(MakeMomentary(IRECT(812, 442, 868, 464), [this](IControl*) { CopyRtoL(); }, "R->L", btnStyle));
-    pGraphics->AttachControl(new IVSwitchControl(IRECT(876, 442, 932, 464), kLink, "LINK", btnStyle)); // 仍是开关
-    pGraphics->AttachControl(MakeMomentary(IRECT(940, 442, 996, 464), [this](IControl*) { FlipLR(); }, "FLIP", btnStyle));
-    pGraphics->AttachControl(new IVSliderControl(IRECT(748, 474, 996, 500), kMix, "MIX", style, false, EDirection::Horizontal));
+    pGraphics->AttachControl(MakeMomentary(IRECT(748, 356, 804, 378), [this](IControl*) { CopyLtoR(); }, "L->R", btnStyle));
+    pGraphics->AttachControl(MakeMomentary(IRECT(812, 356, 868, 378), [this](IControl*) { CopyRtoL(); }, "R->L", btnStyle));
+    pGraphics->AttachControl(new IVSwitchControl(IRECT(876, 356, 932, 378), kLink, "LINK", btnStyle)); // 仍是开关
+    pGraphics->AttachControl(MakeMomentary(IRECT(940, 356, 996, 378), [this](IControl*) { FlipLR(); }, "FLIP", btnStyle));
+    pGraphics->AttachControl(new IVSliderControl(IRECT(748, 390, 996, 416), kMix, "MIX", style, false, EDirection::Horizontal));
 
     // undo / redo
-    pGraphics->AttachControl(MakeMomentary(IRECT(748, 512, 822, 540), [this](IControl*) { Undo(); }, "UNDO", btnStyle));
-    pGraphics->AttachControl(MakeMomentary(IRECT(830, 512, 904, 540), [this](IControl*) { Redo(); }, "REDO", btnStyle));
+    pGraphics->AttachControl(MakeMomentary(IRECT(748, 428, 822, 456), [this](IControl*) { Undo(); }, "UNDO", btnStyle));
+    pGraphics->AttachControl(MakeMomentary(IRECT(830, 428, 904, 456), [this](IControl*) { Redo(); }, "REDO", btnStyle));
 
     // ================= 底部条 =================
     for (int i = 0; i < kNumQuick; ++i)
@@ -224,11 +217,12 @@ GRMBandPass::GRMBandPass(const InstanceInfo& info)
     }
     pGraphics->AttachControl(MakeMomentary(IRECT(748, 602, 822, 630), [this](IControl*) { SaveToSlot(mCurrentPreset); }, "SAVE", btnStyle));
     pGraphics->AttachControl(MakeMomentary(IRECT(830, 602, 904, 630), [this](IControl*) { LoadSlot(mCurrentPreset); }, "LOAD", btnStyle));
-    pGraphics->AttachControl(MakeMomentary(IRECT(912, 602, 986, 630), [](IControl*) {}, "MIDI", btnStyle));
 
-    // 品牌标识
-    pGraphics->AttachControl(new ITextControl(IRECT(960, 604, 1152, 640), "GRM BANDPASS",
+    // 品牌标识 + 版本号 (标题下方)
+    pGraphics->AttachControl(new ITextControl(IRECT(960, 596, 1152, 618), "GRM BANDPASS",
       IText(15, COL_ACCENT, "Roboto-Regular", EAlign::Far, EVAlign::Middle)));
+    pGraphics->AttachControl(new ITextControl(IRECT(960, 618, 1152, 640), "v" PLUG_VERSION_STR,
+      IText(9, COL_DIM, "Roboto-Regular", EAlign::Far, EVAlign::Middle)));
 
     // 初始状态
     UpdateParamDisplays();
@@ -245,23 +239,30 @@ void GRMBandPass::ProcessBlock(sample** inputs, sample** outputs, int nFrames)
     mCore.setParams(p);
 
   mCore.updateSmoothing(nFrames);
-  const int nChans = NOutChansConnected();
 
-  if (nChans <= 1)
-    mCore.process(inputs[0], outputs[0], nFrames);
-  else
+  // 防护: 只有在输入输出都连了至少 2 声道时才走立体声路径, 否则按单声道处理并复制
+  const int nOuts = NOutChansConnected();
+  const int nIns = NInChansConnected();
+
+  if (nOuts >= 2 && nIns >= 2)
   {
     mCore.process(inputs[0], inputs[1], outputs[0], outputs[1], nFrames);
-    for (int c = 2; c < nChans; ++c)
+    for (int c = 2; c < nOuts; ++c)
       std::memcpy(outputs[c], inputs[c], nFrames * sizeof(sample));
+  }
+  else
+  {
+    mCore.process(inputs[0], outputs[0], nFrames);
+    for (int c = 1; c < nOuts; ++c)
+      std::memcpy(outputs[c], outputs[0], nFrames * sizeof(sample));
   }
 }
 
 void GRMBandPass::OnReset()
 {
-  mCore.prepare(GetSampleRate(), GetBlockSize());
-  // 流已停止, 直接同步一次, 避免载入后从默认值滑音到目标值
+  // 先同步参数再 prepare: 让平滑状态快照取到真实参数, 避免载入后从默认值滑音
   mCore.setParams(CollectParams());
+  mCore.prepare(GetSampleRate(), GetBlockSize());
 }
 
 void GRMBandPass::OnParamChange(int paramIdx, EParamSource source, int sampleOffset)
@@ -281,6 +282,8 @@ void GRMBandPass::OnParamChangeUI(int paramIdx, EParamSource source)
 {
   // 兜底发布: 部分格式 (如 APP) 的 UI 拖动不经宿主回合到 OnParamChange
   PublishParamsToCore();
+  if (source == EParamSource::kUI)
+    MaybePushGestureUndo();
   UpdateParamDisplays();
 }
 #endif
@@ -328,6 +331,7 @@ void GRMBandPass::RefreshAfterEdit()
   }
 #endif
   UpdateParamDisplays();
+  MarkStateStable();
 }
 
 void GRMBandPass::UpdateParamDisplays()
@@ -394,9 +398,47 @@ void GRMBandPass::ApplySnapshot(const ParamSnapshot& s)
 
 void GRMBandPass::PushUndo()
 {
-  mUndoStack.push_back(Snapshot());
+  PushUndoSnapshot(Snapshot());
+}
+
+void GRMBandPass::PushUndoSnapshot(const ParamSnapshot& s)
+{
+  if (!mUndoStack.empty() && mUndoStack.back() == s) return;  // 与栈顶相同则不入栈
+  mUndoStack.push_back(s);
   if (mUndoStack.size() > 100) mUndoStack.pop_front();
   mRedoStack.clear();
+}
+
+// iPlug2 无手势开始/结束回调: 以 kUI 参数事件的到达间隔判断,
+// 超过 kGestureGapSec 视为一次新手势, 入栈"手势前"的稳定快照;
+// 手势结束后由 OnIdle 把最终状态固化为新的稳定快照
+static constexpr double kGestureGapSec = 0.4;
+
+void GRMBandPass::MaybePushGestureUndo()
+{
+  using namespace std::chrono;
+  const double now = duration<double>(steady_clock::now().time_since_epoch()).count();
+  if (now - mLastUIChangeTime > kGestureGapSec)
+    PushUndoSnapshot(mStableSnapshot);
+  mLastUIChangeTime = now;
+  mGesturePending = true;
+}
+
+void GRMBandPass::OnIdle()
+{
+  using namespace std::chrono;
+  const double now = duration<double>(steady_clock::now().time_since_epoch()).count();
+  if (mGesturePending && now - mLastUIChangeTime > kGestureGapSec)
+  {
+    mStableSnapshot = Snapshot();
+    mGesturePending = false;
+  }
+}
+
+void GRMBandPass::MarkStateStable()
+{
+  mStableSnapshot = Snapshot();
+  mGesturePending = false;
 }
 
 void GRMBandPass::Undo()

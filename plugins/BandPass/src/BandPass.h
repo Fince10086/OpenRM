@@ -24,9 +24,6 @@ enum EParams
   kAgOn,
   kAgAmount,
   kAgRate,
-  // 时间区 (预留)
-  kTime1,
-  kTime2,
   kNumParams
 };
 
@@ -57,6 +54,7 @@ public:
   void OnParamChange(int paramIdx, EParamSource source, int sampleOffset) override;
   void OnParamChangeUI(int paramIdx, EParamSource source) override;
 #endif
+  void OnIdle() override;
 
 private:
   grm::BandPassCore mCore;
@@ -75,6 +73,11 @@ private:
   std::array<ParamSnapshot, kNumPresets> mPresets;
   int mCurrentPreset = 0;
   std::deque<ParamSnapshot> mUndoStack, mRedoStack;
+  // 拖动手势检测: iPlug2 无手势回调, 以 kUI 参数事件间隔是否超过阈值判断新手势,
+  // 新手势开始时推入"手势前"的稳定快照
+  ParamSnapshot mStableSnapshot {};
+  double mLastUIChangeTime = -1e9;   // steady_clock 秒
+  bool mGesturePending = false;      // 有拖动事件待固化为稳定快照
 
   grm::BandPassCore::Params CollectParams() const;  // 从参数对象打包 DSP 参数
   void PublishParamsToCore();                       // 打包并发布到信箱 (仅编辑器线程调用)
@@ -89,6 +92,9 @@ private:
   ParamSnapshot Snapshot() const;
   void ApplySnapshot(const ParamSnapshot& s);
   void PushUndo();
+  void PushUndoSnapshot(const ParamSnapshot& s);  // 带去重的入栈
+  void MaybePushGestureUndo();                    // kUI 拖动事件: 判断是否新手势并入栈
+  void MarkStateStable();                         // 批量操作后刷新"稳定快照"
   void Undo();
   void Redo();
   void SaveToSlot(int idx);
