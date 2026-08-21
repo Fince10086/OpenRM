@@ -260,13 +260,18 @@ public:
   : ORMSlider(bounds, paramIdx, label, style, EDirection::Vertical) {}
 
 protected:
-  IRECT TextRect() const { return IRECT(mRECT.R - kHeaderW, mRECT.T, mRECT.R, mRECT.B); }
+  static constexpr float kTextW = 20.f;   // text column width
+  static constexpr float kTextGap = 4.f;  // right padding inside the control
+
+  IRECT TextRect() const
+  {
+    return IRECT(mRECT.R - kTextW - kTextGap, mRECT.T, mRECT.R - kTextGap, mRECT.B);
+  }
 
   void OnResize() override
   {
-    mWidgetBounds = mRECT.GetReducedFromRight(kHeaderW);
-    mTrackBounds  = mWidgetBounds.GetPadded(-mHandleSize)
-                                 .GetMidHPadded(mTrackSize);
+    mWidgetBounds = mRECT.GetReducedFromRight(kTextW + kTextGap);
+    mTrackBounds  = mWidgetBounds.GetMidHPadded(mTrackSize);
     SetTargetRECT(mRECT);
     mValueBounds = IRECT();
     SetDirty(false);
@@ -431,8 +436,8 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
     mBandR = new BandRangeSlider(IRECT(56, 482, 668, 528), { kFreqR, kBwR }, bandHooks(kFreqR, kBwR));
     pGraphics->AttachControl(mBandR);
 
-    pGraphics->AttachControl(new GainSlider(IRECT(672, 38, 730, 218), kGainL, "GAIN L", style));
-    pGraphics->AttachControl(new GainSlider(IRECT(672, 296, 730, 476), kGainR, "GAIN R", style));
+    pGraphics->AttachControl(new GainSlider(IRECT(672, 68, 730, 218), kGainL, "GAIN L", style));
+    pGraphics->AttachControl(new GainSlider(IRECT(672, 326, 730, 476), kGainR, "GAIN R", style));
 
     pGraphics->AttachControl(new ITextControl(IRECT(kCol1X, 38, 1050, 60), "PRESETS",
       IText(20, COL_BLACK, "Outfit-Bold", EAlign::Near, EVAlign::Middle)));
