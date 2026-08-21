@@ -426,12 +426,12 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
       };
     };
 
-    mPadL = new FilterNodePad(IRECT(56, 38, 668, 218), { kFreqL, kBwL }, "LEFT", style, padHooks(kFreqL, kBwL));
+    mPadL = new FilterNodePad(IRECT(20, 38, 668, 218), { kFreqL, kBwL }, "LEFT", style, padHooks(kFreqL, kBwL));
     pGraphics->AttachControl(mPadL);
     mBandL = new BandRangeSlider(IRECT(56, 224, 668, 270), { kFreqL, kBwL }, bandHooks(kFreqL, kBwL));
     pGraphics->AttachControl(mBandL);
 
-    mPadR = new FilterNodePad(IRECT(56, 296, 668, 476), { kFreqR, kBwR }, "RIGHT", style, padHooks(kFreqR, kBwR));
+    mPadR = new FilterNodePad(IRECT(20, 296, 668, 476), { kFreqR, kBwR }, "RIGHT", style, padHooks(kFreqR, kBwR));
     pGraphics->AttachControl(mPadR);
     mBandR = new BandRangeSlider(IRECT(56, 482, 668, 528), { kFreqR, kBwR }, bandHooks(kFreqR, kBwR));
     pGraphics->AttachControl(mBandR);

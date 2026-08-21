@@ -29,6 +29,15 @@ public:
     SetTextEntryLength(20);
   }
 
+  void OnResize() override
+  {
+    IVXYPadControl::OnResize();
+    // Reserve the side-label strip on the left so the label itself stays
+    // inside the control's RECT (drawing is clipped to it).
+    mWidgetBounds = mWidgetBounds.GetReducedFromLeft(kSideW);
+    SetDirty(false);
+  }
+
   void Draw(IGraphics& g) override
   {
     IVXYPadControl::Draw(g);
