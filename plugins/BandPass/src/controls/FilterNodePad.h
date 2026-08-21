@@ -234,14 +234,16 @@ private:
   {
     const IRECT& w = mWidgetBounds;
     const float top = w.T + kTopPad;
-    const float srBottom = w.B - kGap - kCutRowH - kGap - kSliderH;
-    return IRECT(w.L, top, w.R, srBottom);
+    // 滑块条紧贴 pad 框底边: 绘图区下沿 = 滑块条上沿
+    const float srTop = w.B - kBottomInset - kSliderH;
+    return IRECT(w.L, top, w.R, srTop);
   }
 
   IRECT SliderRect() const
   {
     const IRECT& w = mWidgetBounds;
-    const float top = w.B - kGap - kCutRowH - kGap - kSliderH;
+    // 滑块条紧贴 pad 框底边 (仅留 kBottomInset 避免压到 2px 黑框)
+    const float top = w.B - kBottomInset - kSliderH;
     return IRECT(w.L + 2.f, top, w.R - 2.f, top + kSliderH);
   }
 
@@ -371,9 +373,10 @@ private:
   static constexpr float kSideW    = 22.f;  // 角标 / 竖排标签向外伸出量
   static constexpr float kSideH    = 25.f;   // 角标向上/下伸出量 (贴边)
   static constexpr float kTopPad   = 18.f;
-  static constexpr float kCutRowH  = 16.f;
+  static constexpr float kCutRowH  = 16.f;  // 保留常量 (当前 CutRow 不绘制)
   static constexpr float kSliderH  = 20.f;
   static constexpr float kGap      = 4.f;
+  static constexpr float kBottomInset = 2.f; // 滑块条与 pad 框底边的留白 (紧贴)
   static constexpr float kMinGap   = 0.01f; // 两控制点最小归一化间隔 (~2/3 半音)
 
   Hooks mHooks;

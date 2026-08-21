@@ -23,6 +23,7 @@ static const IColor COL_DIM    (255, 102, 102, 102);  // #666 次要文字
 static const IColor COL_FAINT  (255, 153, 153, 153);  // #999 弱化文字/刻度
 static const IColor COL_LINE   (255, 204, 204, 204);  // #ccc 细网格线
 static const IColor COL_TRACK  (255, 236, 236, 236);  // 滑轨底 #ececec
+static const IColor COL_FILL   (255, 170, 170, 170);  // 滑块已填充电平: 柔和深灰 (非纯黑)
 static const IColor COL_HOVER  (255, 240, 240, 240);  // #f0f0f0 hover
 
 // 旋钮/滑条/XY pad 主样式: kFG=白(手柄, 黑框描边), kX1=黑(滑轨/弧线填充), kSH=浅灰轨底
@@ -86,6 +87,71 @@ public:
       g.FillRect(IColor(255, 0, 0, 0), IRECT(x - 1.f, mTrackBounds.B, x + 1.f, mTrackBounds.B + 3.f));
     }
   }
+};
+
+// ---------------------------------------------------------------------------
+// 极简滑块: 轨道浅灰、无黑描边; 已填充电平用柔和深灰 (非纯黑);
+// 圆形手柄白底黑描边 (与 pad 节点一致, 保留描边). 可选在滑块右侧绘制竖排标签
+// + 实时数值 (模仿 LEFT/RIGHT 竖排字样, 用于 GAIN 滑块)
+// ---------------------------------------------------------------------------
+class GRMSlider : public IVSliderControl
+{
+public:
+  GRMSlider(const IRECT& bounds, int paramIdx, const char* label, const IVStyle& style,
+            EDirection dir, const char* sideText = nullptr)
+  : IVSliderControl(bounds, paramIdx, label, style, false, dir)
+  , mSideText(sideText ? sideText : "")
+  {
+    if (mSideText.GetLength() > 0)
+    {
+      mStyle.showLabel = false;  // 关闭内置标签, 改用手绘竖排标签
+      mStyle.showValue = false;  // 关闭内置数值, 改用手绘数值
+    }
+  }
+
+  void Draw(IGraphics& g) override
+  {
+    IVSliderControl::Draw(g);
+    DrawSideLabel(g);
+  }
+
+  void DrawTrack(IGraphics& g, const IRECT& filledArea) override
+  {
+    const float cr = GetRoundedCornerRadius(mTrackBounds);
+    // 轨道底: 浅灰, 无黑描边
+    g.FillRoundRect(COL_TRACK, mTrackBounds, cr, &mBlend);
+    // 已填充 (电平) 部分: 柔和深灰, 非纯黑
+    if (filledArea.W() > 0.5f && filledArea.H() > 0.5f)
+      g.FillRoundRect(COL_FILL, filledArea, cr, &mBlend);
+  }
+
+  void DrawHandle(IGraphics& g, const IRECT& bounds) override
+  {
+    const float cx = bounds.MW(), cy = bounds.MH();
+    const float r  = bounds.W() * 0.5f;
+    // 圆形手柄: 白底 + 黑色描边 (保留描边, 与 pad 节点一致)
+    g.FillCircle(COLOR_WHITE, cx, cy, r);
+    g.DrawCircle(COL_BLACK, cx, cy, r - 0.75f, nullptr, 1.5f);
+  }
+
+private:
+  void DrawSideLabel(IGraphics& g)
+  {
+    if (mSideText.GetLength() == 0) return;
+    const IRECT r = mRECT;
+    // 竖向字样 (逆时针 90°, 与 LEFT/RIGHT 一致)
+    const float textCx = r.R + 12.f;
+    IText gt(11, COL_BLACK, "Outfit-SemiBold", EAlign::Center, EVAlign::Middle, -90.f);
+    g.DrawText(gt, mSideText.Get(), IRECT(textCx - 6.f, r.T, textCx + 6.f, r.B));
+    // 实时数值: 横向, 置于竖排字样右侧
+    const float numCx = textCx + 6.f + 13.f;
+    char buf[16];
+    std::snprintf(buf, 16, "%.2f", GetParam()->Value());
+    IText nt(9, COL_DIM, "Outfit", EAlign::Center, EVAlign::Middle);
+    g.DrawText(nt, buf, IRECT(numCx - 13.f, r.MH() - 7.f, numCx + 13.f, r.MH() + 7.f));
+  }
+
+  WDL_String mSideText;
 };
 
 // ---------------------------------------------------------------------------
@@ -208,9 +274,9 @@ GRMBandPass::GRMBandPass(const InstanceInfo& info)
     mPadR = new FilterNodePad(IRECT(20, 302, 668, 534), { kFreqR, kBwR }, "RIGHT", style, padHooks(kFreqR, kBwR));
     pGraphics->AttachControl(mPadR);
 
-    // gain 纵向列 (最右侧, 与各自 pad 对齐)
-    pGraphics->AttachControl(new IVSliderControl(IRECT(692, 38, 716, 270), kGainL, "GAIN L", style, false, EDirection::Vertical));
-    pGraphics->AttachControl(new IVSliderControl(IRECT(692, 302, 716, 534), kGainR, "GAIN R", style, false, EDirection::Vertical));
+    // gain 纵向列 (紧贴 pad 右侧, 留一点间隙; 上下边与 pad 对齐; 竖排 GAIN 字样 + 数值在右侧)
+    pGraphics->AttachControl(new GRMSlider(IRECT(672, 38, 696, 270), kGainL, "GAIN L", style, EDirection::Vertical, "GAIN"));
+    pGraphics->AttachControl(new GRMSlider(IRECT(672, 302, 696, 534), kGainR, "GAIN R", style, EDirection::Vertical, "GAIN"));
 
     // ================= 右侧控制面板 =================
     pGraphics->AttachControl(new ITextControl(IRECT(740, 14, 900, 32), "PRESETS",
@@ -244,7 +310,7 @@ GRMBandPass::GRMBandPass(const InstanceInfo& info)
     pGraphics->AttachControl(MakeMomentary(IRECT(804, 380, 860, 402), [this](IControl*) { CopyRtoL(); }, "R->L", btnStyle));
     pGraphics->AttachControl(new InvertToggleControl(IRECT(868, 380, 924, 402), kLink, " ", toggleStyle, "LINK", "LINK")); // 黑白反转表示状态
     pGraphics->AttachControl(MakeMomentary(IRECT(932, 380, 988, 402), [this](IControl*) { FlipLR(); }, "FLIP", btnStyle));
-    pGraphics->AttachControl(new IVSliderControl(IRECT(740, 410, 988, 436), kMix, "MIX", style, false, EDirection::Horizontal));
+    pGraphics->AttachControl(new GRMSlider(IRECT(740, 410, 988, 436), kMix, "MIX", style, EDirection::Horizontal));
 
     // undo / redo (统一按钮尺寸 56x22)
     pGraphics->AttachControl(MakeMomentary(IRECT(740, 448, 796, 470), [this](IControl*) { Undo(); }, "UNDO", btnStyle));
