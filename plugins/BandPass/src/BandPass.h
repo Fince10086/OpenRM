@@ -5,8 +5,6 @@
 
 #include <array>
 #include <deque>
-#include <string>
-#include <vector>
 
 // ---------------- 参数枚举 ----------------
 enum EParams
@@ -31,16 +29,9 @@ enum EParams
 
 using ParamSnapshot = std::array<double, kNumParams>;
 
-constexpr int kNumPresets = 16;  // 预设槽位
+constexpr int kNumPresets = 24;  // 预设槽位总数 (底部 1..8 + 右侧 9..24)
 constexpr int kNumQuick   = 8;   // morph 条端点槽位 (预设 1..8)
-constexpr int kNumRecent  = 8;   // 底部"最近使用"槽位数
-
-// 单个预设: 名称 + 11 个参数
-struct Preset
-{
-  std::string name;      // 预设名 (默认 "Preset N")
-  ParamSnapshot values;  // 参数快照
-};
+constexpr int kNumBottom  = 8;   // 底部固定槽位数 (预设 1..8)
 
 using namespace iplug;
 using namespace igraphics;
@@ -51,6 +42,7 @@ namespace iplug { namespace igraphics {
   class IVButtonControl;
   class IVSliderControl;
   class FilterNodePad;
+  class PresetSlotControl;
 } }
 
 class GRMBandPass final : public Plugin
@@ -77,13 +69,15 @@ private:
   FilterNodePad*  mPadR = nullptr;
 
   // 预设 / undo / redo
-  std::array<Preset, kNumPresets> mPresets;   // 16 槽: 名称 + 参数
+  std::array<ParamSnapshot, kNumPresets> mPresets;   // 24 槽, 按"编号"索引 (无名字)
+  std::array<int, kNumPresets> mSlotNumber;          // 按钮位置 → 编号 映射 (拖拽交换编号+内容整体对调)
   ParamSnapshot mDefaultSnapshot {};          // 出厂默认值 (右键"恢复默认"用)
   int mCurrentPreset = 0;
-  std::vector<int> mRecentSlots;              // 最近使用槽索引 (新→旧), 上限 kNumRecent
   double mMorphPos = 0.0;                     // morph 条位置 (0..kNumQuick-1, JSON 恢复用)
-  IVButtonControl* mRecentButtons[kNumRecent] = {};  // 底部最近使用按钮指针 (刷新标签用)
   IVSliderControl* mMorphSlider = nullptr;    // morph 条指针 (LOAD 后恢复位置)
+  PresetSlotControl* mSlotButtons[kNumPresets] = {};  // 24 个槽按钮 (拖拽落点判定用)
+  int mDragSourceSlot = -1;                   // 拖拽中的源槽 (-1 = 无拖拽)
+  int mDragTargetSlot = -1;                   // 拖拽中的目标槽 (高亮用)
   WDL_String mDialogFileName, mDialogPath;    // 文件对话框的 fileName/path (成员避免悬垂引用)
   std::deque<ParamSnapshot> mUndoStack, mRedoStack;
   // 拖动手势检测: iPlug2 无手势回调, 以 kUI 参数事件间隔是否超过阈值判断新手势,
@@ -117,15 +111,17 @@ private:
   void SaveToSlot(int idx);
   void LoadSlot(int idx);
   void RestoreDefault(int idx);                       // 恢复槽为出厂默认
+  void SwapSlots(int posA, int posB);                 // 拖拽交换两个按钮的编号绑定 (编号+内容整体对调)
+  void RefreshSlotLabels();                           // 刷新全部按钮的编号标签
 
-  // 预设文件 (JSON) / 最近使用 / 重命名
+  // 预设文件 (JSON) / 拖拽
   void SaveFile();                                    // SAVE 按钮: 弹保存对话框
   void LoadFile();                                    // LOAD 按钮: 弹打开对话框
   void WritePresetFileTo(const std::string& path, std::string& err);
   void ReadPresetFileFrom(const std::string& path, std::string& err);
-  void AddToRecent(int idx);
-  void UpdateRecentRow();                             // 刷新底部最近使用按钮标签
-  void CommitRename(int idx, const char* name);       // 行内重命名提交
+  void OnDragBegin(int src);                          // 拖拽开始 (源槽高亮/光标)
+  void OnDragMove(float x, float y);                  // 拖拽移动 (更新目标高亮)
+  void OnDragDrop(int src, float x, float y);         // 松手: 判定落点并交换
 
   // 声像区: 数值拷贝/交换 (click 触发, 非开关)
   void CopyLtoR();   // 把当前 L 的数值发送给 R

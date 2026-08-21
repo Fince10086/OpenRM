@@ -2,8 +2,8 @@
 // ============================================================================
 // PresetFileIO.h — 预设库 JSON 读写 (header-only, 不依赖插件类型)
 //
-// 通用容器: PresetFileData 存"名称 + 参数值数组", 由插件层负责类型转换与
-// 数量校验 (kNumPresets / kNumParams)。文件格式见 WritePresetFile 注释。
+// 通用容器: presets 存"参数值数组" (无名字), 由插件层负责数量校验
+// (kNumPresets / kNumParams)。文件格式见 WritePresetFile 注释。
 // ============================================================================
 #include <nlohmann/json.hpp>
 
@@ -12,25 +12,19 @@
 #include <utility>
 #include <vector>
 
-struct PresetFileEntry
-{
-  std::string name;            // 预设名
-  std::vector<double> values;  // 参数值 (期望 kNumParams 个)
-};
-
 struct PresetFileData
 {
-  std::vector<PresetFileEntry> presets;  // 期望 kNumPresets 个
-  std::vector<double> currentValues;     // 当前参数快照 (期望 kNumParams 个)
-  int currentPreset = 0;                 // 当前选中槽位
-  double morphPos = 0.0;                 // morph 条位置
+  std::vector<std::vector<double>> presets;  // 期望 kNumPresets 个, 每个 kNumParams 个
+  std::vector<double> currentValues;         // 当前参数快照 (期望 kNumParams 个)
+  int currentPreset = 0;                     // 当前选中槽位
+  double morphPos = 0.0;                     // morph 条位置
 };
 
-// JSON 格式 (schema v1):
+// JSON 格式 (schema v2 — 无预设名, 纯数字槽位):
 // {
-//   "version": 1,
-//   "presetCount": 16,
-//   "presets": [ { "name": "Preset 1", "values": [ ...11 个数... ] }, ... ],
+//   "version": 2,
+//   "presetCount": 24,
+//   "presets": [ [ ...11 个数... ], ... 24 个 ],
 //   "currentPreset": 3,
 //   "currentValues": [ ...11 个数... ],
 //   "morphPos": 0.25
@@ -42,14 +36,9 @@ inline bool WritePresetFile(const std::string& path, const PresetFileData& data,
   try
   {
     nlohmann::json j;
-    j["version"] = 1;
+    j["version"] = 2;
     j["presetCount"] = static_cast<int>(data.presets.size());
-
-    nlohmann::json arr = nlohmann::json::array();
-    for (const auto& p : data.presets)
-      arr.push_back({{"name", p.name}, {"values", p.values}});
-    j["presets"] = arr;
-
+    j["presets"] = data.presets;
     j["currentPreset"] = data.currentPreset;
     j["currentValues"] = data.currentValues;
     j["morphPos"] = data.morphPos;
@@ -94,9 +83,9 @@ inline bool ReadPresetFile(const std::string& path, PresetFileData& out, std::st
 
   try
   {
-    if (!j.is_object() || !j.contains("version") || j["version"].get<int>() != 1)
+    if (!j.is_object() || !j.contains("version") || j["version"].get<int>() != 2)
     {
-      err = "Unsupported preset file (expected version 1)";
+      err = "Unsupported preset file (expected version 2)";
       return false;
     }
     if (!j.contains("presets") || !j["presets"].is_array())
@@ -108,12 +97,11 @@ inline bool ReadPresetFile(const std::string& path, PresetFileData& out, std::st
     out.presets.clear();
     for (const auto& item : j["presets"])
     {
-      PresetFileEntry e;
-      e.name = item.value("name", "");
-      if (item.contains("values") && item["values"].is_array())
-        for (const auto& v : item["values"])
-          e.values.push_back(v.get<double>());
-      out.presets.push_back(std::move(e));
+      std::vector<double> vals;
+      if (item.is_array())
+        for (const auto& v : item)
+          vals.push_back(v.get<double>());
+      out.presets.push_back(std::move(vals));
     }
 
     out.currentPreset = j.value("currentPreset", 0);
