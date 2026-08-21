@@ -262,16 +262,24 @@ public:
 protected:
   static constexpr float kTextW = 20.f;   // text column width
   static constexpr float kTextGap = 4.f;  // right padding inside the control
+  static constexpr float kPlotTopInset = 30.f; // FilterNodePad's kTopPad
 
   IRECT TextRect() const
   {
     return IRECT(mRECT.R - kTextW - kTextGap, mRECT.T, mRECT.R - kTextGap, mRECT.B);
   }
 
+  // Top of the visible (extended) track = pad plot top.
+  float TrackVisTop() const { return mRECT.T + kPlotTopInset; }
+
   void OnResize() override
   {
     mWidgetBounds = mRECT.GetReducedFromRight(kTextW + kTextGap);
-    mTrackBounds  = mWidgetBounds.GetMidHPadded(mTrackSize);
+    // Shrink the handle-travel range so that after the +/-handleSize render
+    // extension the visible track ends align with the pad plot top / bottom.
+    mTrackBounds  = mWidgetBounds.GetReducedFromTop(kPlotTopInset + mHandleSize)
+                                 .GetReducedFromBottom(mHandleSize)
+                                 .GetMidHPadded(mTrackSize);
     SetTargetRECT(mRECT);
     mValueBounds = IRECT();
     SetDirty(false);
@@ -280,7 +288,7 @@ protected:
   IRECT ValueRect() const override
   {
     const IRECT hdr = TextRect();
-    return IRECT(hdr.L - 4.f, hdr.T, hdr.R, hdr.MH());
+    return IRECT(hdr.L - 4.f, TrackVisTop(), hdr.R, hdr.MH());
   }
 
   void DrawHeader(IGraphics& g, float) override
@@ -289,10 +297,12 @@ protected:
     if (GetParam()) GetParam()->GetDisplay(ds, false);
 
     const IRECT hdr = TextRect();
-    g.DrawText(IText(20, COL_DIM, "Outfit", EAlign::Center, EVAlign::Middle, 90.f),
-               ds.Get(), IRECT(hdr.L, hdr.T, hdr.R, hdr.MH()));
-    g.DrawText(IText(20, COL_BLACK, "Outfit-SemiBold", EAlign::Center, EVAlign::Middle, 90.f),
-               mHeaderLabel.Get(), IRECT(hdr.L, hdr.MH(), hdr.R, hdr.B));
+    // Value: top edge flush with the track's visible top; label: bottom edge
+    // flush with the track's visible bottom.
+    g.DrawText(IText(20, COL_DIM, "Outfit", EAlign::Center, EVAlign::Top, 90.f),
+               ds.Get(), IRECT(hdr.L, TrackVisTop(), hdr.R, hdr.B));
+    g.DrawText(IText(20, COL_BLACK, "Outfit-SemiBold", EAlign::Center, EVAlign::Bottom, 90.f),
+               mHeaderLabel.Get(), hdr);
   }
 };
 
@@ -436,8 +446,8 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
     mBandR = new BandRangeSlider(IRECT(56, 482, 668, 528), { kFreqR, kBwR }, bandHooks(kFreqR, kBwR));
     pGraphics->AttachControl(mBandR);
 
-    pGraphics->AttachControl(new GainSlider(IRECT(672, 68, 730, 218), kGainL, "GAIN L", style));
-    pGraphics->AttachControl(new GainSlider(IRECT(672, 326, 730, 476), kGainR, "GAIN R", style));
+    pGraphics->AttachControl(new GainSlider(IRECT(672, 38, 730, 218), kGainL, "GAIN L", style));
+    pGraphics->AttachControl(new GainSlider(IRECT(672, 296, 730, 476), kGainR, "GAIN R", style));
 
     pGraphics->AttachControl(new ITextControl(IRECT(kCol1X, 38, 1050, 60), "PRESETS",
       IText(20, COL_BLACK, "Outfit-Bold", EAlign::Near, EVAlign::Middle)));
@@ -507,9 +517,7 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
       const float trackL = 56.f + kHandleInset;
       const float trackR = 668.f - kHandleInset;
       const float tick = trackL + (trackR - trackL) * i / (kNumQuick - 1.f);
-      float l = tick - 19.5f;                       // centred on the tick
-      if (i == 0) l = tick;                         // first: left-aligned
-      else if (i == kNumBottom - 1) l = tick - 39.f; // last: right-aligned
+      const float l = tick - 19.5f;                 // centred on the tick
       PresetSlotControl* btn = new PresetSlotControl(
         IRECT(l, 560, l + 39.f, 590),
         makeSlotHooks(i), label, btnStyle);
