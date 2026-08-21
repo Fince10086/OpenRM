@@ -340,6 +340,8 @@ GRMBandPass::GRMBandPass(const InstanceInfo& info)
 
     pGraphics->AttachControl(MakeMomentary(IRECT(kCol1X, 472, kCol1X + kBtnW, 494), [this](IControl*) { Undo(); }, "UNDO", btnStyle));
     pGraphics->AttachControl(MakeMomentary(IRECT(kCol2X, 472, kCol2X + kBtnW, 494), [this](IControl*) { Redo(); }, "REDO", btnStyle));
+    pGraphics->AttachControl(MakeMomentary(IRECT(kCol1X, 500, kCol1X + kBtnW, 522), [this](IControl*) { SaveFile(); }, "SAVE", btnStyle));
+    pGraphics->AttachControl(MakeMomentary(IRECT(kCol2X, 500, kCol2X + kBtnW, 522), [this](IControl*) { LoadFile(); }, "LOAD", btnStyle));
 
     for (int i = 0; i < kNumBottom; ++i)
     {
@@ -359,13 +361,11 @@ GRMBandPass::GRMBandPass(const InstanceInfo& info)
         OnMorphDrag(pCtrl->GetValue(0));
       }, btnStyle);
     pGraphics->AttachControl(mMorphSlider);
-    pGraphics->AttachControl(MakeMomentary(IRECT(740, 546, 796, 568), [this](IControl*) { SaveFile(); }, "SAVE", btnStyle));
-    pGraphics->AttachControl(MakeMomentary(IRECT(804, 546, 860, 568), [this](IControl*) { LoadFile(); }, "LOAD", btnStyle));
 
-    pGraphics->AttachControl(new ITextControl(IRECT(kCol1X, 500, 988, 524), "GRM BANDPASS",
-      IText(16, COL_BLACK, "Outfit-Bold", EAlign::Far, EVAlign::Middle)));
-    pGraphics->AttachControl(new ITextControl(IRECT(868, 528, 988, 544), "v" PLUG_VERSION_STR,
-      IText(9, COL_FAINT, "Outfit", EAlign::Far, EVAlign::Middle)));
+    pGraphics->AttachControl(new ITextControl(IRECT(kCol1X, 534, kPanelR, 558), "GRM BANDPASS",
+      IText(16, COL_BLACK, "Outfit-Bold", EAlign::Near, EVAlign::Middle)));
+    pGraphics->AttachControl(new ITextControl(IRECT(kCol1X, 558, kPanelR, 574), "v" PLUG_VERSION_STR,
+      IText(9, COL_FAINT, "Outfit", EAlign::Near, EVAlign::Middle)));
 
     pGraphics->EnableTooltips(true);
     UpdatePads();
