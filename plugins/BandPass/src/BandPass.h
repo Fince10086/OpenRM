@@ -34,6 +34,7 @@ using namespace igraphics;
 namespace iplug { namespace igraphics {
   class IVSliderControl;
   class FilterNodePad;
+  class BandRangeSlider;
   class PresetSlotControl;
 } }
 
@@ -56,6 +57,8 @@ private:
 
   FilterNodePad*  mPadL = nullptr;
   FilterNodePad*  mPadR = nullptr;
+  BandRangeSlider* mBandL = nullptr;
+  BandRangeSlider* mBandR = nullptr;
 
   std::array<ParamSnapshot, kNumPresets> mPresets;
   std::array<int, kNumPresets> mSlotNumber;

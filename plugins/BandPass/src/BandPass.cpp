@@ -3,6 +3,7 @@
 #include "IControls.h"
 #include "Theme.h"
 #include "controls/FilterNodePad.h"
+#include "controls/BandRangeSlider.h"
 #include "controls/PresetSlotControl.h"
 #include "PresetFileIO.h"
 
@@ -275,17 +276,27 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
 
     auto padHooks = [&](int kF, int kB) -> FilterNodePad::Hooks {
       return FilterNodePad::Hooks{
+        [this, kF, kB](int id, double v) { EditCorner(kF, kB, id, v); },
+      };
+    };
+
+    auto bandHooks = [&](int kF, int kB) -> BandRangeSlider::Hooks {
+      return BandRangeSlider::Hooks{
         [this] { MaybePushGestureUndo(); },
         [this, kF, kB](int id, double v) { EditCorner(kF, kB, id, v); },
         [this, kF, kB](double lN, double hN) { EditBand(kF, kB, lN, hN); },
       };
     };
 
-    mPadL = new FilterNodePad(IRECT(20, 38, 668, 270), { kFreqL, kBwL }, "LEFT", style, padHooks(kFreqL, kBwL));
+    mPadL = new FilterNodePad(IRECT(20, 38, 668, 236), { kFreqL, kBwL }, "LEFT", style, padHooks(kFreqL, kBwL));
     pGraphics->AttachControl(mPadL);
+    mBandL = new BandRangeSlider(IRECT(20, 242, 668, 270), { kFreqL, kBwL }, bandHooks(kFreqL, kBwL));
+    pGraphics->AttachControl(mBandL);
 
-    mPadR = new FilterNodePad(IRECT(20, 302, 668, 534), { kFreqR, kBwR }, "RIGHT", style, padHooks(kFreqR, kBwR));
+    mPadR = new FilterNodePad(IRECT(20, 302, 668, 500), { kFreqR, kBwR }, "RIGHT", style, padHooks(kFreqR, kBwR));
     pGraphics->AttachControl(mPadR);
+    mBandR = new BandRangeSlider(IRECT(20, 506, 668, 534), { kFreqR, kBwR }, bandHooks(kFreqR, kBwR));
+    pGraphics->AttachControl(mBandR);
 
     pGraphics->AttachControl(new ORMSlider(IRECT(672, 38, 730, 270), kGainL, "GAIN L", style, EDirection::Vertical));
     pGraphics->AttachControl(new ORMSlider(IRECT(672, 302, 730, 534), kGainR, "GAIN R", style, EDirection::Vertical));
@@ -521,11 +532,23 @@ void ORMBandPass::UpdatePads()
     mPadL->SetValueFromDelegate(GetParam(kBwL)->GetNormalized(), 1);
     mPadL->SetDirty(false);
   }
+  if (mBandL)
+  {
+    mBandL->SetValueFromDelegate(GetParam(kFreqL)->GetNormalized(), 0);
+    mBandL->SetValueFromDelegate(GetParam(kBwL)->GetNormalized(), 1);
+    mBandL->SetDirty(false);
+  }
   if (mPadR)
   {
     mPadR->SetValueFromDelegate(GetParam(kFreqR)->GetNormalized(), 0);
     mPadR->SetValueFromDelegate(GetParam(kBwR)->GetNormalized(), 1);
     mPadR->SetDirty(false);
+  }
+  if (mBandR)
+  {
+    mBandR->SetValueFromDelegate(GetParam(kFreqR)->GetNormalized(), 0);
+    mBandR->SetValueFromDelegate(GetParam(kBwR)->GetNormalized(), 1);
+    mBandR->SetDirty(false);
   }
 }
 
