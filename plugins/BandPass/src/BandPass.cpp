@@ -325,7 +325,7 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
   GetParam(kMix)  ->InitDouble("Mix", 1., 0., 1., 0.01, "");
   GetParam(kAgOn) ->InitBool("Agitation", false);
   GetParam(kAgAmount)->InitDouble("Ag Amount", 0.1, 0., 1., 0.01, "");
-  GetParam(kAgRate)->InitDouble("Ag Rate", 1., 0.05, 20., 0.01, "Hz");
+  GetParam(kAgRate)->InitDouble("Ag Speed", 1., 0.01, 60., 0.01, "s", 0, "", IParam::ShapeExp());
 
   for (int i = 0; i < kNumPresets; ++i)
   {
@@ -354,7 +354,7 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
   {
     ParamSnapshot s = Snapshot();
     s[kFreqL] = 3000.; s[kBwL] = 1.19; s[kFreqR] = 3000.; s[kBwR] = 1.19; s[kLink] = 1.;
-    s[kAgOn] = 1.; s[kAgAmount] = 0.3; s[kAgRate] = 4.;
+    s[kAgOn] = 1.; s[kAgAmount] = 0.3; s[kAgRate] = 0.25;
     mPresets[4] = s;
   }
   {
@@ -419,7 +419,7 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
     pGraphics->AttachControl(new GainSlider(IRECT(672, 38, 730, 218), kGainL, "GAIN L", style));
     pGraphics->AttachControl(new GainSlider(IRECT(672, 296, 730, 476), kGainR, "GAIN R", style));
 
-    pGraphics->AttachControl(new ITextControl(IRECT(kCol1X, 12, 1050, 40), "PRESETS",
+    pGraphics->AttachControl(new ITextControl(IRECT(kCol1X, 38, 1050, 60), "PRESETS",
       IText(20, COL_BLACK, "Outfit-Bold", EAlign::Near, EVAlign::Middle)));
 
     auto makeSlotHooks = [this](int pos) -> PresetSlotControl::Hooks
@@ -447,21 +447,21 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
         char label[8];
         snprintf(label, 8, "%d", mSlotNumber[pos] + 1);
         PresetSlotControl* btn = new PresetSlotControl(
-          IRECT(kCol1X + c * 39, 46 + r * 32,
-                kCol1X + c * 39 + 39, 46 + r * 32 + 32),
+          IRECT(kCol1X + c * 39, 66 + r * 32,
+                kCol1X + c * 39 + 39, 66 + r * 32 + 32),
           makeSlotHooks(pos), label, btnStyle);
         btn->SetFlatGrid(true);
         mSlotButtons[pos] = btn;
         pGraphics->AttachControl(btn);
       }
     }
-    pGraphics->AttachControl(new PresetGridFrame(IRECT(kCol1X, 46, kPanelR, 46 + 128), 4, 4, 39.f, 32.f));
+    pGraphics->AttachControl(new PresetGridFrame(IRECT(kCol1X, 66, kPanelR, 66 + 128), 4, 4, 39.f, 32.f));
 
-    pGraphics->AttachControl(new ITextControl(IRECT(kCol1X, 186, 1050, 214), "AGITATION",
+    pGraphics->AttachControl(new ITextControl(IRECT(kCol1X, 202, 1050, 230), "AGITATION",
       IText(20, COL_BLACK, "Outfit-Bold", EAlign::Near, EVAlign::Middle)));
-    pGraphics->AttachControl(new InvertToggleControl(IRECT(kCol1X, 218, kCol1X + kBtnW, 248), kAgOn, " ", toggleStyle, "OFF", "ON"));
-    pGraphics->AttachControl(new ORMSlider(IRECT(kCol1X, 254, kPanelR, 296), kAgAmount, "INTENSITY", style, EDirection::Horizontal));
-    pGraphics->AttachControl(new ORMSlider(IRECT(kCol1X, 302, kPanelR, 344), kAgRate, "RATE", style, EDirection::Horizontal));
+    pGraphics->AttachControl(new FlatToggleControl(IRECT(kCol1X + 116, 203, kPanelR, 229), kAgOn, " ", toggleStyle, "OFF", "ON"));
+    pGraphics->AttachControl(new ORMSlider(IRECT(kCol1X, 236, kPanelR, 278), kAgAmount, "AMP", style, EDirection::Horizontal));
+    pGraphics->AttachControl(new ORMSlider(IRECT(kCol1X, 284, kPanelR, 326), kAgRate, "SPEED", style, EDirection::Horizontal));
 
     pGraphics->AttachControl(MakeMomentary(IRECT(kCol1X, 352, kCol1X + 78, 382), [this](IControl*) { CopyLtoR(); }, "L->R", btnStyle));
     pGraphics->AttachControl(MakeMomentary(IRECT(kCol1X + 78, 352, kPanelR, 382), [this](IControl*) { CopyRtoL(); }, "R->L", btnStyle));
@@ -577,7 +577,7 @@ orm::BandPassCore::Params ORMBandPass::CollectParams() const
   p.mix    = static_cast<float>(GetParam(kMix)->Value());
   p.agOn   = GetParam(kAgOn)->Value() > 0.5;
   p.agAmount = static_cast<float>(GetParam(kAgAmount)->Value());
-  p.agRate = GetParam(kAgRate)->Value();
+  p.agRate = 1.0 / GetParam(kAgRate)->Value(); // UI is seconds (period), core expects Hz
   return p;
 }
 
