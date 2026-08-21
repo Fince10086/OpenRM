@@ -495,10 +495,12 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
       }, btnStyle);
     pGraphics->AttachControl(mMorphSlider);
 
-    pGraphics->AttachControl(new ITextControl(IRECT(kCol1X, 554, 1060, 598), "ORM BandPass",
+    pGraphics->AttachControl(new ITextControl(IRECT(kCol1X, 552, kCol1X + 120, 586), "ORM",
+      IText(32, COL_BLACK, "Outfit-Bold", EAlign::Near, EVAlign::Bottom)));
+    pGraphics->AttachControl(new ITextControl(IRECT(kCol1X, 584, 1060, 618), "BandPass",
       IText(32, COL_BLACK, "Outfit-Bold", EAlign::Near, EVAlign::Middle)));
-    pGraphics->AttachControl(new ITextControl(IRECT(kCol1X, 598, 1060, 624), "v" PLUG_VERSION_STR,
-      IText(20, COL_FAINT, "Outfit", EAlign::Near, EVAlign::Middle)));
+    pGraphics->AttachControl(new ITextControl(IRECT(kCol1X + 92, 552, 1060, 586), "v" PLUG_VERSION_STR,
+      IText(20, COL_FAINT, "Outfit", EAlign::Near, EVAlign::Bottom)));
 
     pGraphics->EnableTooltips(true);
     UpdatePads();
