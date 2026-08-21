@@ -7,6 +7,8 @@
 #include <cstdio>
 #include <functional>
 #include <chrono>
+#include <cmath>
+#include <algorithm>
 
 // ---------------------------------------------------------------------------
 // 黑白极简配色 (模仿 nono.feizao.org / nonocross):
@@ -187,33 +189,31 @@ GRMBandPass::GRMBandPass(const InstanceInfo& info)
     toggleStyle.showValue = false;
 
     // ================= 主控区: LEFT / RIGHT 双通道 (上下堆叠) =================
-    // LEFT 模块
-    mFreqLText = new ITextControl(IRECT(24, 12, 200, 34),
-      "CENTER 1.00k", IText(13, COL_TEXT, "Outfit-SemiBold", EAlign::Far, EVAlign::Middle));
-    pGraphics->AttachControl(mFreqLText);
-    mBwLText = new ITextControl(IRECT(204, 12, 344, 34),
-      "BW 1.00", IText(13, COL_TEXT, "Outfit-SemiBold", EAlign::Far, EVAlign::Middle));
-    pGraphics->AttachControl(mBwLText);
+    // 栅格: 页边距 20, 列间距 24; 左列 pad x20..668, gain 列 x692..716, 右面板 x740..988
+    // pad 内四角可编辑 (CENTER/BANDWIDTH/LOWCUT/HIGHCUT) + 网格下方双点范围滑块;
+    // 交互换算经 hooks 交回插件层, 底层仍由 kFreq + kBw 两个自由度驱动 (low/high 为派生视图)
+    auto padHooks = [&](int kF, int kB) -> FilterNodePad::Hooks {
+      return FilterNodePad::Hooks{
+        [this] { MaybePushGestureUndo(); },
+        [this, kF, kB](int id, double v) { EditCorner(kF, kB, id, v); },
+        [this, kF, kB](double lN, double hN) { EditBand(kF, kB, lN, hN); },
+      };
+    };
 
     // LEFT 滤波节点板 (纯带通: X=中心频率, Y=带宽), 横长纵短
-    mPadL = new FilterNodePad(IRECT(24, 40, 672, 284), { kFreqL, kBwL }, "LEFT", style);
+    mPadL = new FilterNodePad(IRECT(20, 38, 668, 270), { kFreqL, kBwL }, "LEFT", style, padHooks(kFreqL, kBwL));
     pGraphics->AttachControl(mPadL);
 
-    // RIGHT 模块 (y 偏移 +284)
-    mFreqRText = new ITextControl(IRECT(24, 296, 200, 318),
-      "CENTER 1.00k", IText(13, COL_TEXT, "Outfit-SemiBold", EAlign::Far, EVAlign::Middle));
-    pGraphics->AttachControl(mFreqRText);
-    mBwRText = new ITextControl(IRECT(204, 296, 344, 318),
-      "BW 1.00", IText(13, COL_TEXT, "Outfit-SemiBold", EAlign::Far, EVAlign::Middle));
-    pGraphics->AttachControl(mBwRText);
-    pGraphics->AttachControl(mPadR = new FilterNodePad(IRECT(24, 324, 672, 568), { kFreqR, kBwR }, "RIGHT", style));
+    // RIGHT 模块
+    mPadR = new FilterNodePad(IRECT(20, 302, 668, 534), { kFreqR, kBwR }, "RIGHT", style, padHooks(kFreqR, kBwR));
+    pGraphics->AttachControl(mPadR);
 
     // gain 纵向列 (最右侧, 与各自 pad 对齐)
-    pGraphics->AttachControl(new IVSliderControl(IRECT(700, 40, 724, 284), kGainL, "GAIN L", style, false, EDirection::Vertical));
-    pGraphics->AttachControl(new IVSliderControl(IRECT(700, 324, 724, 568), kGainR, "GAIN R", style, false, EDirection::Vertical));
+    pGraphics->AttachControl(new IVSliderControl(IRECT(692, 38, 716, 270), kGainL, "GAIN L", style, false, EDirection::Vertical));
+    pGraphics->AttachControl(new IVSliderControl(IRECT(692, 302, 716, 534), kGainR, "GAIN R", style, false, EDirection::Vertical));
 
     // ================= 右侧控制面板 =================
-    pGraphics->AttachControl(new ITextControl(IRECT(748, 10, 908, 30), "PRESETS",
+    pGraphics->AttachControl(new ITextControl(IRECT(740, 14, 900, 32), "PRESETS",
       IText(12, COL_TEXT, "Outfit-Bold", EAlign::Near, EVAlign::Middle)));
 
     for (int r = 0; r < 8; ++r)
@@ -224,58 +224,59 @@ GRMBandPass::GRMBandPass(const InstanceInfo& info)
         char label[8];
         snprintf(label, 8, "%d", idx + 1);
         pGraphics->AttachControl(MakeMomentary(
-          IRECT(748 + c * 64, 36 + r * 26, 804 + c * 64, 58 + r * 26),
+          IRECT(740 + c * 64, 38 + r * 26, 796 + c * 64, 60 + r * 26),
           [this, idx](IControl*) { LoadSlot(idx); }, label, btnStyle));
       }
     }
 
     // Agitation 区 (TIME 区已移除: kTime1/kTime2 为无 DSP 行为的死参数)
-    pGraphics->AttachControl(new ITextControl(IRECT(748, 250, 908, 268), "AGITATION",
+    pGraphics->AttachControl(new ITextControl(IRECT(740, 260, 900, 278), "AGITATION",
       IText(11, COL_TEXT, "Outfit-Bold", EAlign::Near, EVAlign::Middle)));
-    pGraphics->AttachControl(new InvertToggleControl(IRECT(748, 272, 804, 294), kAgOn, " ", toggleStyle, "OFF", "ON"));
-    pGraphics->AttachControl(new IVKnobControl(IRECT(812, 268, 890, 326), kAgAmount, "INTENSITY", style));
-    pGraphics->AttachControl(new IVKnobControl(IRECT(898, 268, 976, 326), kAgRate, "RATE", style));
+    pGraphics->AttachControl(new InvertToggleControl(IRECT(740, 284, 796, 306), kAgOn, " ", toggleStyle, "OFF", "ON"));
+    pGraphics->AttachControl(new IVKnobControl(IRECT(804, 280, 882, 338), kAgAmount, "INTENSITY", style));
+    pGraphics->AttachControl(new IVKnobControl(IRECT(890, 280, 968, 338), kAgRate, "RATE", style));
 
     // 声像区
-    pGraphics->AttachControl(new ITextControl(IRECT(748, 334, 908, 352), "PAN",
+    pGraphics->AttachControl(new ITextControl(IRECT(740, 358, 900, 376), "PAN",
       IText(11, COL_TEXT, "Outfit-Bold", EAlign::Near, EVAlign::Middle)));
     // L->R / R->L / FLIP 现在是 click 触发: 拷贝/交换 L,R 数值 (非开关)
-    pGraphics->AttachControl(MakeMomentary(IRECT(748, 356, 804, 378), [this](IControl*) { CopyLtoR(); }, "L->R", btnStyle));
-    pGraphics->AttachControl(MakeMomentary(IRECT(812, 356, 868, 378), [this](IControl*) { CopyRtoL(); }, "R->L", btnStyle));
-    pGraphics->AttachControl(new InvertToggleControl(IRECT(876, 356, 932, 378), kLink, " ", toggleStyle, "LINK", "LINK")); // 黑白反转表示状态
-    pGraphics->AttachControl(MakeMomentary(IRECT(940, 356, 996, 378), [this](IControl*) { FlipLR(); }, "FLIP", btnStyle));
-    pGraphics->AttachControl(new IVSliderControl(IRECT(748, 390, 996, 416), kMix, "MIX", style, false, EDirection::Horizontal));
+    pGraphics->AttachControl(MakeMomentary(IRECT(740, 380, 796, 402), [this](IControl*) { CopyLtoR(); }, "L->R", btnStyle));
+    pGraphics->AttachControl(MakeMomentary(IRECT(804, 380, 860, 402), [this](IControl*) { CopyRtoL(); }, "R->L", btnStyle));
+    pGraphics->AttachControl(new InvertToggleControl(IRECT(868, 380, 924, 402), kLink, " ", toggleStyle, "LINK", "LINK")); // 黑白反转表示状态
+    pGraphics->AttachControl(MakeMomentary(IRECT(932, 380, 988, 402), [this](IControl*) { FlipLR(); }, "FLIP", btnStyle));
+    pGraphics->AttachControl(new IVSliderControl(IRECT(740, 410, 988, 436), kMix, "MIX", style, false, EDirection::Horizontal));
 
     // undo / redo (统一按钮尺寸 56x22)
-    pGraphics->AttachControl(MakeMomentary(IRECT(748, 430, 804, 452), [this](IControl*) { Undo(); }, "UNDO", btnStyle));
-    pGraphics->AttachControl(MakeMomentary(IRECT(812, 430, 868, 452), [this](IControl*) { Redo(); }, "REDO", btnStyle));
+    pGraphics->AttachControl(MakeMomentary(IRECT(740, 448, 796, 470), [this](IControl*) { Undo(); }, "UNDO", btnStyle));
+    pGraphics->AttachControl(MakeMomentary(IRECT(804, 448, 860, 470), [this](IControl*) { Redo(); }, "REDO", btnStyle));
 
-    // ================= 底部条 (统一按钮尺寸 56x22) =================
+    // ================= 底部条 (Q 排与 pad 左右缘对齐, morph 条贯穿 Q1..Q8) =================
     for (int i = 0; i < kNumQuick; ++i)
     {
       char label[8];
       snprintf(label, 8, "Q%d", i + 1);
       pGraphics->AttachControl(MakeMomentary(
-        IRECT(24 + i * 78, 605, 80 + i * 78, 627),
+        IRECT(20 + i * 82, 546, 94 + i * 82, 568),
         [this, i](IControl*) { LoadSlot(i); }, label, btnStyle));
     }
-    // 预设 morph 条: 贯穿 Q1..Q8, 在相邻槽位参数间平滑插值
-    pGraphics->AttachControl(new PresetMorphSlider(IRECT(24, 634, 636, 654),
+    // 预设 morph 条: 在相邻槽位参数间平滑插值; 控件矩形两端内缩 handleSize(8px),
+    // 使轨道/刻度/手柄正好落在 Q 按钮中心线上 (57 + i*82)
+    pGraphics->AttachControl(new PresetMorphSlider(IRECT(49, 572, 639, 592),
       [this](IControl* pCtrl) {
         MaybePushGestureUndo();          // 新手势起点记录 morph 前状态
         OnMorphDrag(pCtrl->GetValue(0));
       }, btnStyle));
-    pGraphics->AttachControl(MakeMomentary(IRECT(748, 605, 804, 627), [this](IControl*) { SaveToSlot(mCurrentPreset); }, "SAVE", btnStyle));
-    pGraphics->AttachControl(MakeMomentary(IRECT(812, 605, 868, 627), [this](IControl*) { LoadSlot(mCurrentPreset); }, "LOAD", btnStyle));
+    pGraphics->AttachControl(MakeMomentary(IRECT(740, 546, 796, 568), [this](IControl*) { SaveToSlot(mCurrentPreset); }, "SAVE", btnStyle));
+    pGraphics->AttachControl(MakeMomentary(IRECT(804, 546, 860, 568), [this](IControl*) { LoadSlot(mCurrentPreset); }, "LOAD", btnStyle));
 
-    // 品牌标识 + 版本号 (标题下方)
-    pGraphics->AttachControl(new ITextControl(IRECT(960, 596, 1152, 618), "GRM BANDPASS",
+    // 品牌标识 + 版本号 (右下角, 矩形避开 SAVE/LOAD 的命中区域)
+    pGraphics->AttachControl(new ITextControl(IRECT(740, 508, 988, 532), "GRM BANDPASS",
       IText(16, COL_TEXT, "Outfit-Bold", EAlign::Far, EVAlign::Middle)));
-    pGraphics->AttachControl(new ITextControl(IRECT(960, 618, 1152, 640), "v" PLUG_VERSION_STR,
+    pGraphics->AttachControl(new ITextControl(IRECT(868, 532, 988, 550), "v" PLUG_VERSION_STR,
       IText(9, COL_FAINT, "Outfit", EAlign::Far, EVAlign::Middle)));
 
     // 初始状态
-    UpdateParamDisplays();
+    UpdatePads();
   };
 #endif
 }
@@ -337,7 +338,7 @@ void GRMBandPass::OnParamChangeUI(int paramIdx, EParamSource source)
     MaybePushGestureUndo();
     MirrorLinkedParams(paramIdx);  // LINK 跟随仅响应真实 UI 手势
   }
-  UpdateParamDisplays();
+  UpdatePads();
 }
 #endif
 
@@ -383,34 +384,55 @@ void GRMBandPass::RefreshAfterEdit()
     GetUI()->SetAllControlsDirty();
   }
 #endif
-  UpdateParamDisplays();
+  UpdatePads();
   MarkStateStable();
 }
 
-void GRMBandPass::UpdateParamDisplays()
+// ---------------------------------------------------------------------------
+// pad 四角 / 范围滑块换算: 保持底层 kFreq + kBw 两个自由度, low/high 为派生视图
+//   low  = center * 2^(-bw/2),  high = center * 2^(+bw/2)
+//   center = sqrt(low*high),    bw = log2(high/low)
+// ---------------------------------------------------------------------------
+void GRMBandPass::EditCorner(int kFreq, int kBw, int cornerId, double value)
 {
-  char buf[32];
-  if (mFreqLText)
+  PushUndo();
+  const IParam* pf = GetParam(kFreq);
+  const double center = pf->FromNormalized(GetParam(kFreq)->GetNormalized());
+  const double bw = GetParam(kBw)->Value();
+  double lowHz = center * std::pow(2., -bw / 2.);
+  double highHz = center * std::pow(2., bw / 2.);
+  double nc = center, nb = bw;
+  switch (cornerId)
   {
-    FormatFreq(buf, 32, GetParam(kFreqL)->Value());
-    mFreqLText->SetStrFmt(32, "CENTER %s", buf);
+    case kCornerCenter: nc = value;                                  nb = bw;    break;
+    case kCornerBw:     nc = center;                                nb = value; break;
+    case kCornerLow:    lowHz = value;  nc = std::sqrt(lowHz * highHz); nb = std::log2(highHz / lowHz); break;
+    case kCornerHigh:   highHz = value; nc = std::sqrt(lowHz * highHz); nb = std::log2(highHz / lowHz); break;
   }
-  if (mBwLText)
-  {
-    snprintf(buf, 32, "%.2f", GetParam(kBwL)->Value());
-    mBwLText->SetStrFmt(32, "BW %s", buf);
-  }
-  if (mFreqRText)
-  {
-    FormatFreq(buf, 32, GetParam(kFreqR)->Value());
-    mFreqRText->SetStrFmt(32, "CENTER %s", buf);
-  }
-  if (mBwRText)
-  {
-    snprintf(buf, 32, "%.2f", GetParam(kBwR)->Value());
-    mBwRText->SetStrFmt(32, "BW %s", buf);
-  }
-  UpdatePads();
+  ClampAndSet(kFreq, kBw, nc, nb);
+}
+
+void GRMBandPass::EditBand(int kFreq, int kBw, double lowNorm, double highNorm)
+{
+  const IParam* pf = GetParam(kFreq);
+  const double lowHz = pf->FromNormalized(lowNorm);
+  const double highHz = pf->FromNormalized(highNorm);
+  const double center = std::sqrt(lowHz * highHz);
+  const double bw = std::log2(highHz / lowHz);
+  ClampAndSet(kFreq, kBw, center, bw);
+}
+
+void GRMBandPass::ClampAndSet(int kFreq, int kBw, double centerHz, double bwOct)
+{
+  centerHz = std::clamp(centerHz, 20., 20000.);
+  bwOct    = std::clamp(bwOct, 0.05, 4.);
+  double lowHz = centerHz * std::pow(2., -bwOct / 2.);
+  double highHz = centerHz * std::pow(2., bwOct / 2.);
+  if (lowHz < 20.)     { lowHz = 20.;   centerHz = highHz * std::pow(2., -bwOct / 2.); }
+  if (highHz > 20000.) { highHz = 20000.; centerHz = lowHz * std::pow(2., bwOct / 2.); }
+  SetParamFromEditor(kFreq, centerHz);
+  SetParamFromEditor(kBw, bwOct);
+  RefreshAfterEdit();
 }
 
 // 把 freq/bw 参数同步到 XY 手柄位置: 通过 SetValueFromDelegate (只写控件内部值, 不回写参数)
@@ -557,13 +579,6 @@ void GRMBandPass::FlipLR()
   SetParamFromEditor(kBwR,   bL);
   SetParamFromEditor(kGainR, gL);
   RefreshAfterEdit();
-}
-
-void GRMBandPass::FormatFreq(char* buf, int n, double hz)
-{
-  if (hz >= 10000.) snprintf(buf, n, "%.1fk", hz / 1000.);
-  else if (hz >= 1000.) snprintf(buf, n, "%.2fk", hz / 1000.);
-  else snprintf(buf, n, "%.0f", hz);
 }
 
 // ---------------------------------------------------------------------------

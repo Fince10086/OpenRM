@@ -62,10 +62,6 @@ private:
   grm::ParamMailbox<grm::BandPassCore::Params> mParamMailbox;
 
   // UI 控件指针 (供回调更新)
-  ITextControl*   mFreqLText = nullptr;
-  ITextControl*   mBwLText   = nullptr;
-  ITextControl*   mFreqRText = nullptr;
-  ITextControl*   mBwRText   = nullptr;
   FilterNodePad*  mPadL = nullptr;
   FilterNodePad*  mPadR = nullptr;
 
@@ -86,8 +82,12 @@ private:
   void SetParamFromEditor(int idx, double value);
   // 批量改参后刷新 UI: 所有绑定控件从参数回读最新值 (滑条/旋钮/开关/pad)
   void RefreshAfterEdit();
-  void UpdateParamDisplays();
   void UpdatePads();
+
+  // pad 四角 / 范围滑块换算: 保持底层 kFreq + kBw 两个自由度, low/high 为派生视图
+  void EditCorner(int kFreq, int kBw, int cornerId, double value);
+  void EditBand(int kFreq, int kBw, double lowNorm, double highNorm);
+  void ClampAndSet(int kFreq, int kBw, double centerHz, double bwOct);
 
   ParamSnapshot Snapshot() const;
   void ApplySnapshot(const ParamSnapshot& s);
@@ -111,6 +111,4 @@ private:
   // 预设 morph 条: 在 Q1..Q8 槽位之间对全部参数线性插值
   ParamSnapshot InterpolatePresets(double pos);  // pos: 0..kNumQuick-1
   void OnMorphDrag(double normalizedPos);
-
-  static void FormatFreq(char* buf, int n, double hz);
 };
