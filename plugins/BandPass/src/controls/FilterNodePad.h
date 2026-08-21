@@ -59,7 +59,7 @@ public:
       {
         WDL_String init; GetCornerLabel(id, init);
         EAlign align = (id == kCornerBw || id == kCornerHigh) ? EAlign::Far : EAlign::Near;
-        IText t(11, COL_BLACK, "Outfit-SemiBold", align, EVAlign::Middle);
+        IText t(10, COL_BLACK, "Outfit-SemiBold", align, EVAlign::Middle);
         mEditingCorner = id;
         GetUI()->CreateTextEntry(*this, t, CornerRect(id), init.Get(), kNoValIdx);
         return;
@@ -286,7 +286,7 @@ private:
       g.FillRoundRect(COL_HOVER, r.GetPadded(-2.f), 4.f);
     WDL_String label; GetCornerLabel(id, label);
     const EAlign align = (id == kCornerBw || id == kCornerHigh) ? EAlign::Far : EAlign::Near;
-    const IText t(11, COL_BLACK, "Outfit-SemiBold", align, EVAlign::Middle);
+    const IText t(10, COL_BLACK, "Outfit-SemiBold", align, EVAlign::Middle);
     g.DrawText(t, label.Get(), r);
   }
 

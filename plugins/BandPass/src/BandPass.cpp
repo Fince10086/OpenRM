@@ -27,8 +27,8 @@ static IVStyle MakeButtonStyle()
 {
   IVColorSpec colors = { COL_BG, COL_BG, COL_BLACK, COL_BLACK,
                          COL_HOVER, COL_BG, COL_BLACK, COL_BLACK, COL_BLACK };
-  const IText labelText(11, COL_BLACK, "Outfit-SemiBold", EAlign::Center, EVAlign::Middle);
-  const IText valueText(11, COL_BLACK, "Outfit-SemiBold", EAlign::Center, EVAlign::Middle);
+  const IText labelText(10, COL_BLACK, "Outfit-SemiBold", EAlign::Center, EVAlign::Middle);
+  const IText valueText(10, COL_BLACK, "Outfit-SemiBold", EAlign::Center, EVAlign::Middle);
   return IVStyle(true, true, colors, labelText, valueText, true, true, false, false,
                  0.2f, 2.f, 0.f, 1.f, 0.f);
 }
@@ -291,7 +291,7 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
     pGraphics->AttachControl(new ORMSlider(IRECT(672, 302, 730, 534), kGainR, "GAIN R", style, EDirection::Vertical));
 
     pGraphics->AttachControl(new ITextControl(IRECT(kCol1X, 14, 900, 34), "PRESETS",
-      IText(11, COL_BLACK, "Outfit-Bold", EAlign::Near, EVAlign::Middle)));
+      IText(10, COL_BLACK, "Outfit-Bold", EAlign::Near, EVAlign::Middle)));
 
     auto makeSlotHooks = [this](int pos) -> PresetSlotControl::Hooks
     {
@@ -327,7 +327,7 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
     }
 
     pGraphics->AttachControl(new ITextControl(IRECT(kCol1X, 242, 900, 262), "AGITATION",
-      IText(11, COL_BLACK, "Outfit-Bold", EAlign::Near, EVAlign::Middle)));
+      IText(10, COL_BLACK, "Outfit-Bold", EAlign::Near, EVAlign::Middle)));
     pGraphics->AttachControl(new InvertToggleControl(IRECT(kCol1X, 268, kCol1X + kBtnW, 290), kAgOn, " ", toggleStyle, "OFF", "ON"));
     pGraphics->AttachControl(new ORMSlider(IRECT(kCol1X, 296, kPanelR, 330), kAgAmount, "INTENSITY", style, EDirection::Horizontal));
     pGraphics->AttachControl(new ORMSlider(IRECT(kCol1X, 336, kPanelR, 370), kAgRate, "RATE", style, EDirection::Horizontal));
@@ -365,7 +365,7 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
     pGraphics->AttachControl(new ITextControl(IRECT(kCol1X, 534, kPanelR, 558), "ORM BandPass",
       IText(16, COL_BLACK, "Outfit-Bold", EAlign::Near, EVAlign::Middle)));
     pGraphics->AttachControl(new ITextControl(IRECT(kCol1X, 558, kPanelR, 574), "v" PLUG_VERSION_STR,
-      IText(9, COL_FAINT, "Outfit", EAlign::Near, EVAlign::Middle)));
+      IText(10, COL_FAINT, "Outfit", EAlign::Near, EVAlign::Middle)));
 
     pGraphics->EnableTooltips(true);
     UpdatePads();
