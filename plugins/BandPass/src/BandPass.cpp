@@ -366,31 +366,93 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
   mDefaultSnapshot = Snapshot();
   mStableSnapshot  = Snapshot();
 
+  // Presets 1-14, given as low/high cut pairs (Hz). Center = sqrt(low*high),
+  // bandwidth multiplier = sqrt(high/low).
+  auto setBand = [](ParamSnapshot& s, double lowL, double highL,
+                    double lowR, double highR)
+  {
+    s[kFreqL] = std::sqrt(lowL * highL);
+    s[kBwL]   = std::sqrt(highL / lowL);
+    s[kFreqR] = std::sqrt(lowR * highR);
+    s[kBwR]   = std::sqrt(highR / lowR);
+  };
+
   {
     ParamSnapshot s = Snapshot();
-    s[kFreqL] = 500.;  s[kBwL] = 1.07; s[kFreqR] = 500.; s[kBwR] = 1.07; s[kLink] = 1.;
+    setBand(s, 300., 4000., 300., 4000.);            // 1
+    mPresets[0] = s;
+  }
+  {
+    ParamSnapshot s = Snapshot();
+    setBand(s, 23., 200., 23., 200.);                // 2
     mPresets[1] = s;
   }
   {
     ParamSnapshot s = Snapshot();
-    s[kFreqL] = 2000.; s[kBwL] = 2.83; s[kFreqR] = 2000.; s[kBwR] = 2.83; s[kLink] = 1.;
+    setBand(s, 23., 1000., 1000., 22050.);           // 3
     mPresets[2] = s;
   }
   {
     ParamSnapshot s = Snapshot();
-    s[kFreqL] = 400.; s[kBwL] = 1.11; s[kFreqR] = 4000.; s[kBwR] = 1.69;
+    setBand(s, 1000., 22050., 23., 1000.);           // 4
     mPresets[3] = s;
   }
   {
     ParamSnapshot s = Snapshot();
-    s[kFreqL] = 3000.; s[kBwL] = 1.19; s[kFreqR] = 3000.; s[kBwR] = 1.19; s[kLink] = 1.;
-    s[kAgOn] = 1.; s[kAgAmount] = 0.3; s[kAgRate] = 0.25;
+    setBand(s, 5000., 22050., 5000., 22050.);        // 5
     mPresets[4] = s;
   }
   {
     ParamSnapshot s = Snapshot();
-    s[kFreqL] = 150.; s[kBwL] = 2.38; s[kFreqR] = 150.; s[kBwR] = 2.38; s[kLink] = 1.;
+    setBand(s, 400., 4000., 400., 4000.);            // 6
     mPresets[5] = s;
+  }
+  {
+    ParamSnapshot s = Snapshot();
+    setBand(s, 300., 300., 300., 300.);              // 7
+    mPresets[6] = s;
+  }
+  {
+    ParamSnapshot s = Snapshot();
+    setBand(s, 6000., 6000., 6000., 6000.);          // 8
+    mPresets[7] = s;
+  }
+  {
+    ParamSnapshot s = Snapshot();
+    setBand(s, 6102., 22050., 6102., 22050.);        // 9
+    mPresets[8] = s;
+  }
+  {
+    ParamSnapshot s = Snapshot();
+    setBand(s, 467., 557., 467., 557.);              // 10
+    mPresets[9] = s;
+  }
+  {
+    ParamSnapshot s = Snapshot();
+    setBand(s, 77., 5626., 77., 5626.);              // 11
+    mPresets[10] = s;
+  }
+  {
+    ParamSnapshot s = Snapshot();
+    setBand(s, 7784., 9155., 7784., 9155.);          // 12
+    mPresets[11] = s;
+  }
+  {
+    ParamSnapshot s = Snapshot();
+    setBand(s, 4982., 12327., 4982., 12327.);        // 13
+    mPresets[12] = s;
+  }
+  {
+    ParamSnapshot s = Snapshot();
+    setBand(s, 254., 329., 254., 329.);              // 14
+    mPresets[13] = s;
+  }
+
+  // Agitation and Link are always off in the factory presets.
+  for (int i = 0; i < kNumPresets; ++i)
+  {
+    mPresets[i][kAgOn] = 0.;
+    mPresets[i][kLink] = 0.;
   }
 
 #if IPLUG_EDITOR
@@ -537,7 +599,7 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
       IText(32, COL_BLACK, "Outfit-Bold", EAlign::Near, EVAlign::Bottom)));
     pGraphics->AttachControl(new ITextControl(IRECT(kCol1X, 584, 1060, 618), "BandPass",
       IText(32, COL_BLACK, "Outfit-Bold", EAlign::Near, EVAlign::Middle)));
-    pGraphics->AttachControl(new ITextControl(IRECT(kCol1X + 92, 552, 1060, 586), "v" PLUG_VERSION_STR,
+    pGraphics->AttachControl(new ITextControl(IRECT(kCol1X + 84, 549, 1060, 583), "v" PLUG_VERSION_STR,
       IText(20, COL_FAINT, "Outfit", EAlign::Near, EVAlign::Bottom)));
 
     pGraphics->EnableTooltips(true);
