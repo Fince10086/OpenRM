@@ -98,12 +98,18 @@ public:
   void DrawTrack(IGraphics& g) override
   {
     const IRECT tb = PlotRect();
-    for (int i = 1; i < 4; ++i)
+    // Typical EQ frequency grid: every 10 Hz below 100, every 100 Hz up to
+    // 1k, every 1 kHz above that (log-spaced decades).
+    const IParam* pf = GetParam(0);
+    for (int decade = 1; decade <= 10000; decade *= 10)
     {
-      const float y = tb.T + tb.H() * i / 4.f;
-      g.DrawLine(COL_GRID, tb.L, y, tb.R, y, nullptr, 1.f);
-      const float x = tb.L + tb.W() * i / 4.f;
-      g.DrawLine(COL_GRID, x, tb.T, x, tb.B, nullptr, 1.f);
+      for (int m = 1; m <= 9; ++m)
+      {
+        const double f = m * decade;
+        if (f < 20. || f > 20000.) continue;
+        const float x = tb.L + (float) pf->ToNormalized(f) * tb.W();
+        g.DrawLine(COL_GRID, x, tb.T, x, tb.B, nullptr, 1.f);
+      }
     }
     g.DrawRect(COL_BLACK, tb, nullptr, 1.f);
   }
