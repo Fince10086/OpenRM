@@ -13,6 +13,7 @@
 #pragma once
 
 #include "IControls.h"
+#include "../Theme.h"
 
 #include <algorithm>
 #include <cmath>
@@ -30,13 +31,6 @@ enum EPadCorner : int
   kCornerLow    = 6,
   kCornerHigh   = 7
 };
-
-// 文件内配色 (黑白极简)
-static const IColor FP_BLACK (255,   0,   0,   0);
-static const IColor FP_WHITE (255, 255, 255, 255);
-static const IColor FP_GRID  (255, 204, 204, 204); // #ccc 细网格
-static const IColor FP_TRACK (255, 236, 236, 236); // 滑块底 #ececec
-static const IColor FP_HOVER (255, 240, 240, 240); // #f0f0f0 hover
 
 class FilterNodePad : public IVXYPadControl
 {
@@ -57,14 +51,6 @@ public:
   , mSideLabel(label)  // 左侧竖排标签 (LEFT/RIGHT); 留空字符串则不画
   {
     SetTextEntryLength(20);
-  }
-
-  // 去掉 widgetFrac 的垂直缩放余量: 描边框/绘图区上下撑满控件矩形
-  // (水平方向保留原缩放; 否则黑框上下与 pad 边缘之间会有空隙)
-  void OnResize() override
-  {
-    IVXYPadControl::OnResize();
-    mWidgetBounds = IRECT(mWidgetBounds.L, mRECT.T, mWidgetBounds.R, mRECT.B);
   }
 
   void Draw(IGraphics& g) override
@@ -88,7 +74,7 @@ public:
       {
         WDL_String init; GetCornerLabel(id, init);
         EAlign align = (id == kCornerBw || id == kCornerHigh) ? EAlign::Far : EAlign::Near;
-        IText t(11, FP_BLACK, "Outfit-SemiBold", align, EVAlign::Middle);
+        IText t(11, COL_BLACK, "Outfit-SemiBold", align, EVAlign::Middle);
         mEditingCorner = id;
         GetUI()->CreateTextEntry(*this, t, CornerRect(id), init.Get(), kNoValIdx);
         return;
@@ -197,13 +183,13 @@ public:
   void DrawTrack(IGraphics& g) override
   {
     const IRECT tb = PlotRect();
-    g.FillRect(FP_WHITE, tb);
+    g.FillRect(COLOR_WHITE, tb);
     for (int i = 1; i < 4; ++i)
     {
       const float y = tb.T + tb.H() * i / 4.f;
-      g.DrawLine(FP_GRID, tb.L, y, tb.R, y, nullptr, 1.f);
+      g.DrawLine(COL_GRID, tb.L, y, tb.R, y, nullptr, 1.f);
       const float x = tb.L + tb.W() * i / 4.f;
-      g.DrawLine(FP_GRID, x, tb.T, x, tb.B, nullptr, 1.f);
+      g.DrawLine(COL_GRID, x, tb.T, x, tb.B, nullptr, 1.f);
     }
   }
 
@@ -213,9 +199,9 @@ public:
     const float cx = handleBounds.MW();
     const float cy = handleBounds.MH();
     const float r  = handleBounds.W() * 0.5f;
-    g.DrawLine(FP_BLACK, cx, handleBounds.T, cx, cy - r, nullptr, 1.f);
-    g.FillCircle(FP_BLACK, cx, cy, r);
-    g.FillCircle(FP_WHITE, cx, cy, r * 0.25f);
+    g.DrawLine(COL_BLACK, cx, handleBounds.T, cx, cy - r, nullptr, 1.f);
+    g.FillCircle(COL_BLACK, cx, cy, r);
+    g.FillCircle(COLOR_WHITE, cx, cy, r * 0.25f);
   }
 
   // 重写命中判定: 角标/左侧标签在 widget 边界外, 也算本控件命中
@@ -233,7 +219,7 @@ public:
     if (mSideLabel.GetLength() == 0) return;
     const IRECT r = SideLabelRect();
     // 逆时针 90° (ccwise) → 文字自下而上阅读. mAngle 是 degrees ccwise
-    IText t(11, FP_BLACK, "Outfit-SemiBold", EAlign::Center, EVAlign::Middle, -90.f);
+    IText t(11, COL_BLACK, "Outfit-SemiBold", EAlign::Center, EVAlign::Middle, -90.f);
     g.DrawText(t, mSideLabel.Get(), r);
   }
 
@@ -253,12 +239,6 @@ private:
     // 滑块条紧贴 pad 框底边 (仅留 kBottomInset 避免压到 2px 黑框)
     const float top = w.B - kBottomInset - kSliderH;
     return IRECT(w.L + 2.f, top, w.R - 2.f, top + kSliderH);
-  }
-
-  IRECT CutRowRect() const
-  {
-    const IRECT& w = mWidgetBounds;
-    return IRECT(w.L, w.B - kGap - kCutRowH, w.R, w.B - kGap);
   }
 
   IRECT CornerRect(int id) const
@@ -319,14 +299,14 @@ private:
     const float lx = NormToX(LowNorm());
     const float hx = NormToX(HighNorm());
     // 外侧浅灰轨道
-    g.FillRect(FP_TRACK, IRECT(s.L, y - 2.f, s.R, y + 2.f));
+    g.FillRect(COL_TRACK, IRECT(s.L, y - 2.f, s.R, y + 2.f));
     // 两控制点之间涂黑
-    g.FillRect(FP_BLACK, IRECT(lx, y - 2.f, hx, y + 2.f));
+    g.FillRect(COL_BLACK, IRECT(lx, y - 2.f, hx, y + 2.f));
     // 控制点: 白底黑描边圆
     for (float px : { lx, hx })
     {
-      g.FillCircle(FP_WHITE, px, y, 7.f);
-      g.DrawCircle(FP_BLACK, px, y, 7.f, nullptr, 1.5f);
+      g.FillCircle(COLOR_WHITE, px, y, 7.f);
+      g.DrawCircle(COL_BLACK, px, y, 7.f, nullptr, 1.5f);
     }
   }
 
@@ -334,10 +314,10 @@ private:
   {
     const IRECT r = CornerRect(id);
     if (mOverCorner == id)
-      g.FillRoundRect(FP_HOVER, r.GetPadded(-2.f), 4.f);
+      g.FillRoundRect(COL_HOVER, r.GetPadded(-2.f), 4.f);
     WDL_String label; GetCornerLabel(id, label);
     const EAlign align = (id == kCornerBw || id == kCornerHigh) ? EAlign::Far : EAlign::Near;
-    const IText t(11, FP_BLACK, "Outfit-SemiBold", align, EVAlign::Middle);
+    const IText t(11, COL_BLACK, "Outfit-SemiBold", align, EVAlign::Middle);
     g.DrawText(t, label.Get(), r);
   }
 
@@ -374,17 +354,13 @@ private:
     return true;
   }
 
-  static constexpr float kInsetX  = 8.f;
-  static constexpr float kCornerW = 100.f;   // 角标文字水平宽度 (从 pad 框外侧向内延伸)
-  static constexpr float kCornerH = 15.f;
-  static constexpr float kCornerTextH = 7.f; // 角标文字所在水平行高
-  static constexpr float kSideW    = 22.f;  // 角标 / 竖排标签向外伸出量
-  static constexpr float kSideH    = 25.f;   // 角标向上/下伸出量 (贴边)
+  static constexpr float kCornerW = 100.f;    // 角标文字水平宽度 (从 pad 框外侧向内延伸)
+  static constexpr float kCornerTextH = 11.f; // 角标文字行高 (≈字号, 框内向外伸出的量)
+  static constexpr float kSideW    = 22.f;    // 角标 / 竖排标签向外伸出量
+  static constexpr float kSideH    = 25.f;    // 角标向上/下伸出量 (贴边)
   static constexpr float kTopPad   = 18.f;
-  static constexpr float kCutRowH  = 16.f;  // 保留常量 (当前 CutRow 不绘制)
   static constexpr float kSliderH  = 20.f;
-  static constexpr float kGap      = 4.f;
-  static constexpr float kBottomInset = 2.f; // 滑块条与 pad 框底边的留白 (紧贴)
+  static constexpr float kBottomInset = 2.f;  // 滑块条与 pad 框底边的留白 (紧贴)
   static constexpr float kMinGap   = 0.01f; // 两控制点最小归一化间隔 (~2/3 半音)
 
   Hooks mHooks;

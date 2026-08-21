@@ -23,7 +23,6 @@ struct PresetFileData
 // JSON 格式 (schema v2 — 无预设名, 纯数字槽位):
 // {
 //   "version": 2,
-//   "presetCount": 24,
 //   "presets": [ [ ...11 个数... ], ... 24 个 ],
 //   "currentPreset": 3,
 //   "currentValues": [ ...11 个数... ],
@@ -37,7 +36,6 @@ inline bool WritePresetFile(const std::string& path, const PresetFileData& data,
   {
     nlohmann::json j;
     j["version"] = 2;
-    j["presetCount"] = static_cast<int>(data.presets.size());
     j["presets"] = data.presets;
     j["currentPreset"] = data.currentPreset;
     j["currentValues"] = data.currentValues;

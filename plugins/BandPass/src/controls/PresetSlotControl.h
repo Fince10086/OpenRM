@@ -53,12 +53,10 @@ public:
       if (mod.R)            // ⌘+左键: 立即保存, 不进入拖拽
       {
         if (mHooks.onSaveHere) mHooks.onSaveHere();
-        SetValue(0.0); SetDirty(false);
       }
       else if (mod.A)       // ⌥+左键: 立即恢复默认
       {
         if (mHooks.onRestoreDefault) mHooks.onRestoreDefault();
-        SetValue(0.0); SetDirty(false);
       }
       else
       {
@@ -67,7 +65,9 @@ public:
         mDragging = false;
         mDownX = x; mDownY = y;
         SetValue(1.0); SetDirty();
+        return;
       }
+      SetValue(0.0); SetDirty(false);   // ⌘/⌥: 立即复位按下态 (规避按钮停留在浅色态)
       return;
     }
     if (mod.R)
@@ -125,8 +125,6 @@ public:
     mDragTarget = on;
     SetDirty();
   }
-
-  bool IsDragTarget() const { return mDragTarget; }
 
   // 外部刷新标签 (编号随拖拽交换变化)
   void SetSlotLabel(const char* s)

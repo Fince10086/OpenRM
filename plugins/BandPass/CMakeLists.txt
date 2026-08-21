@@ -16,6 +16,7 @@ iplug_add_plugin(${PROJECT_NAME}
   SOURCES
     src/BandPass.h
     src/BandPass.cpp
+    src/Theme.h
     src/dsp/BandPassCore.h
     src/controls/FilterNodePad.h
     src/controls/PresetSlotControl.h

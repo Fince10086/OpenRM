@@ -1,6 +1,7 @@
 #include "BandPass.h"
 #include "IPlug_include_in_plug_src.h"
 #include "IControls.h"
+#include "Theme.h"
 #include "controls/FilterNodePad.h"
 #include "controls/PresetSlotControl.h"
 #include "PresetFileIO.h"
@@ -12,30 +13,16 @@
 #include <cmath>
 #include <algorithm>
 
-// ---------------------------------------------------------------------------
-// 黑白极简配色 (模仿 nono.feizao.org / nonocross):
-//   纯白底 + 纯黑 2px 边框, #ccc 细网格线, hover #f0f0f0,
-//   激活态黑白反转, 4px 圆角, Outfit 字体 (400/600/700)
-// ---------------------------------------------------------------------------
-static const IColor COL_BG     (255, 255, 255, 255);  // 面板纯白
-static const IColor COL_PANEL  (255, 255, 255, 255);  // 控件底面白
-static const IColor COL_BLACK  (255,   0,   0,   0);  // 主黑: 边框/文字/手柄
-static const IColor COL_TEXT   (255,   0,   0,   0);
-static const IColor COL_DIM    (255, 102, 102, 102);  // #666 次要文字
-static const IColor COL_FAINT  (255, 153, 153, 153);  // #999 弱化文字/刻度
-static const IColor COL_LINE   (255, 204, 204, 204);  // #ccc 细网格线
-static const IColor COL_TRACK  (255, 236, 236, 236);  // 滑轨底 #ececec
-static const IColor COL_FILL   (255,   0,   0,   0);  // 滑块已填充电平: 纯黑
-static const IColor COL_HOVER  (255, 240, 240, 240);  // #f0f0f0 hover
+// 配色与字体规格统一见 Theme.h (黑白极简: 纯白底 + 纯黑边框/文字, #ccc 网格, hover #f0f0f0)
 
 // 旋钮/滑条/XY pad 主样式: kFG=白(手柄, 黑框描边), kX1=黑(滑轨/弧线填充), kSH=浅灰轨底
 // 注意: iPlug2 的 roundness 是比例 (乘以短边一半), 不是像素值
 static IVStyle MakeGRMStyle()
 {
-  IVColorSpec colors = { COL_PANEL, COL_PANEL, COL_DIM, COL_BLACK,
+  IVColorSpec colors = { COL_BG, COL_BG, COL_DIM, COL_BLACK,
                          COL_HOVER, COL_TRACK, COL_BLACK, COL_BLACK, COL_BLACK };
   const IText labelText(10, COL_DIM, "Outfit", EAlign::Center, EVAlign::Bottom);
-  const IText valueText(10, COL_TEXT, "Outfit-SemiBold", EAlign::Center, EVAlign::Top);
+  const IText valueText(10, COL_BLACK, "Outfit-SemiBold", EAlign::Center, EVAlign::Top);
   return IVStyle(true, true, colors, labelText, valueText,
                  true, true, false, false, 0.2f, 1.5f, 0.f, 1.f, 0.f);
 }
@@ -43,10 +30,10 @@ static IVStyle MakeGRMStyle()
 // 按钮: 常态白底黑字黑框, hover #f0f0f0, 按下黑白反转 (黑底)
 static IVStyle MakeButtonStyle()
 {
-  IVColorSpec colors = { COL_PANEL, COL_PANEL, COL_BLACK, COL_BLACK,
-                         COL_HOVER, COL_PANEL, COL_BLACK, COL_BLACK, COL_BLACK };
-  const IText labelText(11, COL_TEXT, "Outfit-SemiBold", EAlign::Center, EVAlign::Middle);
-  const IText valueText(11, COL_TEXT, "Outfit-SemiBold", EAlign::Center, EVAlign::Middle);
+  IVColorSpec colors = { COL_BG, COL_BG, COL_BLACK, COL_BLACK,
+                         COL_HOVER, COL_BG, COL_BLACK, COL_BLACK, COL_BLACK };
+  const IText labelText(11, COL_BLACK, "Outfit-SemiBold", EAlign::Center, EVAlign::Middle);
+  const IText valueText(11, COL_BLACK, "Outfit-SemiBold", EAlign::Center, EVAlign::Middle);
   return IVStyle(true, true, colors, labelText, valueText, true, true, false, false,
                  0.2f, 2.f, 0.f, 1.f, 0.f);
 }
@@ -85,28 +72,28 @@ public:
     for (int i = 0; i < kNumQuick; ++i)
     {
       const float x = x0 + w * i / (kNumQuick - 1.f);
-      g.FillRect(IColor(255, 0, 0, 0), IRECT(x - 1.f, mTrackBounds.T - 3.f, x + 1.f, mTrackBounds.T));
-      g.FillRect(IColor(255, 0, 0, 0), IRECT(x - 1.f, mTrackBounds.B, x + 1.f, mTrackBounds.B + 3.f));
+      g.FillRect(COL_BLACK, IRECT(x - 1.f, mTrackBounds.T - 3.f, x + 1.f, mTrackBounds.T));
+      g.FillRect(COL_BLACK, IRECT(x - 1.f, mTrackBounds.B, x + 1.f, mTrackBounds.B + 3.f));
     }
   }
 };
 
 // ---------------------------------------------------------------------------
-// 极简滑块: 轨道浅灰、无黑描边; 已填充电平用柔和深灰 (非纯黑);
-// 圆形手柄白底黑描边 (与 pad 节点一致, 保留描边).
-//   - 横条 (无 sideText): 标题在控件顶部左侧左对齐, 数值在顶部右侧右对齐,
-//     点击数值区域弹行内编辑 (iPlug2 自动回写参数并通知宿主)
-//   - 竖条 (GAIN, 传 sideText): 轨道靠左, 右侧竖排字样 + 数值, 同样支持点击编辑
-// ⚠ 注意: iPlug2 绘制控件时会裁剪到控件矩形 (IGraphics::DrawControl),
-//   因此标题/数值必须画在控件矩形内部 —— 轨道经 OnResize 平移留出空间
+// 极简滑块: 轨道浅灰、无黑描边; 已填充电平用黑; 圆形手柄白底黑描边.
+//   标题/数值自绘为统一 header, 随轨道方向旋转:
+//     横条 (rot=0)   → header 为轨道上方水平行 (标题左对齐, 数值右对齐)
+//     竖条 (rot=-90) → header 为轨道左侧竖排行 (文字自下而上)
+//   点击数值区域弹行内编辑 (iPlug2 自动 StringToValue 回写 + 通知宿主).
+// ⚠ iPlug2 绘制控件时裁剪到控件矩形 (IGraphics::DrawControl), 且鼠标派发
+//   依赖 IsHit (IGraphics::GetMouseControlIdx) → header 画在矩形内部,
+//   并覆写 IsHit 为整矩形命中 (否则数值点击到不了 OnMouseDown).
 // ---------------------------------------------------------------------------
 class GRMSlider : public IVSliderControl
 {
 public:
   GRMSlider(const IRECT& bounds, int paramIdx, const char* label, const IVStyle& style,
-            EDirection dir, const char* sideText = nullptr)
+            EDirection dir)
   : IVSliderControl(bounds, paramIdx, label, style, false, dir)
-  , mSideText(sideText ? sideText : "")
   , mHeaderLabel(label ? label : "")
   {
     // 标题/数值全部自绘 (关闭内置 label/value 显示)
@@ -116,33 +103,37 @@ public:
 
   void OnResize() override
   {
-    IVSliderControl::OnResize();
-    // 轨道平移到控件矩形内部, 给顶部 header / 右侧侧标签留出空间
-    if (mSideText.GetLength() > 0)
+    // 故意不调 IVSliderControl::OnResize(): 基类把 mWidgetBounds 设为 mRECT
+    // (依赖 mStyle.widgetFrac=1.0) 后会与 header 区重叠. 这里手动设 widget 后
+    // 用基类同款公式 (IControls.cpp:885-888) 重算轨道.
+    if (mDirection == EDirection::Horizontal)
     {
-      // 竖条: 轨道靠左 kTrackW 宽, 右侧留出竖排字样 + 数值
-      const float dx = mWidgetBounds.W() - kTrackW;
-      if (dx > 0.f)
-      {
-        mWidgetBounds = mWidgetBounds.GetTranslated(-dx, 0.f);
-        mTrackBounds  = mTrackBounds.GetTranslated(-dx, 0.f);
-      }
+      mWidgetBounds = mRECT.GetReducedFromTop(kHeaderH);           // 顶部留 header 行
+      mTrackBounds  = mWidgetBounds.GetPadded(-mHandleSize)
+                                   .GetMidVPadded(mTrackSize);
     }
     else
     {
-      // 横条: 轨道下移 kHeaderH, 上方留出标题/数值
-      mWidgetBounds = mWidgetBounds.GetTranslated(0.f, kHeaderH);
-      mTrackBounds  = mTrackBounds.GetTranslated(0.f, kHeaderH);
+      mWidgetBounds = mRECT.GetReducedFromLeft(kHeaderW);          // 左侧留竖排 header
+      mTrackBounds  = mWidgetBounds.GetPadded(-mHandleSize)
+                                   .GetMidHPadded(mTrackSize);
     }
+    SetTargetRECT(mRECT);     // 命中区 = 整控件 (含 header)
+    mValueBounds = IRECT();   // 不调 MakeRects → 清空, 基类 showValue 分支不触发
+    SetDirty(false);
+  }
+
+  // 命中区含 header: iPlug2 用 IsHit 派发鼠标 (IGraphics.cpp:1320),
+  // 否则点击数值区域到不了 OnMouseDown
+  bool IsHit(float x, float y) const override
+  {
+    return mRECT.Contains(x, y);
   }
 
   void Draw(IGraphics& g) override
   {
-    IVSliderControl::Draw(g);
-    if (mSideText.GetLength() > 0)
-      DrawSideLabel(g);
-    else
-      DrawHeader(g);
+    IVSliderControl::Draw(g);   // 背景 + 轨道/手柄
+    DrawHeader(g, mDirection == EDirection::Vertical ? -90.f : 0.f);
   }
 
   void OnMouseDown(float x, float y, const IMouseMod& mod) override
@@ -159,70 +150,56 @@ public:
   void DrawTrack(IGraphics& g, const IRECT& filledArea) override
   {
     const float cr = GetRoundedCornerRadius(mTrackBounds);
-    // 轨道底: 浅灰, 无黑描边
+    // 轨道底: 浅灰, 无黑描边; 已填充部分: 黑
     g.FillRoundRect(COL_TRACK, mTrackBounds, cr, &mBlend);
-    // 已填充 (电平) 部分: 柔和深灰, 非纯黑
     if (filledArea.W() > 0.5f && filledArea.H() > 0.5f)
-      g.FillRoundRect(COL_FILL, filledArea, cr, &mBlend);
+      g.FillRoundRect(COL_BLACK, filledArea, cr, &mBlend);
   }
 
   void DrawHandle(IGraphics& g, const IRECT& bounds) override
   {
     const float cx = bounds.MW(), cy = bounds.MH();
     const float r  = bounds.W() * 0.5f;
-    // 圆形手柄: 白底 + 黑色描边 (保留描边, 与 pad 节点一致)
+    // 圆形手柄: 白底 + 黑色描边 (与 pad 节点一致)
     g.FillCircle(COLOR_WHITE, cx, cy, r);
     g.DrawCircle(COL_BLACK, cx, cy, r - 0.75f, nullptr, 1.5f);
   }
 
 private:
-  static constexpr float kHeaderH = 7.f;   // 顶部标题/数值行高 (横条)
-  static constexpr float kTrackW  = 24.f;  // 轨道宽度 (竖条, 与 GAIN 原宽一致)
+  static constexpr float kHeaderH = 14.f;   // header 行高/宽 (容纳字号 10 + 边距)
+  static constexpr float kHeaderW = 14.f;
 
-  // 数值可点击区域 (与 DrawHeader/DrawSideLabel 的数值绘制位置一致)
+  // 数值可点击区域 (与 DrawHeader 数值绘制位置一致)
   IRECT ValueRect() const
   {
-    const IRECT r = mRECT;
-    if (mSideText.GetLength() > 0)
+    if (mDirection == EDirection::Horizontal)
+      return IRECT(mRECT.L, mRECT.T, mRECT.R, mRECT.T + kHeaderH);            // 顶部整行
+    return IRECT(mRECT.L, mRECT.T, mRECT.L + kHeaderW + 4.f, mRECT.T + 28.f); // 竖条数值区 (左上)
+  }
+
+  void DrawHeader(IGraphics& g, float rot)
+  {
+    WDL_String ds;
+    if (GetParam()) GetParam()->GetDisplay(ds, false);
+
+    if (rot == 0.f)  // 横条: 顶部行, 标题 Near / 数值 Far
     {
-      const float labX = r.L + kTrackW + 12.f;      // 竖排字样中心
-      const float numCx = labX + 6.f + 13.f;        // 数值中心
-      return IRECT(numCx - 13.f, r.MH() - 7.f, numCx + 13.f, r.MH() + 7.f);
+      const IRECT hdr(mRECT.L, mRECT.T, mRECT.R, mRECT.T + kHeaderH);
+      g.DrawText(IText(10, COL_BLACK, "Outfit-SemiBold", EAlign::Near, EVAlign::Middle),
+                 mHeaderLabel.Get(), IRECT(hdr.L, hdr.T, hdr.MW(), hdr.B));
+      g.DrawText(IText(10, COL_DIM, "Outfit", EAlign::Far, EVAlign::Middle),
+                 ds.Get(), IRECT(hdr.MW(), hdr.T, hdr.R, hdr.B));
     }
-    return IRECT(r.L, r.T, r.R, r.T + kHeaderH);    // 顶部整行 (右侧数值)
+    else  // 竖条: 左侧竖排, 文字自下而上 (rot=-90: Near/Bottom 起点贴左下, Far/Top 终点贴右上)
+    {
+      const IRECT hdr(mRECT.L, mRECT.T, mRECT.L + kHeaderW, mRECT.B);
+      g.DrawText(IText(10, COL_BLACK, "Outfit-SemiBold", EAlign::Near, EVAlign::Bottom, rot),
+                 mHeaderLabel.Get(), hdr);
+      g.DrawText(IText(10, COL_DIM, "Outfit", EAlign::Far, EVAlign::Top, rot),
+                 ds.Get(), hdr);
+    }
   }
 
-  void DrawHeader(IGraphics& g)
-  {
-    const IRECT r = mRECT;
-    const IRECT headerRect(r.L, r.T, r.R, r.T + kHeaderH);
-    // 标题: 顶部左侧 左对齐
-    IText lt(10, COL_BLACK, "Outfit-SemiBold", EAlign::Near, EVAlign::Middle);
-    g.DrawText(lt, mHeaderLabel.Get(), IRECT(headerRect.L, headerRect.T, headerRect.MW(), headerRect.B));
-    // 数值: 顶部右侧 右对齐 (用 IParam 显示格式, 如 "0.85" / "4.00 Hz")
-    WDL_String ds;
-    if (GetParam()) GetParam()->GetDisplay(ds, false);
-    IText vt(10, COL_DIM, "Outfit", EAlign::Far, EVAlign::Middle);
-    g.DrawText(vt, ds.Get(), IRECT(headerRect.MW(), headerRect.T, headerRect.R, headerRect.B));
-  }
-
-  void DrawSideLabel(IGraphics& g)
-  {
-    if (mSideText.GetLength() == 0) return;
-    const IRECT r = mRECT;
-    // 竖排字样: 轨道右侧 (控件矩形内)
-    const float labX = r.L + kTrackW + 12.f;
-    IText gt(11, COL_BLACK, "Outfit-SemiBold", EAlign::Center, EVAlign::Middle, -90.f);
-    g.DrawText(gt, mSideText.Get(), IRECT(labX - 6.f, r.T, labX + 6.f, r.B));
-    // 数值: 竖排字样右侧
-    const float numCx = labX + 6.f + 13.f;
-    WDL_String ds;
-    if (GetParam()) GetParam()->GetDisplay(ds, false);
-    IText nt(9, COL_DIM, "Outfit", EAlign::Center, EVAlign::Middle);
-    g.DrawText(nt, ds.Get(), IRECT(numCx - 13.f, r.MH() - 7.f, numCx + 13.f, r.MH() + 7.f));
-  }
-
-  WDL_String mSideText;
   WDL_String mHeaderLabel;
 };
 
@@ -237,13 +214,15 @@ public:
                       const IVStyle& style, const char* offText, const char* onText)
   : IVToggleControl(bounds, paramIdx, label, style, offText, onText)
   {
+    // 关闭 IVToggleControl 默认的 splash 扩散动画 (param 构造硬编码绑定
+    // SplashClickActionFunc). 注意: 不能改用 aF 构造 + SetParamIdx ——
+    // SetParamIdx 在构造期触发 SetDirty → GetParam, delegate 参数表未
+    // 就绪会空指针崩溃 (已实测 SIGSEGV). SetActionFunction 只是赋值, 安全.
+    SetActionFunction(EmptyClickActionFunc);
   }
 
-  void DrawValue(IGraphics& g, bool mouseOver) override
+  void DrawValue(IGraphics& g, bool) override
   {
-    if (mouseOver)
-      g.FillRect(GetColor(kHL), mWidgetBounds, &mBlend);
-
     // 文本画在按钮本体中央 (showLabel/showValue 关闭后 widget 即整个矩形)
     const bool on = GetValue() > 0.5;
     IText t = mStyle.valueText;
@@ -330,6 +309,15 @@ GRMBandPass::GRMBandPass(const InstanceInfo& info)
     toggleStyle.showLabel = false;
     toggleStyle.showValue = false;
 
+    // ================= 右面板统一布局常量 =================
+    // 行距统一 6px, 区块间 12px; 所有坐标由常量推导, 不再散落魔法数字
+    constexpr float kCol1X     = 740.f;   // 列1 左缘
+    constexpr float kCol2X     = 804.f;   // 列2 左缘 (56 + 8 gap)
+    constexpr float kBtnW      = 56.f;    // 按钮/开关/槽 宽
+    constexpr float kBtnH      = 22.f;    // 按钮/开关/槽 高
+    constexpr float kSlotPitch = 24.f;    // 右侧槽行距 (h22 + 2 gap)
+    constexpr float kSliderH   = 34.f;    // 滑块行高 (header 14 + 轨道区 20)
+
     // ================= 主控区: LEFT / RIGHT 双通道 (上下堆叠) =================
     // 栅格: 页边距 20, 列间距 24; 左列 pad x20..668, gain 列 x692..716, 右面板 x740..988
     // pad 内四角可编辑 (CENTER/BANDWIDTH/LOWCUT/HIGHCUT) + 网格下方双点范围滑块;
@@ -350,14 +338,13 @@ GRMBandPass::GRMBandPass(const InstanceInfo& info)
     mPadR = new FilterNodePad(IRECT(20, 302, 668, 534), { kFreqR, kBwR }, "RIGHT", style, padHooks(kFreqR, kBwR));
     pGraphics->AttachControl(mPadR);
 
-    // gain 纵向列 (紧贴 pad 右侧, 留一点间隙; 上下边与 pad 对齐; 竖排 GAIN 字样 + 数值在右侧,
-    // 矩形右扩容纳标签区, 轨道经 OnResize 靠左)
-    pGraphics->AttachControl(new GRMSlider(IRECT(672, 38, 730, 270), kGainL, "GAIN L", style, EDirection::Vertical, "GAIN"));
-    pGraphics->AttachControl(new GRMSlider(IRECT(672, 302, 730, 534), kGainR, "GAIN R", style, EDirection::Vertical, "GAIN"));
+    // gain 纵向列 (紧贴 pad 右侧; 上下边与 pad 对齐; 竖条 header 在轨道左侧竖排, 数值可点击编辑)
+    pGraphics->AttachControl(new GRMSlider(IRECT(672, 38, 730, 270), kGainL, "GAIN L", style, EDirection::Vertical));
+    pGraphics->AttachControl(new GRMSlider(IRECT(672, 302, 730, 534), kGainR, "GAIN R", style, EDirection::Vertical));
 
     // ================= 右侧控制面板 =================
-    pGraphics->AttachControl(new ITextControl(IRECT(740, 14, 900, 32), "PRESETS",
-      IText(12, COL_TEXT, "Outfit-Bold", EAlign::Near, EVAlign::Middle)));
+    pGraphics->AttachControl(new ITextControl(IRECT(kCol1X, 14, 900, 34), "PRESETS",
+      IText(11, COL_BLACK, "Outfit-Bold", EAlign::Near, EVAlign::Middle)));
 
     // 预设槽交互工厂 (底部 1..8 固定 + 右侧 9..24 共用):
     // 单击加载 · 拖拽交换(编号+内容整体对调) · ⌘+点击保存 · ⌥+点击恢复默认 · 右键菜单 · 悬停提示
@@ -388,30 +375,31 @@ GRMBandPass::GRMBandPass(const InstanceInfo& info)
         char label[8];
         snprintf(label, 8, "%d", mSlotNumber[pos] + 1);
         PresetSlotControl* btn = new PresetSlotControl(
-          IRECT(740 + c * 64, 38 + r * 26, 796 + c * 64, 60 + r * 26),
+          IRECT(kCol1X + c * 64, 40 + r * kSlotPitch,
+                kCol1X + c * 64 + kBtnW, 40 + r * kSlotPitch + kBtnH),
           makeSlotHooks(pos), label, btnStyle);
         mSlotButtons[pos] = btn;
         pGraphics->AttachControl(btn);
       }
     }
 
-    // Agitation 区 (旋钮已改滑块: 标题/数值在控件顶部, 轨道经 OnResize 下移)
-    pGraphics->AttachControl(new ITextControl(IRECT(740, 260, 900, 278), "AGITATION",
-      IText(11, COL_TEXT, "Outfit-Bold", EAlign::Near, EVAlign::Middle)));
-    pGraphics->AttachControl(new InvertToggleControl(IRECT(740, 284, 796, 306), kAgOn, " ", toggleStyle, "OFF", "ON"));
-    pGraphics->AttachControl(new GRMSlider(IRECT(740, 308, 988, 340), kAgAmount, "INTENSITY", style, EDirection::Horizontal));
-    pGraphics->AttachControl(new GRMSlider(IRECT(740, 342, 988, 374), kAgRate, "RATE", style, EDirection::Horizontal));
+    // Agitation 区 (开关 + 两个滑块, 滑块 header 在轨道上方)
+    pGraphics->AttachControl(new ITextControl(IRECT(kCol1X, 242, 900, 262), "AGITATION",
+      IText(11, COL_BLACK, "Outfit-Bold", EAlign::Near, EVAlign::Middle)));
+    pGraphics->AttachControl(new InvertToggleControl(IRECT(kCol1X, 268, kCol1X + kBtnW, 290), kAgOn, " ", toggleStyle, "OFF", "ON"));
+    pGraphics->AttachControl(new GRMSlider(IRECT(kCol1X, 296, 988, 330), kAgAmount, "INTENSITY", style, EDirection::Horizontal));
+    pGraphics->AttachControl(new GRMSlider(IRECT(kCol1X, 336, 988, 370), kAgRate, "RATE", style, EDirection::Horizontal));
 
     // 声像区 (无标题): L->R / R->L / LINK / FLIP 2x2 排列 (click 触发, 非开关)
-    pGraphics->AttachControl(MakeMomentary(IRECT(740, 382, 796, 404), [this](IControl*) { CopyLtoR(); }, "L->R", btnStyle));
-    pGraphics->AttachControl(MakeMomentary(IRECT(804, 382, 860, 404), [this](IControl*) { CopyRtoL(); }, "R->L", btnStyle));
-    pGraphics->AttachControl(new InvertToggleControl(IRECT(740, 406, 796, 428), kLink, " ", toggleStyle, "LINK", "LINK")); // 黑白反转表示状态
-    pGraphics->AttachControl(MakeMomentary(IRECT(804, 406, 860, 428), [this](IControl*) { FlipLR(); }, "FLIP", btnStyle));
-    pGraphics->AttachControl(new GRMSlider(IRECT(740, 436, 988, 470), kMix, "MIX", style, EDirection::Horizontal));
+    pGraphics->AttachControl(MakeMomentary(IRECT(kCol1X, 376, kCol1X + kBtnW, 398), [this](IControl*) { CopyLtoR(); }, "L->R", btnStyle));
+    pGraphics->AttachControl(MakeMomentary(IRECT(kCol2X, 376, kCol2X + kBtnW, 398), [this](IControl*) { CopyRtoL(); }, "R->L", btnStyle));
+    pGraphics->AttachControl(new InvertToggleControl(IRECT(kCol1X, 404, kCol1X + kBtnW, 426), kLink, " ", toggleStyle, "LINK", "LINK")); // 黑白反转表示状态
+    pGraphics->AttachControl(MakeMomentary(IRECT(kCol2X, 404, kCol2X + kBtnW, 426), [this](IControl*) { FlipLR(); }, "FLIP", btnStyle));
+    pGraphics->AttachControl(new GRMSlider(IRECT(kCol1X, 432, 988, 466), kMix, "MIX", style, EDirection::Horizontal));
 
     // undo / redo (统一按钮尺寸 56x22)
-    pGraphics->AttachControl(MakeMomentary(IRECT(740, 480, 796, 502), [this](IControl*) { Undo(); }, "UNDO", btnStyle));
-    pGraphics->AttachControl(MakeMomentary(IRECT(804, 480, 860, 502), [this](IControl*) { Redo(); }, "REDO", btnStyle));
+    pGraphics->AttachControl(MakeMomentary(IRECT(kCol1X, 472, kCol1X + kBtnW, 494), [this](IControl*) { Undo(); }, "UNDO", btnStyle));
+    pGraphics->AttachControl(MakeMomentary(IRECT(kCol2X, 472, kCol2X + kBtnW, 494), [this](IControl*) { Redo(); }, "REDO", btnStyle));
 
     // ================= 底部条 (固定槽 1..8 + morph 条) =================
     // 底部固定显示 8 个按钮, 初始编号 1..8; 拖拽交换后按钮位置不变,
@@ -439,9 +427,9 @@ GRMBandPass::GRMBandPass(const InstanceInfo& info)
     pGraphics->AttachControl(MakeMomentary(IRECT(804, 546, 860, 568), [this](IControl*) { LoadFile(); }, "LOAD", btnStyle));
 
     // 品牌标识 + 版本号 (右下角, 矩形避开 SAVE/LOAD 的命中区域)
-    pGraphics->AttachControl(new ITextControl(IRECT(740, 508, 988, 532), "GRM BANDPASS",
-      IText(16, COL_TEXT, "Outfit-Bold", EAlign::Far, EVAlign::Middle)));
-    pGraphics->AttachControl(new ITextControl(IRECT(868, 532, 988, 550), "v" PLUG_VERSION_STR,
+    pGraphics->AttachControl(new ITextControl(IRECT(kCol1X, 500, 988, 524), "GRM BANDPASS",
+      IText(16, COL_BLACK, "Outfit-Bold", EAlign::Far, EVAlign::Middle)));
+    pGraphics->AttachControl(new ITextControl(IRECT(868, 528, 988, 544), "v" PLUG_VERSION_STR,
       IText(9, COL_FAINT, "Outfit", EAlign::Far, EVAlign::Middle)));
 
     // 初始状态
@@ -850,16 +838,20 @@ void GRMBandPass::OnDragBegin(int src)
   mDragTargetSlot = -1;
 }
 
+// 命中测试: 返回 (x,y) 所在的槽按钮位置, 未命中返回 -1
+int GRMBandPass::HitTestSlot(float x, float y)
+{
+  for (int i = 0; i < kNumPresets; ++i)
+    if (mSlotButtons[i] && mSlotButtons[i]->GetWidgetBounds().Contains(x, y))
+      return i;
+  return -1;
+}
+
 // 拖拽移动: 实时更新目标槽高亮
 void GRMBandPass::OnDragMove(float x, float y)
 {
   if (mDragSourceSlot < 0) return;
-  int target = -1;
-  for (int i = 0; i < kNumPresets; ++i)
-  {
-    if (!mSlotButtons[i]) continue;
-    if (mSlotButtons[i]->GetWidgetBounds().Contains(x, y)) { target = i; break; }
-  }
+  int target = HitTestSlot(x, y);
   if (target == mDragSourceSlot) target = -1;   // 源槽本身不算目标
   if (target == mDragTargetSlot) return;
 
@@ -877,12 +869,7 @@ void GRMBandPass::OnDragDrop(int src, float x, float y)
     mSlotButtons[mDragTargetSlot]->SetDragTarget(false);
   mDragTargetSlot = -1;
 
-  int target = -1;
-  for (int i = 0; i < kNumPresets; ++i)
-  {
-    if (!mSlotButtons[i]) continue;
-    if (mSlotButtons[i]->GetWidgetBounds().Contains(x, y)) { target = i; break; }
-  }
+  const int target = HitTestSlot(x, y);
   mDragSourceSlot = -1;
   if (target >= 0 && target != src)
     SwapSlots(src, target);

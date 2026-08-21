@@ -37,9 +37,6 @@ using namespace iplug;
 using namespace igraphics;
 
 namespace iplug { namespace igraphics {
-  class IVXYPadControl;
-  class ITextControl;
-  class IVButtonControl;
   class IVSliderControl;
   class FilterNodePad;
   class PresetSlotControl;
@@ -122,6 +119,7 @@ private:
   void OnDragBegin(int src);                          // 拖拽开始 (源槽高亮/光标)
   void OnDragMove(float x, float y);                  // 拖拽移动 (更新目标高亮)
   void OnDragDrop(int src, float x, float y);         // 松手: 判定落点并交换
+  int HitTestSlot(float x, float y);                  // 命中测试: (x,y) 所在槽位置, 无则 -1
 
   // 声像区: 数值拷贝/交换 (click 触发, 非开关)
   void CopyLtoR();   // 把当前 L 的数值发送给 R
