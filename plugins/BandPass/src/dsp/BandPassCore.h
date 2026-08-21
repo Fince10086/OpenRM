@@ -1,5 +1,5 @@
 // ============================================================================
-// BandPassCore.h — 零依赖立体声带通滤波器核心 (GRM Tools BandPass 风格 v0.0.1)
+// BandPassCore.h — 零依赖立体声带通滤波器核心 (GRM Tools BandPass 风格 v0.0.2)
 //
 // 算法: TPT State Variable Filter (Zavalishin / Cytomic)
 //   每通道纯带通: BP(center/bw, 小球控制) -> gain

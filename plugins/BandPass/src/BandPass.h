@@ -105,5 +105,12 @@ private:
   void CopyRtoL();   // 把当前 R 的数值发送给 L
   void FlipLR();     // 一次性互换 L / R
 
+  // LINK 开启时, 拖动一个通道的 freq/bw/gain, 另一通道参数实时跟随
+  void MirrorLinkedParams(int paramIdx);
+
+  // 预设 morph 条: 在 Q1..Q8 槽位之间对全部参数线性插值
+  ParamSnapshot InterpolatePresets(double pos);  // pos: 0..kNumQuick-1
+  void OnMorphDrag(double normalizedPos);
+
   static void FormatFreq(char* buf, int n, double hz);
 };

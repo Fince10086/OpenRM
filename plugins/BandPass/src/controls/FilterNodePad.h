@@ -1,6 +1,6 @@
 // ============================================================================
-// FilterNodePad.h — GRM 风格滤波节点可视化控件
-//   深色背景 + 水平频谱光带 (随节点频率/带宽变化) + 可拖动小球
+// FilterNodePad.h — 黑白极简风格滤波节点可视化控件 (模仿 nono.feizao.org)
+//   白底 + 2px 纯黑边框 + #ccc 细网格 + 浅灰频带 + 实心黑球节点
 //   继承 IVXYPadControl: X = 中心频率 (对数), Y = 带宽 (octave)
 // ============================================================================
 #pragma once
@@ -20,25 +20,26 @@ public:
   {
   }
 
-  // 背景轨道: 深色底 + 网格 + 频谱光带
+  // 背景轨道: 白底黑框 + #ccc 网格 + 浅灰频带
   void DrawTrack(IGraphics& g) override
   {
     const IRECT tb = mWidgetBounds;
 
-    // 深色底面
-    g.FillRect(IColor(255, 30, 30, 30), tb);
-    g.DrawRect(IColor(255, 70, 70, 70), tb, nullptr, 1.f);
+    // 白底 + 2px 纯黑边框 (nono 容器语言: border:2px solid #000)
+    g.FillRect(IColor(255, 255, 255, 255), tb);
+    g.DrawRect(IColor(255, 0, 0, 0), tb, nullptr, 2.f);
 
-    // 网格 (4 水平线 + 垂直中线)
-    const IColor gridCol(255, 55, 55, 55);
+    // #ccc 细网格 (3 横线 + 3 竖线, 对应 border:1px solid #ccc)
+    const IColor gridCol(255, 204, 204, 204);
     for (int i = 1; i < 4; ++i)
     {
       const float y = tb.T + tb.H() * i / 4.f;
       g.DrawLine(gridCol, tb.L, y, tb.R, y, nullptr, 1.f);
+      const float x = tb.L + tb.W() * i / 4.f;
+      g.DrawLine(gridCol, x, tb.T, x, tb.B, nullptr, 1.f);
     }
-    g.DrawLine(gridCol, (tb.L + tb.R) * 0.5f, tb.T, (tb.L + tb.R) * 0.5f, tb.B, nullptr, 1.f);
 
-    // ---- 水平频谱光带: 以节点频率为中心的带, 宽度随带宽 ----
+    // ---- 水平频带: 以节点频率为中心的浅灰块, 宽度随带宽 ----
     const float xc = static_cast<float>(GetValue(0)); // 归一化中心频率
     const float yv = static_cast<float>(GetValue(1)); // 归一化带宽
     const float cx = tb.L + xc * tb.W();
@@ -49,30 +50,25 @@ public:
     const float xr = cx + bandFrac * tb.W();
     const float topH = (tb.B - cy) * 0.16f;           // 顶部收窄段高度
 
-    // 顶部窄段 (半透明琥珀)
-    g.FillRect(IColor(90, 224, 180, 92),
+    // 主体宽段 (#f0f0f0) + 顶部窄段 (#e5e5e5) + 底部黑色边线 2px
+    g.FillRect(IColor(255, 240, 240, 240), IRECT(xl, cy + topH, xr, tb.B));
+    g.FillRect(IColor(255, 229, 229, 229),
                IRECT(cx - bandFrac * tb.W() * 0.30f, cy,
                      cx + bandFrac * tb.W() * 0.30f, cy + topH));
-    // 主体宽段
-    g.FillRect(IColor(70, 224, 180, 92),
-               IRECT(xl, cy + topH, xr, tb.B));
-    // 底部亮线
-    g.FillRect(IColor(255, 224, 180, 92),
-               IRECT(xl, tb.B - 2.f, xr, tb.B));
+    g.FillRect(IColor(255, 0, 0, 0), IRECT(xl, tb.B - 2.f, xr, tb.B));
   }
 
-  // 小球手柄: 指示线 + 荧光圆
+  // 节点手柄: 黑色引导线 + 实心黑球 (nono 填充格语言) + 白芯
   void DrawHandle(IGraphics& g, const IRECT& trackBounds, const IRECT& handleBounds) override
   {
     const float cx = handleBounds.MW();
     const float cy = handleBounds.MH();
     const float r  = handleBounds.W() * 0.5f;
 
-    g.DrawLine(IColor(255, 224, 180, 92), cx, handleBounds.T, cx, cy - r, nullptr, 1.f);
+    g.DrawLine(IColor(255, 0, 0, 0), cx, handleBounds.T, cx, cy - r, nullptr, 1.f);
 
-    g.FillCircle(IColor(255, 224, 180, 92), cx, cy, r);
-    g.FillCircle(IColor(255, 244, 214, 140), cx, cy, r * 0.55f);
-    g.FillCircle(IColor(255, 255, 255, 255), cx, cy, r * 0.22f);
+    g.FillCircle(IColor(255, 0, 0, 0), cx, cy, r);
+    g.FillCircle(IColor(255, 255, 255, 255), cx, cy, r * 0.25f);
   }
 };
 

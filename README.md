@@ -2,7 +2,7 @@
 
 GRM Tools BandPass 风格的立体声带通滤波器插件, 基于 iPlug2 (TPT SVF / Zavalishin)。
 
-当前版本: **v0.0.1** (统一版本号, 定义于 `plugins/BandPass/config.h` 的 `PLUG_VERSION_STR`)
+当前版本: **v0.0.2** (统一版本号, 定义于 `plugins/BandPass/config.h` 的 `PLUG_VERSION_STR`)
 
 ## 目录结构
 

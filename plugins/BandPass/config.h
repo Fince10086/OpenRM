@@ -1,7 +1,7 @@
 #define PLUG_NAME "GRMBandPass"
 #define PLUG_MFR "GrmClone"
-#define PLUG_VERSION_HEX 0x00000001
-#define PLUG_VERSION_STR "0.0.1"
+#define PLUG_VERSION_HEX 0x00000002
+#define PLUG_VERSION_STR "0.0.2"
 #define PLUG_UNIQUE_ID 'GrBP'
 #define PLUG_MFR_ID 'GrmC'
 #define PLUG_URL_STR "https://github.com/GRMClone"
@@ -56,4 +56,6 @@
 #define APP_COPY_AUV3 0
 #define APP_SIGNAL_VECTOR_SIZE 64
 
-#define ROBOTO_FN "Roboto-Regular.ttf"
+#define OUTFIT_FN "Outfit-Regular.ttf"
+#define OUTFIT_SB_FN "Outfit-SemiBold.ttf"
+#define OUTFIT_BD_FN "Outfit-Bold.ttf"

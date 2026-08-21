@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.14)
-project(GRMBandPass VERSION 0.0.1)
+project(GRMBandPass VERSION 0.0.2)
 
 # 定位 iPlug2 (默认相对本文件路径, 可用 -DIPLUG2_DIR=... 覆盖)
 if(NOT DEFINED IPLUG2_DIR)
@@ -19,7 +19,9 @@ iplug_add_plugin(${PROJECT_NAME}
     src/dsp/BandPassCore.h
     src/controls/FilterNodePad.h
   RESOURCES
-    resources/fonts/Roboto-Regular.ttf
+    resources/fonts/Outfit-Regular.ttf
+    resources/fonts/Outfit-SemiBold.ttf
+    resources/fonts/Outfit-Bold.ttf
   FORMATS APP AU VST3
   DEFINES SAMPLE_TYPE_FLOAT
 )

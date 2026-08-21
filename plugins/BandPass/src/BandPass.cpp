@@ -9,52 +9,41 @@
 #include <chrono>
 
 // ---------------------------------------------------------------------------
-// GRM 深色扁平配色 (Valhalla 风格基础 + GRM 琥珀/冷灰)
+// 黑白极简配色 (模仿 nono.feizao.org / nonocross):
+//   纯白底 + 纯黑 2px 边框, #ccc 细网格线, hover #f0f0f0,
+//   激活态黑白反转, 4px 圆角, Outfit 字体 (400/600/700)
 // ---------------------------------------------------------------------------
-static const IColor COL_BG       (255, 24, 24, 24);    // 面板
-static const IColor COL_PANEL    (255, 40, 40, 40);    // 控件底面
-static const IColor COL_PAD      (255, 30, 30, 30);    // 可视化窗口
-static const IColor COL_ACCENT   (255, 224, 180, 92);  // 琥珀主色
-static const IColor COL_ACCENT_HI(255, 244, 214, 140);
-static const IColor COL_FRAME    (255, 62, 62, 62);
-static const IColor COL_TEXT     (255, 205, 205, 205);
-static const IColor COL_DIM      (255, 120, 120, 120);
-static const IColor COL_TITLE    (255, 190, 150, 70);  // 区标题琥珀
+static const IColor COL_BG     (255, 255, 255, 255);  // 面板纯白
+static const IColor COL_PANEL  (255, 255, 255, 255);  // 控件底面白
+static const IColor COL_BLACK  (255,   0,   0,   0);  // 主黑: 边框/文字/手柄
+static const IColor COL_TEXT   (255,   0,   0,   0);
+static const IColor COL_DIM    (255, 102, 102, 102);  // #666 次要文字
+static const IColor COL_FAINT  (255, 153, 153, 153);  // #999 弱化文字/刻度
+static const IColor COL_LINE   (255, 204, 204, 204);  // #ccc 细网格线
+static const IColor COL_TRACK  (255, 236, 236, 236);  // 滑轨底 #ececec
+static const IColor COL_HOVER  (255, 240, 240, 240);  // #f0f0f0 hover
 
+// 旋钮/滑条/XY pad 主样式: kFG=白(手柄, 黑框描边), kX1=黑(滑轨/弧线填充), kSH=浅灰轨底
+// 注意: iPlug2 的 roundness 是比例 (乘以短边一半), 不是像素值
 static IVStyle MakeGRMStyle()
 {
-  IVColorSpec colors = { COL_PANEL, COL_ACCENT, COL_ACCENT_HI, COL_FRAME,
-                         COL_ACCENT_HI, COL_BG, COL_ACCENT, COL_ACCENT, COL_ACCENT };
-  const IText labelText(10, COL_TEXT, "Roboto-Regular", EAlign::Center, EVAlign::Bottom);
-  const IText valueText(10, COL_ACCENT, "Roboto-Regular", EAlign::Center, EVAlign::Top);
+  IVColorSpec colors = { COL_PANEL, COL_PANEL, COL_DIM, COL_BLACK,
+                         COL_HOVER, COL_TRACK, COL_BLACK, COL_BLACK, COL_BLACK };
+  const IText labelText(10, COL_DIM, "Outfit", EAlign::Center, EVAlign::Bottom);
+  const IText valueText(10, COL_TEXT, "Outfit-SemiBold", EAlign::Center, EVAlign::Top);
   return IVStyle(true, true, colors, labelText, valueText,
-                 true, true, false, false, 0.f, 1.f, 0.f, 1.f, 0.f);
+                 true, true, false, false, 0.2f, 1.5f, 0.f, 0.85f, 0.f);
 }
 
-static IVStyle MakeSectionTitleStyle()
-{
-  IVColorSpec colors = { COL_BG, COL_TITLE, COL_TITLE, COL_FRAME,
-                         COL_TITLE, COL_BG, COL_TITLE, COL_TITLE, COL_TITLE };
-  const IText labelText(11, COL_TITLE, "Roboto-Regular", EAlign::Near, EVAlign::Bottom);
-  return IVStyle(false, false, colors, labelText, labelText, true, false, false, false,
-                 0.f, 1.f, 0.f, 1.f, 0.f);
-}
-
-// ---------------------------------------------------------------------------
-// 按钮专用深色配色: 深底 + 浅字, 避免 "浅底配浅字" 看不清
-//   kFG(常态填充) 用深色面板色, kPR(按下) 用琥珀, kHL(hover) 轻微提亮
-//   滑块/旋钮仍用 MakeGRMStyle (kFG=琥珀 作手柄/弧线), 与按钮区分
-// ---------------------------------------------------------------------------
-static const IColor COL_HOVER(255, 78, 78, 82);   // hover 轻微提亮
-
+// 按钮: 常态白底黑字黑框, hover #f0f0f0, 按下黑白反转 (黑底)
 static IVStyle MakeButtonStyle()
 {
-  IVColorSpec colors = { COL_PANEL, COL_PANEL, COL_ACCENT, COL_FRAME,
-                         COL_HOVER, COL_BG, COL_ACCENT, COL_ACCENT, COL_ACCENT };
-  const IText labelText(11, COL_TEXT, "Roboto-Regular", EAlign::Center, EVAlign::Middle);
-  const IText valueText(11, COL_TEXT, "Roboto-Regular", EAlign::Center, EVAlign::Middle);
+  IVColorSpec colors = { COL_PANEL, COL_PANEL, COL_BLACK, COL_BLACK,
+                         COL_HOVER, COL_PANEL, COL_BLACK, COL_BLACK, COL_BLACK };
+  const IText labelText(11, COL_TEXT, "Outfit-SemiBold", EAlign::Center, EVAlign::Middle);
+  const IText valueText(11, COL_TEXT, "Outfit-SemiBold", EAlign::Center, EVAlign::Middle);
   return IVStyle(true, true, colors, labelText, valueText, true, true, false, false,
-                 0.f, 1.f, 0.f, 1.f, 0.f);
+                 0.2f, 2.f, 0.f, 1.f, 0.f);
 }
 
 // 瞬时按钮: 点击执行动作后立即把值复位为 0, 规避 iPlug2
@@ -69,6 +58,58 @@ static IVButtonControl* MakeMomentary(const IRECT& r,
     p->SetDirty(false);
   }, label, st);
 }
+
+// ---------------------------------------------------------------------------
+// 预设 morph 条: 贯穿 Q1..Q8 的水平拖动条, 位置对应 8 个槽位刻度,
+// 在相邻槽位参数之间连续插值 (无参绑定, 纯 UI 驱动)
+// ---------------------------------------------------------------------------
+class PresetMorphSlider : public IVSliderControl
+{
+public:
+  PresetMorphSlider(const IRECT& bounds, IActionFunction aF, const IVStyle& style)
+  : IVSliderControl(bounds, aF, "", style, false, EDirection::Horizontal)
+  {
+  }
+
+  void DrawTrack(IGraphics& g, const IRECT& filledArea) override
+  {
+    IVSliderControl::DrawTrack(g, filledArea);
+
+    // 8 个槽位刻度 (与下方 Q1..Q8 按钮对齐)
+    const float x0 = mTrackBounds.L, w = mTrackBounds.W();
+    for (int i = 0; i < kNumQuick; ++i)
+    {
+      const float x = x0 + w * i / (kNumQuick - 1.f);
+      g.FillRect(IColor(255, 0, 0, 0), IRECT(x - 1.f, mTrackBounds.T - 3.f, x + 1.f, mTrackBounds.T));
+      g.FillRect(IColor(255, 0, 0, 0), IRECT(x - 1.f, mTrackBounds.B, x + 1.f, mTrackBounds.B + 3.f));
+    }
+  }
+};
+
+// ---------------------------------------------------------------------------
+// 锁定开关: ON 时黑白反转 (黑底白字), 对应 nono 的 .btn.active 语言;
+// IVToggleControl 只反转填充不反转文字, ON 时会黑字配黑底, 故重写 DrawValue
+// ---------------------------------------------------------------------------
+class InvertToggleControl : public IVToggleControl
+{
+public:
+  InvertToggleControl(const IRECT& bounds, int paramIdx, const char* label,
+                      const IVStyle& style, const char* offText, const char* onText)
+  : IVToggleControl(bounds, paramIdx, label, style, offText, onText)
+  {
+  }
+
+  void DrawValue(IGraphics& g, bool mouseOver) override
+  {
+    if (mouseOver)
+      g.FillRect(GetColor(kHL), mValueBounds, &mBlend);
+
+    const bool on = GetValue() > 0.5;
+    IText t = mStyle.valueText;
+    t.mFGColor = on ? COLOR_WHITE : COL_BLACK;
+    g.DrawText(t, on ? mOnText.Get() : mOffText.Get(), mValueBounds, &mBlend);
+  }
+};
 
 // ---------------------------------------------------------------------------
 // 构造
@@ -133,19 +174,20 @@ GRMBandPass::GRMBandPass(const InstanceInfo& info)
   {
     pGraphics->AttachCornerResizer(EUIResizerMode::Scale, false);
     pGraphics->AttachPanelBackground(COL_BG);
-    pGraphics->LoadFont("Roboto-Regular", ROBOTO_FN);
+    pGraphics->LoadFont("Outfit", OUTFIT_FN);
+    pGraphics->LoadFont("Outfit-SemiBold", OUTFIT_SB_FN);
+    pGraphics->LoadFont("Outfit-Bold", OUTFIT_BD_FN);
 
     const IVStyle style   = MakeGRMStyle();
-    const IVStyle sec     = MakeSectionTitleStyle();
     const IVStyle btnStyle= MakeButtonStyle();
 
     // ================= 主控区: LEFT / RIGHT 双通道 =================
     // LEFT 模块
     mFreqLText = new ITextControl(IRECT(24, 12, 200, 34),
-      "CENTER 1.00k", IText(12, COL_ACCENT, "Roboto-Regular", EAlign::Far, EVAlign::Middle));
+      "CENTER 1.00k", IText(13, COL_TEXT, "Outfit-SemiBold", EAlign::Far, EVAlign::Middle));
     pGraphics->AttachControl(mFreqLText);
     mBwLText = new ITextControl(IRECT(204, 12, 344, 34),
-      "BW 1.00", IText(12, COL_ACCENT, "Roboto-Regular", EAlign::Far, EVAlign::Middle));
+      "BW 1.00", IText(13, COL_TEXT, "Outfit-SemiBold", EAlign::Far, EVAlign::Middle));
     pGraphics->AttachControl(mBwLText);
 
     // LEFT 滤波节点板 (纯带通: X=中心频率, Y=带宽). 移除原 pass 按钮与 HP/LP 滑块, 直接放大填充足区域
@@ -154,15 +196,12 @@ GRMBandPass::GRMBandPass(const InstanceInfo& info)
 
     // RIGHT 模块 (x 偏移 +348)
     mFreqRText = new ITextControl(IRECT(372, 12, 548, 34),
-      "CENTER 1.00k", IText(12, COL_ACCENT, "Roboto-Regular", EAlign::Far, EVAlign::Middle));
+      "CENTER 1.00k", IText(13, COL_TEXT, "Outfit-SemiBold", EAlign::Far, EVAlign::Middle));
     pGraphics->AttachControl(mFreqRText);
     mBwRText = new ITextControl(IRECT(552, 12, 692, 34),
-      "BW 1.00", IText(12, COL_ACCENT, "Roboto-Regular", EAlign::Far, EVAlign::Middle));
+      "BW 1.00", IText(13, COL_TEXT, "Outfit-SemiBold", EAlign::Far, EVAlign::Middle));
     pGraphics->AttachControl(mBwRText);
-
-    // RIGHT 滤波节点板 (同 LEFT)
-    mPadR = new FilterNodePad(IRECT(372, 52, 672, 416), { kFreqR, kBwR }, "RIGHT", style);
-    pGraphics->AttachControl(mPadR);
+    pGraphics->AttachControl(mPadR = new FilterNodePad(IRECT(372, 52, 672, 416), { kFreqR, kBwR }, "RIGHT", style));
 
     // gain 纵向列 (最右侧)
     pGraphics->AttachControl(new IVSliderControl(IRECT(700, 76, 724, 222), kGainL, "GAIN L", style, false, EDirection::Vertical));
@@ -170,7 +209,7 @@ GRMBandPass::GRMBandPass(const InstanceInfo& info)
 
     // ================= 右侧控制面板 =================
     pGraphics->AttachControl(new ITextControl(IRECT(748, 10, 908, 30), "PRESETS",
-      IText(12, COL_TITLE, "Roboto-Regular", EAlign::Near, EVAlign::Middle)));
+      IText(12, COL_TEXT, "Outfit-Bold", EAlign::Near, EVAlign::Middle)));
 
     for (int r = 0; r < 8; ++r)
     {
@@ -187,18 +226,18 @@ GRMBandPass::GRMBandPass(const InstanceInfo& info)
 
     // Agitation 区 (TIME 区已移除: kTime1/kTime2 为无 DSP 行为的死参数)
     pGraphics->AttachControl(new ITextControl(IRECT(748, 250, 908, 268), "AGITATION",
-      IText(11, COL_TITLE, "Roboto-Regular", EAlign::Near, EVAlign::Middle)));
-    pGraphics->AttachControl(new IVSwitchControl(IRECT(748, 272, 804, 294), kAgOn, "ON", btnStyle));
+      IText(11, COL_TEXT, "Outfit-Bold", EAlign::Near, EVAlign::Middle)));
+    pGraphics->AttachControl(new InvertToggleControl(IRECT(748, 272, 804, 294), kAgOn, " ", btnStyle, "OFF", "ON"));
     pGraphics->AttachControl(new IVKnobControl(IRECT(812, 268, 890, 326), kAgAmount, "INTENSITY", style));
     pGraphics->AttachControl(new IVKnobControl(IRECT(898, 268, 976, 326), kAgRate, "RATE", style));
 
     // 声像区
     pGraphics->AttachControl(new ITextControl(IRECT(748, 334, 908, 352), "PAN",
-      IText(11, COL_TITLE, "Roboto-Regular", EAlign::Near, EVAlign::Middle)));
+      IText(11, COL_TEXT, "Outfit-Bold", EAlign::Near, EVAlign::Middle)));
     // L->R / R->L / FLIP 现在是 click 触发: 拷贝/交换 L,R 数值 (非开关)
     pGraphics->AttachControl(MakeMomentary(IRECT(748, 356, 804, 378), [this](IControl*) { CopyLtoR(); }, "L->R", btnStyle));
     pGraphics->AttachControl(MakeMomentary(IRECT(812, 356, 868, 378), [this](IControl*) { CopyRtoL(); }, "R->L", btnStyle));
-    pGraphics->AttachControl(new IVSwitchControl(IRECT(876, 356, 932, 378), kLink, "LINK", btnStyle)); // 仍是开关
+    pGraphics->AttachControl(new InvertToggleControl(IRECT(876, 356, 932, 378), kLink, " ", btnStyle, "LINK", "LINK")); // 黑白反转表示状态
     pGraphics->AttachControl(MakeMomentary(IRECT(940, 356, 996, 378), [this](IControl*) { FlipLR(); }, "FLIP", btnStyle));
     pGraphics->AttachControl(new IVSliderControl(IRECT(748, 390, 996, 416), kMix, "MIX", style, false, EDirection::Horizontal));
 
@@ -215,14 +254,20 @@ GRMBandPass::GRMBandPass(const InstanceInfo& info)
         IRECT(24 + i * 78, 602, 90 + i * 78, 630),
         [this, i](IControl*) { LoadSlot(i); }, label, btnStyle));
     }
+    // 预设 morph 条: 贯穿 Q1..Q8, 在相邻槽位参数间平滑插值
+    pGraphics->AttachControl(new PresetMorphSlider(IRECT(24, 634, 636, 654),
+      [this](IControl* pCtrl) {
+        MaybePushGestureUndo();          // 新手势起点记录 morph 前状态
+        OnMorphDrag(pCtrl->GetValue(0));
+      }, btnStyle));
     pGraphics->AttachControl(MakeMomentary(IRECT(748, 602, 822, 630), [this](IControl*) { SaveToSlot(mCurrentPreset); }, "SAVE", btnStyle));
     pGraphics->AttachControl(MakeMomentary(IRECT(830, 602, 904, 630), [this](IControl*) { LoadSlot(mCurrentPreset); }, "LOAD", btnStyle));
 
     // 品牌标识 + 版本号 (标题下方)
     pGraphics->AttachControl(new ITextControl(IRECT(960, 596, 1152, 618), "GRM BANDPASS",
-      IText(15, COL_ACCENT, "Roboto-Regular", EAlign::Far, EVAlign::Middle)));
+      IText(16, COL_TEXT, "Outfit-Bold", EAlign::Far, EVAlign::Middle)));
     pGraphics->AttachControl(new ITextControl(IRECT(960, 618, 1152, 640), "v" PLUG_VERSION_STR,
-      IText(9, COL_DIM, "Roboto-Regular", EAlign::Far, EVAlign::Middle)));
+      IText(9, COL_FAINT, "Outfit", EAlign::Far, EVAlign::Middle)));
 
     // 初始状态
     UpdateParamDisplays();
@@ -283,7 +328,10 @@ void GRMBandPass::OnParamChangeUI(int paramIdx, EParamSource source)
   // 兜底发布: 部分格式 (如 APP) 的 UI 拖动不经宿主回合到 OnParamChange
   PublishParamsToCore();
   if (source == EParamSource::kUI)
+  {
     MaybePushGestureUndo();
+    MirrorLinkedParams(paramIdx);  // LINK 跟随仅响应真实 UI 手势
+  }
   UpdateParamDisplays();
 }
 #endif
@@ -511,4 +559,61 @@ void GRMBandPass::FormatFreq(char* buf, int n, double hz)
   if (hz >= 10000.) snprintf(buf, n, "%.1fk", hz / 1000.);
   else if (hz >= 1000.) snprintf(buf, n, "%.2fk", hz / 1000.);
   else snprintf(buf, n, "%.0f", hz);
+}
+
+// ---------------------------------------------------------------------------
+// LINK 跟随: 开启 LINK 后拖动一个通道的 freq/bw/gain, 另一通道参数实时同步,
+// 使对侧 pad/滑条显示与 DSP 一致地跟随移动
+// ---------------------------------------------------------------------------
+void GRMBandPass::MirrorLinkedParams(int paramIdx)
+{
+  if (GetParam(kLink)->Value() < 0.5) return;
+
+  int mirror;
+  switch (paramIdx)
+  {
+    case kFreqL: mirror = kFreqR; break;
+    case kBwL:   mirror = kBwR;   break;
+    case kGainL: mirror = kGainR; break;
+    case kFreqR: mirror = kFreqL; break;
+    case kBwR:   mirror = kBwL;   break;
+    case kGainR: mirror = kGainL; break;
+    default: return;
+  }
+
+  // 值已一致则不写, 防止 L<->R 往返
+  if (std::fabs(GetParam(mirror)->Value() - GetParam(paramIdx)->Value()) < 1e-9) return;
+
+  SetParamFromEditor(mirror, GetParam(paramIdx)->Value());
+#if IPLUG_EDITOR
+  // 把镜像值推给绑定该参数的控件 (对侧 pad / GAIN 滑条), 让显示立即跟随
+  if (GetUI())
+    SendParameterValueFromDelegate(mirror, GetParam(mirror)->GetNormalized(), true);
+#endif
+}
+
+// ---------------------------------------------------------------------------
+// 预设 morph 条: 在 Q1..Q8 相邻槽位之间对全部参数做线性插值
+// (freq 等指数形参数在归一化域插值, 保证听感对数平滑)
+// ---------------------------------------------------------------------------
+ParamSnapshot GRMBandPass::InterpolatePresets(double pos)
+{
+  const int i0 = std::clamp(static_cast<int>(std::floor(pos)), 0, kNumQuick - 1);
+  const int i1 = std::min(i0 + 1, kNumQuick - 1);
+  const double t = std::clamp(pos - i0, 0.0, 1.0);
+
+  ParamSnapshot out;
+  for (int i = 0; i < kNumParams; ++i)
+  {
+    const IParam* p = GetParam(i);
+    const double a = p->FromNormalized(p->ToNormalized(mPresets[i0][i]));
+    const double b = p->FromNormalized(p->ToNormalized(mPresets[i1][i]));
+    out[i] = a + (b - a) * t;
+  }
+  return out;
+}
+
+void GRMBandPass::OnMorphDrag(double normalizedPos)
+{
+  ApplySnapshot(InterpolatePresets(normalizedPos * (kNumQuick - 1)));
 }
