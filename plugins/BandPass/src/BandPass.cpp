@@ -239,6 +239,11 @@ GRMBandPass::GRMBandPass(const InstanceInfo& info)
 #if IPLUG_DSP
 void GRMBandPass::ProcessBlock(sample** inputs, sample** outputs, int nFrames)
 {
+  // 音频线程: 取走编辑器线程发布的最新参数 (写入中则沿用上一块)
+  grm::BandPassCore::Params p;
+  if (mParamMailbox.consume(p))
+    mCore.setParams(p);
+
   mCore.updateSmoothing(nFrames);
   const int nChans = NOutChansConnected();
 
@@ -255,16 +260,27 @@ void GRMBandPass::ProcessBlock(sample** inputs, sample** outputs, int nFrames)
 void GRMBandPass::OnReset()
 {
   mCore.prepare(GetSampleRate(), GetBlockSize());
-  SyncParamsToCore();
+  // 流已停止, 直接同步一次, 避免载入后从默认值滑音到目标值
+  mCore.setParams(CollectParams());
 }
 
-void GRMBandPass::OnParamChange(int paramIdx)
+void GRMBandPass::OnParamChange(int paramIdx, EParamSource source, int sampleOffset)
 {
-  SyncParamsToCore();
+  if (source == EParamSource::kHost)
+  {
+    // 宿主自动化在音频线程回调: 直接写核心, 与 ProcessBlock 天然串行, 不经信箱
+    mCore.setParams(CollectParams());
+  }
+  else
+  {
+    PublishParamsToCore();
+  }
 }
 
 void GRMBandPass::OnParamChangeUI(int paramIdx, EParamSource source)
 {
+  // 兜底发布: 部分格式 (如 APP) 的 UI 拖动不经宿主回合到 OnParamChange
+  PublishParamsToCore();
   UpdateParamDisplays();
 }
 #endif
@@ -272,7 +288,7 @@ void GRMBandPass::OnParamChangeUI(int paramIdx, EParamSource source)
 // ---------------------------------------------------------------------------
 // 参数同步与显示
 // ---------------------------------------------------------------------------
-void GRMBandPass::SyncParamsToCore()
+grm::BandPassCore::Params GRMBandPass::CollectParams() const
 {
   grm::BandPassCore::Params p;
   p.freqL  = GetParam(kFreqL)->Value();
@@ -286,7 +302,32 @@ void GRMBandPass::SyncParamsToCore()
   p.agOn   = GetParam(kAgOn)->Value() > 0.5;
   p.agAmount = static_cast<float>(GetParam(kAgAmount)->Value());
   p.agRate = GetParam(kAgRate)->Value();
-  mCore.setParams(p);
+  return p;
+}
+
+void GRMBandPass::PublishParamsToCore()
+{
+  mParamMailbox.publish(CollectParams());
+}
+
+void GRMBandPass::SetParamFromEditor(int idx, double value)
+{
+  GetParam(idx)->Set(value);
+  InformHostOfParamChange(idx, GetParam(idx)->GetNormalized());
+  PublishParamsToCore();
+}
+
+void GRMBandPass::RefreshAfterEdit()
+{
+#if IPLUG_EDITOR
+  if (GetUI())
+  {
+    // 让所有绑定参数的控件 (滑条/旋钮/开关/XY pad) 从参数回读最新值
+    SendCurrentParamValuesFromDelegate();
+    GetUI()->SetAllControlsDirty();
+  }
+#endif
+  UpdateParamDisplays();
 }
 
 void GRMBandPass::UpdateParamDisplays()
@@ -347,12 +388,8 @@ ParamSnapshot GRMBandPass::Snapshot() const
 void GRMBandPass::ApplySnapshot(const ParamSnapshot& s)
 {
   for (int i = 0; i < kNumParams; ++i)
-    GetParam(i)->Set(s[i]);
-  SyncParamsToCore();
-  UpdateParamDisplays();
-#if IPLUG_EDITOR
-  if (GetUI()) GetUI()->SetAllControlsDirty();
-#endif
+    SetParamFromEditor(i, s[i]);
+  RefreshAfterEdit();
 }
 
 void GRMBandPass::PushUndo()
@@ -395,48 +432,36 @@ void GRMBandPass::LoadSlot(int idx)
 }
 
 // 声像区: 数值拷贝 / 交换 (click 触发)
-// 直接写参数值 + 同步 DSP + 刷新显示与 XY 宏控制; 不在 DSP 里做音频路由
+// 经 SetParamFromEditor 写值: 同步 DSP 信箱 + 通知宿主; 不在 DSP 里做音频路由
 void GRMBandPass::CopyLtoR()
 {
   PushUndo();
-  GetParam(kFreqR)->Set(GetParam(kFreqL)->Value());
-  GetParam(kBwR)  ->Set(GetParam(kBwL)->Value());
-  GetParam(kGainR)->Set(GetParam(kGainL)->Value());
-  SyncParamsToCore();
-  UpdateParamDisplays();
-#if IPLUG_EDITOR
-  if (GetUI()) GetUI()->SetAllControlsDirty();
-#endif
+  SetParamFromEditor(kFreqR, GetParam(kFreqL)->Value());
+  SetParamFromEditor(kBwR,   GetParam(kBwL)->Value());
+  SetParamFromEditor(kGainR, GetParam(kGainL)->Value());
+  RefreshAfterEdit();
 }
 
 void GRMBandPass::CopyRtoL()
 {
   PushUndo();
-  GetParam(kFreqL)->Set(GetParam(kFreqR)->Value());
-  GetParam(kBwL)  ->Set(GetParam(kBwR)->Value());
-  GetParam(kGainL)->Set(GetParam(kGainR)->Value());
-  SyncParamsToCore();
-  UpdateParamDisplays();
-#if IPLUG_EDITOR
-  if (GetUI()) GetUI()->SetAllControlsDirty();
-#endif
+  SetParamFromEditor(kFreqL, GetParam(kFreqR)->Value());
+  SetParamFromEditor(kBwL,   GetParam(kBwR)->Value());
+  SetParamFromEditor(kGainL, GetParam(kGainR)->Value());
+  RefreshAfterEdit();
 }
 
 void GRMBandPass::FlipLR()
 {
   PushUndo();
   const double fL = GetParam(kFreqL)->Value(), bL = GetParam(kBwL)->Value(), gL = GetParam(kGainL)->Value();
-  GetParam(kFreqL)->Set(GetParam(kFreqR)->Value());
-  GetParam(kBwL)  ->Set(GetParam(kBwR)->Value());
-  GetParam(kGainL)->Set(GetParam(kGainR)->Value());
-  GetParam(kFreqR)->Set(fL);
-  GetParam(kBwR)  ->Set(bL);
-  GetParam(kGainR)->Set(gL);
-  SyncParamsToCore();
-  UpdateParamDisplays();
-#if IPLUG_EDITOR
-  if (GetUI()) GetUI()->SetAllControlsDirty();
-#endif
+  SetParamFromEditor(kFreqL, GetParam(kFreqR)->Value());
+  SetParamFromEditor(kBwL,   GetParam(kBwR)->Value());
+  SetParamFromEditor(kGainL, GetParam(kGainR)->Value());
+  SetParamFromEditor(kFreqR, fL);
+  SetParamFromEditor(kBwR,   bL);
+  SetParamFromEditor(kGainR, gL);
+  RefreshAfterEdit();
 }
 
 void GRMBandPass::FormatFreq(char* buf, int n, double hz)

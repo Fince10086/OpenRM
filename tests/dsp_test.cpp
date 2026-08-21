@@ -4,7 +4,8 @@
 //   2) 带宽(octave) 影响通带宽度
 //   3) link 模式 R 跟随 L
 //   4) mix 干湿混合
-//   5) 高 Q 稳定性
+//   5) 峰值增益归一化 (中心增益 ~1, 不随带宽变窄抬升)
+//   6) 高 Q 稳定性
 // 构建:  c++ -std=c++17 -O2 -o dsp_test dsp_test.cpp
 #include "../plugins/BandPass/src/dsp/BandPassCore.h"
 #include <cstdio>
@@ -152,7 +153,24 @@ int main()
         printf("   mix: dry=%.3f wet=%.3f\n", gDry, gWet);
     }
 
-    // ---- 5) 稳定性: 白噪声高 Q ----
+    // ---- 5) 峰值增益归一化: 不同带宽下中心频率增益 ~1 ----
+    {
+        BandPassCore core;
+        core.prepare(kFs, kBlock);
+        bool normOk = true;
+        for (double bw : {0.2, 1.0, 2.0})
+        {
+            BandPassCore::Params p = MakeParams();
+            p.freqL = 2000.0; p.bwL = bw;
+            core.setParams(p);
+            const double g = measureGain(core, 2000.0);
+            printf("   bw=%.1f oct: center gain=%.3f\n", bw, g);
+            if (std::fabs(g - 1.0) > 0.05) normOk = false;
+        }
+        check("BP peak gain normalized (~1.0) across bandwidths", normOk);
+    }
+
+    // ---- 6) 稳定性: 白噪声高 Q ----
     {
         BandPassCore core;
         core.prepare(kFs, kBlock);

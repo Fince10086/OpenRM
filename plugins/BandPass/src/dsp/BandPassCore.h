@@ -4,6 +4,7 @@
 // 算法: TPT State Variable Filter (Zavalishin / Cytomic)
 //   每通道纯带通: BP(center/bw, 小球控制) -> gain
 //   bandwidth: octave 带宽, 内部转 Q
+//   BP 输出按 1/Q 归一化: 中心频率峰值增益恒为 ~1, 不随带宽变窄而抬升
 // 特性:
 //   - float32 处理路径, double 系数计算 (每 block 一次)
 //   - 双声道独立 (dual-mono) / link 模式
@@ -17,6 +18,7 @@
 
 #include <cmath>
 #include <algorithm>
+#include <atomic>
 
 namespace grm {
 
@@ -67,6 +69,37 @@ inline double octaveToQ(double oct) noexcept
 }
 
 // ----------------------------------------------------------------------------
+// 单写单读参数信箱 (seqlock): 编辑器线程 publish, 音频线程 consume
+// consume 遇到写入中/撕裂时返回 false, 音频线程沿用上一块的参数即可
+// ----------------------------------------------------------------------------
+template <typename T>
+class ParamMailbox
+{
+public:
+    void publish(const T& p) noexcept
+    {
+        const unsigned v = mVersion.load(std::memory_order_relaxed);
+        mVersion.store(v + 1, std::memory_order_relaxed);    // 进入写入
+        std::atomic_thread_fence(std::memory_order_release);
+        mSnapshot = p;
+        mVersion.store(v + 2, std::memory_order_release);    // 写入完成
+    }
+
+    bool consume(T& out) noexcept
+    {
+        const unsigned v1 = mVersion.load(std::memory_order_acquire);
+        if (v1 & 1u) return false;                           // 正在写入
+        out = mSnapshot;
+        std::atomic_thread_fence(std::memory_order_acquire);
+        return v1 == mVersion.load(std::memory_order_relaxed);
+    }
+
+private:
+    std::atomic<unsigned> mVersion {0};
+    T mSnapshot {};
+};
+
+// ----------------------------------------------------------------------------
 // 单通道滤波链: 纯带通 (TPT SVF 的 band 输出)
 // ----------------------------------------------------------------------------
 class ChannelChain
@@ -82,20 +115,27 @@ public:
 
     void setParams(double bpHz, double bwOct) noexcept
     {
-        bp.setParams(bpHz, octaveToQ(bwOct));
+        mQ = octaveToQ(bwOct);
+        mBandNorm = 1.0 / mQ;   // SVF band 输出峰值增益 = Q, 乘 1/Q 归一为 ~1
+        bp.setParams(bpHz, mQ);
     }
+
+    // agitation 调制时仅更新中心频率 (Q 与归一化系数不变)
+    void setFreq(double bpHz) noexcept { bp.setParams(bpHz, mQ); }
 
     inline float process(float x) noexcept
     {
         float lo, b, h;
         bp.process(x, lo, b, h);
-        return b;   // 纯带通输出
+        return b * static_cast<float>(mBandNorm);   // 峰值增益归一化的带通输出
     }
 
     SvfFilter bp;
 
 private:
     double mSampleRate = 44100.0;
+    double mQ = 1.0;
+    double mBandNorm = 1.0;
 };
 
 // ----------------------------------------------------------------------------
@@ -195,11 +235,11 @@ public:
             float wetL, wetR;
             if (mod != 1.0)
             {
-                // 抖动时按样本重算 BP 系数
+                // 抖动时按样本重算 BP 系数 (仅频率, Q 不变)
                 const double fL = std::clamp(mSmFreqL * mod, 20.0, mSampleRate * 0.49);
                 const double fR = std::clamp(mSmFreqR * mod, 20.0, mSampleRate * 0.49);
-                mChainL.bp.setParams(fL, octaveToQ(mSmBwL));
-                mChainR.bp.setParams(fR, octaveToQ(mSmBwR));
+                mChainL.setFreq(fL);
+                mChainR.setFreq(fR);
             }
             wetL = mChainL.process(xl) * gL;
             wetR = mChainR.process(xr) * gR;
@@ -229,7 +269,7 @@ public:
             if (mod != 1.0)
             {
                 const double f = std::clamp(mSmFreqL * mod, 20.0, mSampleRate * 0.49);
-                mChainL.bp.setParams(f, octaveToQ(mSmBwL));
+                mChainL.setFreq(f);
             }
             const float wet = mChainL.process(in[i]) * g;
             out[i] = in[i] * (1.0f - mix) + wet * mix;
