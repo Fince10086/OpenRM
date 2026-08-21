@@ -6,17 +6,17 @@
 	<array>
 		<dict>
 			<key>description</key>
-			<string>GRMBandPass</string>
+			<string>ORMBandPass</string>
 			<key>factoryFunction</key>
-			<string>GRMBandPass_Factory</string>
+			<string>ORMBandPass_Factory</string>
 			<key>manufacturer</key>
-			<string>GrmC</string>
+			<string>OpenRM</string>
 			<key>name</key>
-			<string>GrmClone: GRMBandPass</string>
+			<string>OpenRM: ORMBandPass</string>
 			<key>sandboxSafe</key>
 			<true/>
 			<key>subtype</key>
-			<string>GrBP</string>
+			<string>ORMB</string>
 			<key>type</key>
 			<string>aufx</string>
 			<key>version</key>
@@ -28,21 +28,21 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>English</string>
 	<key>CFBundleExecutable</key>
-	<string>GRMBandPass</string>
+	<string>ORMBandPass</string>
 	<key>CFBundleGetInfoString</key>
-	<string>GRMBandPass v1.0.0 Copyright 2025 Acme Inc</string>
+	<string>ORMBandPass v1.0.0 Copyright 2025 OpenRM</string>
 	<key>CFBundleIdentifier</key>
-	<string>com.GrmClone.audiounit.GRMBandPass</string>
+	<string>com.OpenRM.audiounit.ORMBandPass</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>GRMBandPass</string>
+	<string>ORMBandPass</string>
 	<key>CFBundlePackageType</key>
 	<string>BNDL</string>
 	<key>CFBundleShortVersionString</key>
 	<string>1.0.0</string>
 	<key>CFBundleSignature</key>
-	<string>GrBP</string>
+	<string>ORMB</string>
 	<key>CFBundleVersion</key>
 	<string>1.0.0</string>
 	<key>CSResourcesFileMapped</key>
@@ -50,6 +50,6 @@
 	<key>LSMinimumSystemVersion</key>
 	<string>10.13.0</string>
 	<key>NSPrincipalClass</key>
-	<string>GRMBandPass_View</string>
+	<string>ORMBandPass_View</string>
 </dict>
 </plist>

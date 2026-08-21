@@ -37,10 +37,10 @@ namespace iplug { namespace igraphics {
   class PresetSlotControl;
 } }
 
-class GRMBandPass final : public Plugin
+class ORMBandPass final : public Plugin
 {
 public:
-  GRMBandPass(const InstanceInfo& info);
+  ORMBandPass(const InstanceInfo& info);
 
 #if IPLUG_DSP
   void ProcessBlock(sample** inputs, sample** outputs, int nFrames) override;
@@ -51,8 +51,8 @@ public:
   void OnIdle() override;
 
 private:
-  grm::BandPassCore mCore;
-  grm::ParamMailbox<grm::BandPassCore::Params> mParamMailbox;
+  orm::BandPassCore mCore;
+  orm::ParamMailbox<orm::BandPassCore::Params> mParamMailbox;
 
   FilterNodePad*  mPadL = nullptr;
   FilterNodePad*  mPadR = nullptr;
@@ -73,7 +73,7 @@ private:
   double mLastUIChangeTime = -1e9;
   bool mGesturePending = false;
 
-  grm::BandPassCore::Params CollectParams() const;
+  orm::BandPassCore::Params CollectParams() const;
   void PublishParamsToCore();
 
   void SetParamFromEditor(int idx, double value);

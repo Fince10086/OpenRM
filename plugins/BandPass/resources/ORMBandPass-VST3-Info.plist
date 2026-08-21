@@ -5,15 +5,15 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>English</string>
 	<key>CFBundleExecutable</key>
-	<string>GRMBandPass</string>
+	<string>ORMBandPass</string>
 	<key>CFBundleGetInfoString</key>
-	<string>GRMBandPass v1.0.0 Copyright 2025 Acme Inc</string>
+	<string>ORMBandPass v1.0.0 Copyright 2025 OpenRM</string>
 	<key>CFBundleIdentifier</key>
-	<string>com.GrmClone.vst3.GRMBandPass</string>
+	<string>com.OpenRM.vst3.ORMBandPass</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>GRMBandPass</string>
+	<string>ORMBandPass</string>
 	<key>CFBundlePackageType</key>
 	<string>BNDL</string>
 	<key>CFBundleShortVersionString</key>

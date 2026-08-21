@@ -13,7 +13,7 @@
 #include <vector>
 #include <string>
 
-using namespace grm;
+using namespace orm;
 
 static constexpr double kFs = 48000.0;
 static constexpr int    kBlock = 512;
@@ -61,7 +61,7 @@ static void check(const std::string& name, bool ok)
 
 int main()
 {
-    printf("=== BandPassCore v0.0.3 自测 (fs=%d) ===\n", (int)kFs);
+    printf("=== BandPassCore v0.0.4 自测 (fs=%d) ===\n", (int)kFs);
 
     // ---- 1) BP 峰值在中心频率 ----
     {

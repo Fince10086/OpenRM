@@ -1,19 +1,19 @@
-#define PLUG_NAME "GRMBandPass"
-#define PLUG_MFR "GrmClone"
+#define PLUG_NAME "ORMBandPass"
+#define PLUG_MFR "OpenRM"
 #define PLUG_VERSION_HEX 0x00000002
-#define PLUG_VERSION_STR "0.0.3"
-#define PLUG_UNIQUE_ID 'GrBP'
-#define PLUG_MFR_ID 'GrmC'
-#define PLUG_URL_STR "https://github.com/GRMClone"
-#define PLUG_EMAIL_STR "dev@grmclone.local"
-#define PLUG_COPYRIGHT_STR "Copyright 2026 GrmClone"
-#define PLUG_CLASS_NAME GRMBandPass
+#define PLUG_VERSION_STR "0.0.4"
+#define PLUG_UNIQUE_ID 'ORMB'
+#define PLUG_MFR_ID 'OpRM'
+#define PLUG_URL_STR "https://github.com/OpenRM"
+#define PLUG_EMAIL_STR "fince@foxmail.com"
+#define PLUG_COPYRIGHT_STR "Copyright 2026 OpenRM"
+#define PLUG_CLASS_NAME ORMBandPass
 
-#define BUNDLE_NAME "GRMBandPass"
-#define BUNDLE_MFR "GrmClone"
+#define BUNDLE_NAME "ORMBandPass"
+#define BUNDLE_MFR "OpenRM"
 #define BUNDLE_DOMAIN "com"
 
-#define SHARED_RESOURCES_SUBPATH "GRMBandPass"
+#define SHARED_RESOURCES_SUBPATH "ORMBandPass"
 
 #define PLUG_CHANNEL_IO "1-1 2-2"
 
@@ -30,22 +30,22 @@
 #define PLUG_SHARED_RESOURCES 0
 #define PLUG_HOST_RESIZE 1
 
-#define AUV2_ENTRY GRMBandPass_Entry
-#define AUV2_ENTRY_STR "GRMBandPass_Entry"
-#define AUV2_FACTORY GRMBandPass_Factory
-#define AUV2_VIEW_CLASS GRMBandPass_View
-#define AUV2_VIEW_CLASS_STR "GRMBandPass_View"
+#define AUV2_ENTRY ORMBandPass_Entry
+#define AUV2_ENTRY_STR "ORMBandPass_Entry"
+#define AUV2_FACTORY ORMBandPass_Factory
+#define AUV2_VIEW_CLASS ORMBandPass_View
+#define AUV2_VIEW_CLASS_STR "ORMBandPass_View"
 
 #define AAX_TYPE_IDS 'GBP1', 'GBP2'
 #define AAX_TYPE_IDS_AUDIOSUITE 'GBS1', 'GBS2'
-#define AAX_PLUG_MFR_STR "GrmClone"
-#define AAX_PLUG_NAME_STR "GRMBandPass\nGRBP"
+#define AAX_PLUG_MFR_STR "OpenRM"
+#define AAX_PLUG_NAME_STR "ORMBandPass\nORMBP"
 #define AAX_PLUG_CATEGORY_STR "Effect"
 #define AAX_DOES_AUDIOSUITE 1
 
 #define VST3_SUBCATEGORY "Fx"
 
-#define CLAP_MANUAL_URL "https://github.com/GRMClone"
+#define CLAP_MANUAL_URL "https://github.com/OpenRM"
 #define CLAP_SUPPORT_URL "https://github.com/iPlug2/iPlug2/wiki"
 #define CLAP_DESCRIPTION "Dynamically controllable stereo bandpass filter"
 #define CLAP_FEATURES "audio-effect", "filter"

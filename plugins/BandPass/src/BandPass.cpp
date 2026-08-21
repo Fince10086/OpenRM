@@ -13,7 +13,7 @@
 #include <cmath>
 #include <algorithm>
 
-static IVStyle MakeGRMStyle()
+static IVStyle MakeORMStyle()
 {
   IVColorSpec colors = { COL_BG, COL_BG, COL_DIM, COL_BLACK,
                          COL_HOVER, COL_TRACK, COL_BLACK, COL_BLACK, COL_BLACK };
@@ -66,10 +66,10 @@ public:
   }
 };
 
-class GRMSlider : public IVSliderControl
+class ORMSlider : public IVSliderControl
 {
 public:
-  GRMSlider(const IRECT& bounds, int paramIdx, const char* label, const IVStyle& style,
+  ORMSlider(const IRECT& bounds, int paramIdx, const char* label, const IVStyle& style,
             EDirection dir)
   : IVSliderControl(bounds, paramIdx, label, style, false, dir)
   , mHeaderLabel(label ? label : "")
@@ -193,7 +193,7 @@ public:
   }
 };
 
-GRMBandPass::GRMBandPass(const InstanceInfo& info)
+ORMBandPass::ORMBandPass(const InstanceInfo& info)
 : Plugin(info, MakeConfig(kNumParams, 1))
 {
   GetParam(kFreqL)->InitDouble("FreqL", 1000., 20., 20000., 0.01, "Hz", 0, "", IParam::ShapeExp());
@@ -259,7 +259,7 @@ GRMBandPass::GRMBandPass(const InstanceInfo& info)
     pGraphics->LoadFont("Outfit-SemiBold", OUTFIT_SB_FN);
     pGraphics->LoadFont("Outfit-Bold", OUTFIT_BD_FN);
 
-    const IVStyle style   = MakeGRMStyle();
+    const IVStyle style   = MakeORMStyle();
     const IVStyle btnStyle= MakeButtonStyle();
     IVStyle toggleStyle = btnStyle;
     toggleStyle.showLabel = false;
@@ -287,8 +287,8 @@ GRMBandPass::GRMBandPass(const InstanceInfo& info)
     mPadR = new FilterNodePad(IRECT(20, 302, 668, 534), { kFreqR, kBwR }, "RIGHT", style, padHooks(kFreqR, kBwR));
     pGraphics->AttachControl(mPadR);
 
-    pGraphics->AttachControl(new GRMSlider(IRECT(672, 38, 730, 270), kGainL, "GAIN L", style, EDirection::Vertical));
-    pGraphics->AttachControl(new GRMSlider(IRECT(672, 302, 730, 534), kGainR, "GAIN R", style, EDirection::Vertical));
+    pGraphics->AttachControl(new ORMSlider(IRECT(672, 38, 730, 270), kGainL, "GAIN L", style, EDirection::Vertical));
+    pGraphics->AttachControl(new ORMSlider(IRECT(672, 302, 730, 534), kGainR, "GAIN R", style, EDirection::Vertical));
 
     pGraphics->AttachControl(new ITextControl(IRECT(kCol1X, 14, 900, 34), "PRESETS",
       IText(11, COL_BLACK, "Outfit-Bold", EAlign::Near, EVAlign::Middle)));
@@ -329,14 +329,14 @@ GRMBandPass::GRMBandPass(const InstanceInfo& info)
     pGraphics->AttachControl(new ITextControl(IRECT(kCol1X, 242, 900, 262), "AGITATION",
       IText(11, COL_BLACK, "Outfit-Bold", EAlign::Near, EVAlign::Middle)));
     pGraphics->AttachControl(new InvertToggleControl(IRECT(kCol1X, 268, kCol1X + kBtnW, 290), kAgOn, " ", toggleStyle, "OFF", "ON"));
-    pGraphics->AttachControl(new GRMSlider(IRECT(kCol1X, 296, kPanelR, 330), kAgAmount, "INTENSITY", style, EDirection::Horizontal));
-    pGraphics->AttachControl(new GRMSlider(IRECT(kCol1X, 336, kPanelR, 370), kAgRate, "RATE", style, EDirection::Horizontal));
+    pGraphics->AttachControl(new ORMSlider(IRECT(kCol1X, 296, kPanelR, 330), kAgAmount, "INTENSITY", style, EDirection::Horizontal));
+    pGraphics->AttachControl(new ORMSlider(IRECT(kCol1X, 336, kPanelR, 370), kAgRate, "RATE", style, EDirection::Horizontal));
 
     pGraphics->AttachControl(MakeMomentary(IRECT(kCol1X, 376, kCol1X + kBtnW, 398), [this](IControl*) { CopyLtoR(); }, "L->R", btnStyle));
     pGraphics->AttachControl(MakeMomentary(IRECT(kCol2X, 376, kCol2X + kBtnW, 398), [this](IControl*) { CopyRtoL(); }, "R->L", btnStyle));
     pGraphics->AttachControl(new InvertToggleControl(IRECT(kCol1X, 404, kCol1X + kBtnW, 426), kLink, " ", toggleStyle, "LINK", "LINK"));
     pGraphics->AttachControl(MakeMomentary(IRECT(kCol2X, 404, kCol2X + kBtnW, 426), [this](IControl*) { FlipLR(); }, "FLIP", btnStyle));
-    pGraphics->AttachControl(new GRMSlider(IRECT(kCol1X, 432, kPanelR, 466), kMix, "MIX", style, EDirection::Horizontal));
+    pGraphics->AttachControl(new ORMSlider(IRECT(kCol1X, 432, kPanelR, 466), kMix, "MIX", style, EDirection::Horizontal));
 
     pGraphics->AttachControl(MakeMomentary(IRECT(kCol1X, 472, kCol1X + kBtnW, 494), [this](IControl*) { Undo(); }, "UNDO", btnStyle));
     pGraphics->AttachControl(MakeMomentary(IRECT(kCol2X, 472, kCol2X + kBtnW, 494), [this](IControl*) { Redo(); }, "REDO", btnStyle));
@@ -362,7 +362,7 @@ GRMBandPass::GRMBandPass(const InstanceInfo& info)
       }, btnStyle);
     pGraphics->AttachControl(mMorphSlider);
 
-    pGraphics->AttachControl(new ITextControl(IRECT(kCol1X, 534, kPanelR, 558), "GRM BANDPASS",
+    pGraphics->AttachControl(new ITextControl(IRECT(kCol1X, 534, kPanelR, 558), "ORM BandPass",
       IText(16, COL_BLACK, "Outfit-Bold", EAlign::Near, EVAlign::Middle)));
     pGraphics->AttachControl(new ITextControl(IRECT(kCol1X, 558, kPanelR, 574), "v" PLUG_VERSION_STR,
       IText(9, COL_FAINT, "Outfit", EAlign::Near, EVAlign::Middle)));
@@ -374,9 +374,9 @@ GRMBandPass::GRMBandPass(const InstanceInfo& info)
 }
 
 #if IPLUG_DSP
-void GRMBandPass::ProcessBlock(sample** inputs, sample** outputs, int nFrames)
+void ORMBandPass::ProcessBlock(sample** inputs, sample** outputs, int nFrames)
 {
-  grm::BandPassCore::Params p;
+  orm::BandPassCore::Params p;
   if (mParamMailbox.consume(p))
     mCore.setParams(p);
 
@@ -399,13 +399,13 @@ void GRMBandPass::ProcessBlock(sample** inputs, sample** outputs, int nFrames)
   }
 }
 
-void GRMBandPass::OnReset()
+void ORMBandPass::OnReset()
 {
   mCore.setParams(CollectParams());
   mCore.prepare(GetSampleRate(), GetBlockSize());
 }
 
-void GRMBandPass::OnParamChange(int paramIdx, EParamSource source, int sampleOffset)
+void ORMBandPass::OnParamChange(int paramIdx, EParamSource source, int sampleOffset)
 {
   if (source == EParamSource::kHost)
   {
@@ -417,7 +417,7 @@ void GRMBandPass::OnParamChange(int paramIdx, EParamSource source, int sampleOff
   }
 }
 
-void GRMBandPass::OnParamChangeUI(int paramIdx, EParamSource source)
+void ORMBandPass::OnParamChangeUI(int paramIdx, EParamSource source)
 {
   PublishParamsToCore();
   if (source == EParamSource::kUI)
@@ -429,9 +429,9 @@ void GRMBandPass::OnParamChangeUI(int paramIdx, EParamSource source)
 }
 #endif
 
-grm::BandPassCore::Params GRMBandPass::CollectParams() const
+orm::BandPassCore::Params ORMBandPass::CollectParams() const
 {
-  grm::BandPassCore::Params p;
+  orm::BandPassCore::Params p;
   p.freqL  = GetParam(kFreqL)->Value();
   p.bwL    = GetParam(kBwL)->Value();
   p.gainL  = static_cast<float>(GetParam(kGainL)->Value());
@@ -446,19 +446,19 @@ grm::BandPassCore::Params GRMBandPass::CollectParams() const
   return p;
 }
 
-void GRMBandPass::PublishParamsToCore()
+void ORMBandPass::PublishParamsToCore()
 {
   mParamMailbox.publish(CollectParams());
 }
 
-void GRMBandPass::SetParamFromEditor(int idx, double value)
+void ORMBandPass::SetParamFromEditor(int idx, double value)
 {
   GetParam(idx)->Set(value);
   InformHostOfParamChange(idx, GetParam(idx)->GetNormalized());
   PublishParamsToCore();
 }
 
-void GRMBandPass::RefreshAfterEdit()
+void ORMBandPass::RefreshAfterEdit()
 {
 #if IPLUG_EDITOR
   if (GetUI())
@@ -471,7 +471,7 @@ void GRMBandPass::RefreshAfterEdit()
   MarkStateStable();
 }
 
-void GRMBandPass::EditCorner(int kFreq, int kBw, int cornerId, double value)
+void ORMBandPass::EditCorner(int kFreq, int kBw, int cornerId, double value)
 {
   PushUndo();
   const IParam* pf = GetParam(kFreq);
@@ -490,7 +490,7 @@ void GRMBandPass::EditCorner(int kFreq, int kBw, int cornerId, double value)
   ClampAndSet(kFreq, kBw, nc, nb);
 }
 
-void GRMBandPass::EditBand(int kFreq, int kBw, double lowNorm, double highNorm)
+void ORMBandPass::EditBand(int kFreq, int kBw, double lowNorm, double highNorm)
 {
   const IParam* pf = GetParam(kFreq);
   const double lowHz = pf->FromNormalized(lowNorm);
@@ -500,7 +500,7 @@ void GRMBandPass::EditBand(int kFreq, int kBw, double lowNorm, double highNorm)
   ClampAndSet(kFreq, kBw, center, bw);
 }
 
-void GRMBandPass::ClampAndSet(int kFreq, int kBw, double centerHz, double bwOct)
+void ORMBandPass::ClampAndSet(int kFreq, int kBw, double centerHz, double bwOct)
 {
   centerHz = std::clamp(centerHz, 20., 20000.);
   bwOct    = std::clamp(bwOct, 0.05, 4.);
@@ -513,7 +513,7 @@ void GRMBandPass::ClampAndSet(int kFreq, int kBw, double centerHz, double bwOct)
   RefreshAfterEdit();
 }
 
-void GRMBandPass::UpdatePads()
+void ORMBandPass::UpdatePads()
 {
   if (mPadL)
   {
@@ -529,7 +529,7 @@ void GRMBandPass::UpdatePads()
   }
 }
 
-ParamSnapshot GRMBandPass::Snapshot() const
+ParamSnapshot ORMBandPass::Snapshot() const
 {
   ParamSnapshot s;
   for (int i = 0; i < kNumParams; ++i)
@@ -537,19 +537,19 @@ ParamSnapshot GRMBandPass::Snapshot() const
   return s;
 }
 
-void GRMBandPass::ApplySnapshot(const ParamSnapshot& s)
+void ORMBandPass::ApplySnapshot(const ParamSnapshot& s)
 {
   for (int i = 0; i < kNumParams; ++i)
     SetParamFromEditor(i, s[i]);
   RefreshAfterEdit();
 }
 
-void GRMBandPass::PushUndo()
+void ORMBandPass::PushUndo()
 {
   PushUndoSnapshot(Snapshot());
 }
 
-void GRMBandPass::PushUndoSnapshot(const ParamSnapshot& s)
+void ORMBandPass::PushUndoSnapshot(const ParamSnapshot& s)
 {
   if (!mUndoStack.empty() && mUndoStack.back() == s) return;
   mUndoStack.push_back(s);
@@ -559,7 +559,7 @@ void GRMBandPass::PushUndoSnapshot(const ParamSnapshot& s)
 
 static constexpr double kGestureGapSec = 0.4;
 
-void GRMBandPass::MaybePushGestureUndo()
+void ORMBandPass::MaybePushGestureUndo()
 {
   using namespace std::chrono;
   const double now = duration<double>(steady_clock::now().time_since_epoch()).count();
@@ -569,7 +569,7 @@ void GRMBandPass::MaybePushGestureUndo()
   mGesturePending = true;
 }
 
-void GRMBandPass::OnIdle()
+void ORMBandPass::OnIdle()
 {
   using namespace std::chrono;
   const double now = duration<double>(steady_clock::now().time_since_epoch()).count();
@@ -580,13 +580,13 @@ void GRMBandPass::OnIdle()
   }
 }
 
-void GRMBandPass::MarkStateStable()
+void ORMBandPass::MarkStateStable()
 {
   mStableSnapshot = Snapshot();
   mGesturePending = false;
 }
 
-void GRMBandPass::Undo()
+void ORMBandPass::Undo()
 {
   if (mUndoStack.empty()) return;
   mRedoStack.push_back(Snapshot());
@@ -595,7 +595,7 @@ void GRMBandPass::Undo()
   ApplySnapshot(s);
 }
 
-void GRMBandPass::Redo()
+void ORMBandPass::Redo()
 {
   if (mRedoStack.empty()) return;
   mUndoStack.push_back(Snapshot());
@@ -604,13 +604,13 @@ void GRMBandPass::Redo()
   ApplySnapshot(s);
 }
 
-void GRMBandPass::SaveToSlot(int idx)
+void ORMBandPass::SaveToSlot(int idx)
 {
   if (idx < 0 || idx >= kNumPresets) return;
   mPresets[idx] = Snapshot();
 }
 
-void GRMBandPass::LoadSlot(int idx)
+void ORMBandPass::LoadSlot(int idx)
 {
   if (idx < 0 || idx >= kNumPresets) return;
   PushUndo();
@@ -618,7 +618,7 @@ void GRMBandPass::LoadSlot(int idx)
   ApplySnapshot(mPresets[idx]);
 }
 
-void GRMBandPass::RestoreDefault(int idx)
+void ORMBandPass::RestoreDefault(int idx)
 {
   if (idx < 0 || idx >= kNumPresets) return;
   mPresets[idx] = mDefaultSnapshot;
@@ -629,7 +629,7 @@ void GRMBandPass::RestoreDefault(int idx)
   }
 }
 
-void GRMBandPass::SwapSlots(int posA, int posB)
+void ORMBandPass::SwapSlots(int posA, int posB)
 {
   if (posA == posB) return;
   if (posA < 0 || posA >= kNumPresets || posB < 0 || posB >= kNumPresets) return;
@@ -637,7 +637,7 @@ void GRMBandPass::SwapSlots(int posA, int posB)
   RefreshSlotLabels();
 }
 
-void GRMBandPass::RefreshSlotLabels()
+void ORMBandPass::RefreshSlotLabels()
 {
   for (int i = 0; i < kNumPresets; ++i)
   {
@@ -648,10 +648,10 @@ void GRMBandPass::RefreshSlotLabels()
   }
 }
 
-void GRMBandPass::SaveFile()
+void ORMBandPass::SaveFile()
 {
   if (!GetUI()) return;
-  mDialogFileName.Set("GRMBandPass Presets");
+  mDialogFileName.Set("ORMBandPass Presets");
   mDialogPath.Set("");
   GetUI()->PromptForFile(mDialogFileName, mDialogPath, EFileAction::Save, "json",
     [this](const WDL_String& fileName, const WDL_String& path) {
@@ -666,7 +666,7 @@ void GRMBandPass::SaveFile()
     });
 }
 
-void GRMBandPass::LoadFile()
+void ORMBandPass::LoadFile()
 {
   if (!GetUI()) return;
   mDialogFileName.Set("");
@@ -680,7 +680,7 @@ void GRMBandPass::LoadFile()
     });
 }
 
-void GRMBandPass::WritePresetFileTo(const std::string& path, std::string& err)
+void ORMBandPass::WritePresetFileTo(const std::string& path, std::string& err)
 {
   PresetFileData data;
   for (const auto& p : mPresets)
@@ -697,7 +697,7 @@ void GRMBandPass::WritePresetFileTo(const std::string& path, std::string& err)
     err.clear();
 }
 
-void GRMBandPass::ReadPresetFileFrom(const std::string& path, std::string& err)
+void ORMBandPass::ReadPresetFileFrom(const std::string& path, std::string& err)
 {
   PresetFileData data;
   if (!ReadPresetFile(path, data, err)) return;
@@ -731,13 +731,13 @@ void GRMBandPass::ReadPresetFileFrom(const std::string& path, std::string& err)
   err.clear();
 }
 
-void GRMBandPass::OnDragBegin(int src)
+void ORMBandPass::OnDragBegin(int src)
 {
   mDragSourceSlot = src;
   mDragTargetSlot = -1;
 }
 
-int GRMBandPass::HitTestSlot(float x, float y)
+int ORMBandPass::HitTestSlot(float x, float y)
 {
   for (int i = 0; i < kNumPresets; ++i)
     if (mSlotButtons[i] && mSlotButtons[i]->GetWidgetBounds().Contains(x, y))
@@ -745,7 +745,7 @@ int GRMBandPass::HitTestSlot(float x, float y)
   return -1;
 }
 
-void GRMBandPass::OnDragMove(float x, float y)
+void ORMBandPass::OnDragMove(float x, float y)
 {
   if (mDragSourceSlot < 0) return;
   int target = HitTestSlot(x, y);
@@ -759,7 +759,7 @@ void GRMBandPass::OnDragMove(float x, float y)
     mSlotButtons[mDragTargetSlot]->SetDragTarget(true);
 }
 
-void GRMBandPass::OnDragDrop(int src, float x, float y)
+void ORMBandPass::OnDragDrop(int src, float x, float y)
 {
   if (mDragTargetSlot >= 0 && mSlotButtons[mDragTargetSlot])
     mSlotButtons[mDragTargetSlot]->SetDragTarget(false);
@@ -771,7 +771,7 @@ void GRMBandPass::OnDragDrop(int src, float x, float y)
     SwapSlots(src, target);
 }
 
-void GRMBandPass::CopyLtoR()
+void ORMBandPass::CopyLtoR()
 {
   PushUndo();
   SetParamFromEditor(kFreqR, GetParam(kFreqL)->Value());
@@ -780,7 +780,7 @@ void GRMBandPass::CopyLtoR()
   RefreshAfterEdit();
 }
 
-void GRMBandPass::CopyRtoL()
+void ORMBandPass::CopyRtoL()
 {
   PushUndo();
   SetParamFromEditor(kFreqL, GetParam(kFreqR)->Value());
@@ -789,7 +789,7 @@ void GRMBandPass::CopyRtoL()
   RefreshAfterEdit();
 }
 
-void GRMBandPass::FlipLR()
+void ORMBandPass::FlipLR()
 {
   PushUndo();
   const double fL = GetParam(kFreqL)->Value(), bL = GetParam(kBwL)->Value(), gL = GetParam(kGainL)->Value();
@@ -802,7 +802,7 @@ void GRMBandPass::FlipLR()
   RefreshAfterEdit();
 }
 
-void GRMBandPass::MirrorLinkedParams(int paramIdx)
+void ORMBandPass::MirrorLinkedParams(int paramIdx)
 {
   if (GetParam(kLink)->Value() < 0.5) return;
 
@@ -827,7 +827,7 @@ void GRMBandPass::MirrorLinkedParams(int paramIdx)
 #endif
 }
 
-ParamSnapshot GRMBandPass::InterpolatePresets(double pos)
+ParamSnapshot ORMBandPass::InterpolatePresets(double pos)
 {
   const int i0 = std::clamp(static_cast<int>(std::floor(pos)), 0, kNumQuick - 1);
   const int i1 = std::min(i0 + 1, kNumQuick - 1);
@@ -845,7 +845,7 @@ ParamSnapshot GRMBandPass::InterpolatePresets(double pos)
   return out;
 }
 
-void GRMBandPass::OnMorphDrag(double normalizedPos)
+void ORMBandPass::OnMorphDrag(double normalizedPos)
 {
   ApplySnapshot(InterpolatePresets(normalizedPos * (kNumQuick - 1)));
 }
