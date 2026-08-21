@@ -32,7 +32,7 @@ public:
   FilterNodePad(const IRECT& bounds, const std::initializer_list<int>& params,
                 const char* label, const IVStyle& style, const Hooks& hooks,
                 float handleRadius = 9.f)
-  : IVXYPadControl(bounds, params,  "", style, handleRadius, true, true)
+  : IVXYPadControl(bounds, params,  "", style.WithDrawFrame(false), handleRadius, true, true)
   , mHooks(hooks)
   , mSideLabel(label)
   {
@@ -161,7 +161,6 @@ public:
   void DrawTrack(IGraphics& g) override
   {
     const IRECT tb = PlotRect();
-    g.FillRect(COLOR_WHITE, tb);
     for (int i = 1; i < 4; ++i)
     {
       const float y = tb.T + tb.H() * i / 4.f;
@@ -169,6 +168,7 @@ public:
       const float x = tb.L + tb.W() * i / 4.f;
       g.DrawLine(COL_GRID, x, tb.T, x, tb.B, nullptr, 1.f);
     }
+    g.DrawRect(COL_BLACK, tb, nullptr, 1.f);
   }
 
   void DrawHandle(IGraphics& g, const IRECT& trackBounds, const IRECT& handleBounds) override
@@ -323,10 +323,10 @@ private:
     return true;
   }
 
-  static constexpr float kCornerW = 100.f;
-  static constexpr float kCornerTextH = 11.f;
+  static constexpr float kCornerW = 80.f;
+  static constexpr float kCornerTextH = 10.f;
   static constexpr float kSideW    = 22.f;
-  static constexpr float kSideH    = 25.f;
+  static constexpr float kSideH    = 0.f;
   static constexpr float kTopPad   = 18.f;
   static constexpr float kSliderH  = 20.f;
   static constexpr float kBottomInset = 2.f;
