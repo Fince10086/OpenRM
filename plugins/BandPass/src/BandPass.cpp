@@ -499,8 +499,8 @@ void ORMBandPass::EditCorner(int kFreq, int kBw, int cornerId, double value)
   {
     case kCornerCenter: nc = value;     break;
     case kCornerBw:     nb = value;     break;
-    case kCornerLow:    lowHz = value;  nc = std::sqrt(lowHz * highHz); nb = highHz / lowHz; break;
-    case kCornerHigh:   highHz = value; nc = std::sqrt(lowHz * highHz); nb = highHz / lowHz; break;
+    case kCornerLow:    lowHz = value;  nc = std::sqrt(lowHz * highHz); nb = std::sqrt(highHz / lowHz); break;
+    case kCornerHigh:   highHz = value; nc = std::sqrt(lowHz * highHz); nb = std::sqrt(highHz / lowHz); break;
   }
   ClampAndSet(kFreq, kBw, nc, nb);
 }
@@ -511,7 +511,8 @@ void ORMBandPass::EditBand(int kFreq, int kBw, double lowNorm, double highNorm)
   const double lowHz = pf->FromNormalized(lowNorm);
   const double highHz = pf->FromNormalized(highNorm);
   const double center = std::sqrt(lowHz * highHz);
-  const double bw = highHz / lowHz;
+  // Edges are center/bw and center*bw, so high/low == bw^2.
+  const double bw = std::sqrt(highHz / lowHz);
   ClampAndSet(kFreq, kBw, center, bw);
 }
 

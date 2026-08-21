@@ -54,7 +54,8 @@ public:
     }
     SelectHandle(x);
     if (mHooks.gestureBegin) mHooks.gestureBegin();
-    OnMouseDrag(x, y, 0.f, 0.f, mod);
+    // No OnMouseDrag here: a plain click must only grab the nearest handle,
+    // not snap it to the click position (which would widen the band).
   }
 
   void OnMouseDrag(float x, float y, float dX, float dY, const IMouseMod& mod) override
