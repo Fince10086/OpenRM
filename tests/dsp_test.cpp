@@ -61,7 +61,7 @@ static void check(const std::string& name, bool ok)
 
 int main()
 {
-    printf("=== BandPassCore v0.0.2 自测 (fs=%d) ===\n", (int)kFs);
+    printf("=== BandPassCore v0.0.3 自测 (fs=%d) ===\n", (int)kFs);
 
     // ---- 1) BP 峰值在中心频率 ----
     {

@@ -1,7 +1,7 @@
 #define PLUG_NAME "GRMBandPass"
 #define PLUG_MFR "GrmClone"
 #define PLUG_VERSION_HEX 0x00000002
-#define PLUG_VERSION_STR "0.0.2"
+#define PLUG_VERSION_STR "0.0.3"
 #define PLUG_UNIQUE_ID 'GrBP'
 #define PLUG_MFR_ID 'GrmC'
 #define PLUG_URL_STR "https://github.com/GRMClone"
