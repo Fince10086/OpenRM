@@ -11,6 +11,7 @@ static const IColor COL_FAINT (255, 153, 153, 153);
 static const IColor COL_TRACK (255, 236, 236, 236);
 static const IColor COL_HOVER (255, 240, 240, 240);
 static const IColor COL_GRID  (255, 204, 204, 204);
+static const IColor COL_DGRAY (255,  70,  70, 70);
 
 // Corner identifiers shared by the XY pad (CENTER / BANDWIDTH) and the band
 // range slider (LOWCUT / HIGHCUT) text entries.

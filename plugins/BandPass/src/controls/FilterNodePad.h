@@ -29,15 +29,6 @@ public:
     SetTextEntryLength(20);
   }
 
-  void OnResize() override
-  {
-    IVXYPadControl::OnResize();
-    // Reserve the side-label strip on the left so the label itself stays
-    // inside the control's RECT (drawing is clipped to it).
-    mWidgetBounds = mWidgetBounds.GetReducedFromLeft(kSideW);
-    SetDirty(false);
-  }
-
   void Draw(IGraphics& g) override
   {
     IVXYPadControl::Draw(g);
@@ -146,7 +137,7 @@ public:
   {
     if (mSideLabel.GetLength() == 0) return;
     const IRECT r = SideLabelRect();
-    IText t(20, COL_BLACK, "Outfit-SemiBold", EAlign::Center, EVAlign::Middle, -90.f);
+    IText t(24, COL_DGRAY, "Outfit-Bold", EAlign::Center, EVAlign::Middle, -90.f);
     g.DrawText(t, mSideLabel.Get(), r);
   }
 
@@ -172,7 +163,9 @@ private:
   IRECT SideLabelRect() const
   {
     const IRECT& w = mWidgetBounds;
-    return IRECT(w.L - kSideW, w.T, w.L, w.B);
+    // Hug the inner-left edge of the plot area, centred vertically within it
+    // (not within the whole control, which includes the corner-label strip).
+    return IRECT(w.L, w.T + kTopPad, w.L + kSideW, w.B);
   }
 
   void DrawCorner(IGraphics& g, int id)
@@ -219,7 +212,7 @@ private:
 
   static constexpr float kCornerW = 170.f;
   static constexpr float kCornerTextH = 22.f;
-  static constexpr float kSideW    = 36.f;
+  static constexpr float kSideW    = 24.f;
   static constexpr float kSideH    = 0.f;
   static constexpr float kTopPad   = 30.f;
 
