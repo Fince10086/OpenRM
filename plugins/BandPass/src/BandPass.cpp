@@ -80,7 +80,13 @@ public:
 
   void DrawTrack(IGraphics& g, const IRECT& filledArea) override
   {
-    IVSliderControl::DrawTrack(g, filledArea);
+    // Visible track extends one handle radius past each end (matches ORMSlider);
+    // the min-side (left) extension is always black, the right one stays grey.
+    const float cr = GetRoundedCornerRadius(mTrackBounds);
+    const IRECT tb = mTrackBounds.GetHPadded(mHandleSize);
+    g.FillRoundRect(COL_TRACK, tb, cr, &mBlend);
+    const IRECT fill(tb.L, filledArea.T, std::max(filledArea.R, mTrackBounds.L), filledArea.B);
+    g.FillRoundRect(COL_BLACK, fill, cr, &mBlend);
 
     const float x0 = mTrackBounds.L, w = mTrackBounds.W();
     for (int i = 0; i < kNumQuick; ++i)
@@ -184,10 +190,21 @@ public:
 
   void DrawTrack(IGraphics& g, const IRECT& filledArea) override
   {
+    // Extend the visible track by one handle radius on both ends, so its
+    // edges line up with the outermost edge of the handle (the handle's
+    // centre travel logic is untouched).
+    const bool horiz = (mDirection == EDirection::Horizontal);
     const float cr = GetRoundedCornerRadius(mTrackBounds);
-    g.FillRoundRect(COL_TRACK, mTrackBounds, cr, &mBlend);
-    if (filledArea.W() > 0.5f && filledArea.H() > 0.5f)
-      g.FillRoundRect(COL_BLACK, filledArea, cr, &mBlend);
+    const IRECT tb = horiz ? mTrackBounds.GetHPadded(mHandleSize)
+                           : mTrackBounds.GetVPadded(mHandleSize);
+    g.FillRoundRect(COL_TRACK, tb, cr, &mBlend);
+
+    // The min-side extension is always part of the filled (black) region;
+    // the max-side extension stays grey.
+    const IRECT fill = horiz
+      ? IRECT(tb.L, filledArea.T, std::max(filledArea.R, mTrackBounds.L), filledArea.B)
+      : IRECT(filledArea.L, filledArea.T, filledArea.R, tb.B);
+    g.FillRoundRect(COL_BLACK, fill, cr, &mBlend);
   }
 
   void DrawHandle(IGraphics& g, const IRECT& bounds) override
@@ -480,8 +497,18 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
     {
       char label[8];
       snprintf(label, 8, "%d", mSlotNumber[i] + 1);
+      // Same cell width as the PRESETS grid. Align with the morph slider's
+      // tick marks: its track is inset by the handle radius on both sides and
+      // carries kNumQuick evenly spaced ticks (both ends included).
+      constexpr float kHandleInset = 8.f;
+      const float trackL = 56.f + kHandleInset;
+      const float trackR = 668.f - kHandleInset;
+      const float tick = trackL + (trackR - trackL) * i / (kNumQuick - 1.f);
+      float l = tick - 19.5f;                       // centred on the tick
+      if (i == 0) l = tick;                         // first: left-aligned
+      else if (i == kNumBottom - 1) l = tick - 39.f; // last: right-aligned
       PresetSlotControl* btn = new PresetSlotControl(
-        IRECT(20 + i * 82, 560, 94 + i * 82, 590),
+        IRECT(l, 560, l + 39.f, 590),
         makeSlotHooks(i), label, btnStyle);
       mSlotButtons[i] = btn;
       pGraphics->AttachControl(btn);
