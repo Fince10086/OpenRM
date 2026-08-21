@@ -2,6 +2,8 @@
 #include "IPlug_include_in_plug_src.h"
 #include "IControls.h"
 #include "controls/FilterNodePad.h"
+#include "controls/PresetSlotControl.h"
+#include "PresetFileIO.h"
 
 #include <cstring>
 #include <cstdio>
@@ -23,7 +25,7 @@ static const IColor COL_DIM    (255, 102, 102, 102);  // #666 次要文字
 static const IColor COL_FAINT  (255, 153, 153, 153);  // #999 弱化文字/刻度
 static const IColor COL_LINE   (255, 204, 204, 204);  // #ccc 细网格线
 static const IColor COL_TRACK  (255, 236, 236, 236);  // 滑轨底 #ececec
-static const IColor COL_FILL   (255, 170, 170, 170);  // 滑块已填充电平: 柔和深灰 (非纯黑)
+static const IColor COL_FILL   (255,   0,   0,   0);  // 滑块已填充电平: 纯黑
 static const IColor COL_HOVER  (255, 240, 240, 240);  // #f0f0f0 hover
 
 // 旋钮/滑条/XY pad 主样式: kFG=白(手柄, 黑框描边), kX1=黑(滑轨/弧线填充), kSH=浅灰轨底
@@ -199,38 +201,48 @@ GRMBandPass::GRMBandPass(const InstanceInfo& info)
   GetParam(kAgAmount)->InitDouble("Ag Amount", 0.1, 0., 1., 0.01, "");
   GetParam(kAgRate)->InitDouble("Ag Rate", 1., 0.05, 20., 0.01, "Hz");
 
-  // ---- 16 预设槽位: 先填默认快照 ----
-  for (auto& p : mPresets)
-    p = Snapshot();
+  // ---- 16 预设槽位: 先填默认快照 + 出厂名字 ----
+  for (int i = 0; i < kNumPresets; ++i)
+  {
+    mPresets[i].values = Snapshot();
+    char nm[24];
+    snprintf(nm, sizeof(nm), "Preset %d", i + 1);
+    mPresets[i].name = nm;
+  }
 
-  mStableSnapshot = Snapshot();
+  mDefaultSnapshot = Snapshot();   // 出厂默认 (右键"恢复默认"用)
+  mStableSnapshot  = Snapshot();
 
   {
     ParamSnapshot s = Snapshot();
     s[kFreqL] = 500.;  s[kBwL] = 0.2;  s[kFreqR] = 500.; s[kBwR] = 0.2; s[kLink] = 1.;
-    mPresets[1] = s; // 窄带 500
+    mPresets[1].values = s; mPresets[1].name = "Narrow 500"; // 窄带 500
   }
   {
     ParamSnapshot s = Snapshot();
     s[kFreqL] = 2000.; s[kBwL] = 3.0;  s[kFreqR] = 2000.; s[kBwR] = 3.0; s[kLink] = 1.;
-    mPresets[2] = s; // 宽带 2k
+    mPresets[2].values = s; mPresets[2].name = "Wide 2k";   // 宽带 2k
   }
   {
     ParamSnapshot s = Snapshot();
     s[kFreqL] = 400.; s[kBwL] = 0.3; s[kFreqR] = 4000.; s[kBwR] = 1.5;
-    mPresets[3] = s; // 分离 L/R
+    mPresets[3].values = s; mPresets[3].name = "Split L/R"; // 分离 L/R
   }
   {
     ParamSnapshot s = Snapshot();
     s[kFreqL] = 3000.; s[kBwL] = 0.5; s[kFreqR] = 3000.; s[kBwR] = 0.5; s[kLink] = 1.;
     s[kAgOn] = 1.; s[kAgAmount] = 0.3; s[kAgRate] = 4.;
-    mPresets[4] = s; // 抖动
+    mPresets[4].values = s; mPresets[4].name = "Agitate";   // 抖动
   }
   {
     ParamSnapshot s = Snapshot();
     s[kFreqL] = 150.; s[kBwL] = 2.5; s[kFreqR] = 150.; s[kBwR] = 2.5; s[kLink] = 1.;
-    mPresets[5] = s; // 低频
+    mPresets[5].values = s; mPresets[5].name = "Bass";      // 低频
   }
+
+  // 底部"最近使用"初始为槽 1..8 (与原 Q1..Q8 等价)
+  for (int i = 0; i < kNumRecent; ++i)
+    mRecentSlots.push_back(i);
 
 #if IPLUG_EDITOR
   mMakeGraphicsFunc = [&]()
@@ -282,6 +294,23 @@ GRMBandPass::GRMBandPass(const InstanceInfo& info)
     pGraphics->AttachControl(new ITextControl(IRECT(740, 14, 900, 32), "PRESETS",
       IText(12, COL_TEXT, "Outfit-Bold", EAlign::Near, EVAlign::Middle)));
 
+    // 预设槽交互工厂 (右侧库 / 底部最近使用共用):
+    // 单击加载 · ⌘+点击保存 · ⌥+点击恢复默认 · 右键菜单 · 悬停提示
+    auto makeSlotHooks = [this](int idx) -> PresetSlotControl::Hooks
+    {
+      return PresetSlotControl::Hooks{
+        [this, idx]() { LoadSlot(idx); },
+        [this, idx]() { SaveToSlot(idx); },
+        [this, idx]() { RestoreDefault(idx); },
+        [this, idx](const char* nm) { CommitRename(idx, nm); },
+        [this, idx]() -> std::string {
+          char buf[80];
+          snprintf(buf, sizeof(buf), "Preset %d: %s", idx + 1, mPresets[idx].name.c_str());
+          return buf;
+        },
+      };
+    };
+
     for (int r = 0; r < 8; ++r)
     {
       for (int c = 0; c < 2; ++c)
@@ -289,9 +318,9 @@ GRMBandPass::GRMBandPass(const InstanceInfo& info)
         const int idx = r * 2 + c;
         char label[8];
         snprintf(label, 8, "%d", idx + 1);
-        pGraphics->AttachControl(MakeMomentary(
+        pGraphics->AttachControl(new PresetSlotControl(
           IRECT(740 + c * 64, 38 + r * 26, 796 + c * 64, 60 + r * 26),
-          [this, idx](IControl*) { LoadSlot(idx); }, label, btnStyle));
+          makeSlotHooks(idx), label, btnStyle));
       }
     }
 
@@ -316,24 +345,45 @@ GRMBandPass::GRMBandPass(const InstanceInfo& info)
     pGraphics->AttachControl(MakeMomentary(IRECT(740, 448, 796, 470), [this](IControl*) { Undo(); }, "UNDO", btnStyle));
     pGraphics->AttachControl(MakeMomentary(IRECT(804, 448, 860, 470), [this](IControl*) { Redo(); }, "REDO", btnStyle));
 
-    // ================= 底部条 (Q 排与 pad 左右缘对齐, morph 条贯穿 Q1..Q8) =================
-    for (int i = 0; i < kNumQuick; ++i)
+    // ================= 底部条 (最近使用 8 槽 + morph 条) =================
+    // 底部不再是固定 Q1..Q8: 改为"最近使用"动态槽位, 与右侧 1-16 预设库语义分离;
+    // 每次加载预设后 MRU 列表更新 (AddToRecent), 标签由 UpdateRecentRow 刷新
+    auto makeRecentHooks = [this](int rowIdx) -> PresetSlotControl::Hooks
     {
-      char label[8];
-      snprintf(label, 8, "Q%d", i + 1);
-      pGraphics->AttachControl(MakeMomentary(
+      return PresetSlotControl::Hooks{
+        [this, rowIdx]() { if (rowIdx < (int)mRecentSlots.size()) LoadSlot(mRecentSlots[rowIdx]); },
+        [this, rowIdx]() { if (rowIdx < (int)mRecentSlots.size()) SaveToSlot(mRecentSlots[rowIdx]); },
+        [this, rowIdx]() { if (rowIdx < (int)mRecentSlots.size()) RestoreDefault(mRecentSlots[rowIdx]); },
+        [this, rowIdx](const char* nm) { if (rowIdx < (int)mRecentSlots.size()) CommitRename(mRecentSlots[rowIdx], nm); },
+        [this, rowIdx]() -> std::string {
+          if (rowIdx >= (int)mRecentSlots.size()) return std::string();
+          const int idx = mRecentSlots[rowIdx];
+          char buf[80];
+          snprintf(buf, sizeof(buf), "Preset %d: %s", idx + 1, mPresets[idx].name.c_str());
+          return buf;
+        },
+      };
+    };
+
+    for (int i = 0; i < kNumRecent; ++i)
+    {
+      PresetSlotControl* btn = new PresetSlotControl(
         IRECT(20 + i * 82, 546, 94 + i * 82, 568),
-        [this, i](IControl*) { LoadSlot(i); }, label, btnStyle));
+        makeRecentHooks(i), "—", btnStyle);
+      mRecentButtons[i] = btn;
+      pGraphics->AttachControl(btn);
     }
-    // 预设 morph 条: 在相邻槽位参数间平滑插值; 控件矩形两端内缩 handleSize(8px),
-    // 使轨道/刻度/手柄正好落在 Q 按钮中心线上 (57 + i*82)
-    pGraphics->AttachControl(new PresetMorphSlider(IRECT(49, 572, 639, 592),
+    // 预设 morph 条: 在槽 1..8 相邻参数间平滑插值; 控件矩形两端内缩 handleSize(8px),
+    // 使轨道/刻度/手柄正好落在底部按钮中心线上 (57 + i*82)
+    mMorphSlider = new PresetMorphSlider(IRECT(49, 572, 639, 592),
       [this](IControl* pCtrl) {
         MaybePushGestureUndo();          // 新手势起点记录 morph 前状态
+        mMorphPos = pCtrl->GetValue(0) * (kNumQuick - 1.0);   // 记录位置供 JSON 保存
         OnMorphDrag(pCtrl->GetValue(0));
-      }, btnStyle));
-    pGraphics->AttachControl(MakeMomentary(IRECT(740, 546, 796, 568), [this](IControl*) { SaveToSlot(mCurrentPreset); }, "SAVE", btnStyle));
-    pGraphics->AttachControl(MakeMomentary(IRECT(804, 546, 860, 568), [this](IControl*) { LoadSlot(mCurrentPreset); }, "LOAD", btnStyle));
+      }, btnStyle);
+    pGraphics->AttachControl(mMorphSlider);
+    pGraphics->AttachControl(MakeMomentary(IRECT(740, 546, 796, 568), [this](IControl*) { SaveFile(); }, "SAVE", btnStyle));
+    pGraphics->AttachControl(MakeMomentary(IRECT(804, 546, 860, 568), [this](IControl*) { LoadFile(); }, "LOAD", btnStyle));
 
     // 品牌标识 + 版本号 (右下角, 矩形避开 SAVE/LOAD 的命中区域)
     pGraphics->AttachControl(new ITextControl(IRECT(740, 508, 988, 532), "GRM BANDPASS",
@@ -342,6 +392,8 @@ GRMBandPass::GRMBandPass(const InstanceInfo& info)
       IText(9, COL_FAINT, "Outfit", EAlign::Far, EVAlign::Middle)));
 
     // 初始状态
+    pGraphics->EnableTooltips(true);   // 预设槽悬停提示 (系统 tooltip)
+    UpdateRecentRow();                 // 初始化底部最近使用按钮标签/禁用态
     UpdatePads();
   };
 #endif
@@ -603,7 +655,7 @@ void GRMBandPass::Redo()
 void GRMBandPass::SaveToSlot(int idx)
 {
   if (idx < 0 || idx >= kNumPresets) return;
-  mPresets[idx] = Snapshot();
+  mPresets[idx].values = Snapshot();
 }
 
 void GRMBandPass::LoadSlot(int idx)
@@ -611,7 +663,171 @@ void GRMBandPass::LoadSlot(int idx)
   if (idx < 0 || idx >= kNumPresets) return;
   PushUndo();
   mCurrentPreset = idx;
-  ApplySnapshot(mPresets[idx]);
+  ApplySnapshot(mPresets[idx].values);
+  AddToRecent(idx);   // 更新底部"最近使用"列表
+}
+
+void GRMBandPass::RestoreDefault(int idx)
+{
+  if (idx < 0 || idx >= kNumPresets) return;
+  mPresets[idx].values = mDefaultSnapshot;   // 参数恢复出厂 (保留用户重命名的名字)
+  if (idx == mCurrentPreset)
+  {
+    // 恢复的是当前选中槽: 立即应用便于试听 (可撤销)
+    PushUndo();
+    ApplySnapshot(mDefaultSnapshot);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 预设文件 (JSON) / 最近使用 / 重命名
+// ---------------------------------------------------------------------------
+
+void GRMBandPass::SaveFile()
+{
+  if (!GetUI()) return;
+  mDialogFileName.Set("GRMBandPass Presets");
+  mDialogPath.Set("");   // 默认目录: 最近一次使用的目录
+  GetUI()->PromptForFile(mDialogFileName, mDialogPath, EFileAction::Save, "json",
+    [this](const WDL_String& fileName, const WDL_String& path) {
+      if (fileName.GetLength() == 0) return;   // 用户取消
+      // 注意: macOS 回调里 fileName 是完整路径, path 只是目录
+      std::string full = fileName.Get();
+      if (full.size() < 5 || full.compare(full.size() - 5, 5, ".json") != 0)
+        full += ".json";                       // NSSavePanel 不自动补扩展名
+      std::string err;
+      WritePresetFileTo(full, err);
+      if (!err.empty() && GetUI())
+        GetUI()->ShowMessageBox(err.c_str(), "Save Failed", kMB_OK);
+    });
+}
+
+void GRMBandPass::LoadFile()
+{
+  if (!GetUI()) return;
+  mDialogFileName.Set("");
+  GetUI()->PromptForFile(mDialogFileName, mDialogPath, EFileAction::Open, "json",
+    [this](const WDL_String& fileName, const WDL_String& path) {
+      if (fileName.GetLength() == 0) return;   // 用户取消
+      std::string err;
+      ReadPresetFileFrom(fileName.Get(), err);
+      if (!err.empty() && GetUI())
+        GetUI()->ShowMessageBox(err.c_str(), "Load Failed", kMB_OK);
+    });
+}
+
+void GRMBandPass::WritePresetFileTo(const std::string& path, std::string& err)
+{
+  PresetFileData data;
+  for (const auto& p : mPresets)
+  {
+    PresetFileEntry e;
+    e.name = p.name;
+    e.values.assign(p.values.begin(), p.values.end());
+    data.presets.push_back(std::move(e));
+  }
+  const ParamSnapshot cur = Snapshot();
+  data.currentValues.assign(cur.begin(), cur.end());
+  data.currentPreset = mCurrentPreset;
+  data.morphPos = mMorphPos;
+
+  if (WritePresetFile(path, data, err))
+    err.clear();
+}
+
+void GRMBandPass::ReadPresetFileFrom(const std::string& path, std::string& err)
+{
+  PresetFileData data;
+  if (!ReadPresetFile(path, data, err)) return;
+
+  // 字段校验
+  if ((int) data.presets.size() != kNumPresets) { err = "Preset count mismatch (expected 16)"; return; }
+  for (const auto& e : data.presets)
+    if ((int) e.values.size() != kNumParams)    { err = "Preset parameter count mismatch (expected 11)"; return; }
+  if ((int) data.currentValues.size() != kNumParams) { err = "Current values count mismatch (expected 11)"; return; }
+
+  PushUndo();   // LOAD 对当前参数的改变可撤销 (库数据/名字变化不撤销)
+
+  for (int i = 0; i < kNumPresets; ++i)
+  {
+    mPresets[i].name = data.presets[i].name;
+    std::copy(data.presets[i].values.begin(), data.presets[i].values.end(),
+              mPresets[i].values.begin());
+  }
+  mCurrentPreset = std::clamp(data.currentPreset, 0, kNumPresets - 1);
+
+  ParamSnapshot cur {};
+  std::copy(data.currentValues.begin(), data.currentValues.end(), cur.begin());
+  ApplySnapshot(cur);   // 恢复当前参数 (不被 morph 位置覆盖)
+
+  // morph 条位置只恢复 UI 显示, 不重新触发插值 (参数以 currentValues 为准)
+  mMorphPos = std::clamp(data.morphPos, 0.0, (double) (kNumQuick - 1));
+  if (mMorphSlider)
+  {
+    mMorphSlider->SetValue((float) (mMorphPos / (kNumQuick - 1.0)));
+    mMorphSlider->SetDirty(true);
+  }
+
+  UpdateRecentRow();   // 底部最近使用行保持, 但名字变了需要刷新
+  err.clear();
+}
+
+void GRMBandPass::AddToRecent(int idx)
+{
+  auto it = std::find(mRecentSlots.begin(), mRecentSlots.end(), idx);
+  if (it != mRecentSlots.end())
+    mRecentSlots.erase(it);
+  mRecentSlots.insert(mRecentSlots.begin(), idx);
+  if ((int) mRecentSlots.size() > kNumRecent)
+    mRecentSlots.resize(kNumRecent);
+  UpdateRecentRow();
+}
+
+// 按钮标签截断: 11px Outfit-SemiBold, 按钮内可用宽约 58px
+// (粗略按 UTF-8 字节数估宽: CJK 3 字节 ≈ 11px, ASCII/拉丁 ≈ 7px)
+static std::string FitLabel(const std::string& s, int maxPx = 58)
+{
+  if (s.empty()) return s;
+  int w = 0; size_t i = 0;
+  std::string out;
+  while (i < s.size())
+  {
+    const unsigned char c = (unsigned char) s[i];
+    const int len = (c >= 0xF0) ? 4 : (c >= 0xE0) ? 3 : (c >= 0xC0) ? 2 : 1;
+    const int cw = (len >= 3) ? 11 : 7;
+    if (w + cw > maxPx) { out += "..."; break; }
+    out.append(s, i, len);
+    w += cw; i += len;
+  }
+  return out;
+}
+
+void GRMBandPass::UpdateRecentRow()
+{
+  for (int i = 0; i < kNumRecent; ++i)
+  {
+    // mRecentButtons 只存放 PresetSlotControl (见布局), static_cast 安全
+    auto* btn = static_cast<PresetSlotControl*>(mRecentButtons[i]);
+    if (!btn) continue;
+    if (i < (int) mRecentSlots.size())
+    {
+      btn->SetDisabled(false);
+      btn->SetSlotLabel(FitLabel(mPresets[mRecentSlots[i]].name).c_str());
+    }
+    else
+    {
+      btn->SetDisabled(true);
+      btn->SetSlotLabel("—");
+    }
+  }
+}
+
+void GRMBandPass::CommitRename(int idx, const char* name)
+{
+  if (idx < 0 || idx >= kNumPresets) return;
+  if (!name || !*name) return;   // 空串 = 取消
+  mPresets[idx].name = name;
+  UpdateRecentRow();             // 若该槽在底部 MRU 行, 同步标签
 }
 
 // 声像区: 数值拷贝 / 交换 (click 触发)
@@ -692,8 +908,8 @@ ParamSnapshot GRMBandPass::InterpolatePresets(double pos)
   for (int i = 0; i < kNumParams; ++i)
   {
     const IParam* p = GetParam(i);
-    const double a = p->FromNormalized(p->ToNormalized(mPresets[i0][i]));
-    const double b = p->FromNormalized(p->ToNormalized(mPresets[i1][i]));
+    const double a = p->FromNormalized(p->ToNormalized(mPresets[i0].values[i]));
+    const double b = p->FromNormalized(p->ToNormalized(mPresets[i1].values[i]));
     out[i] = a + (b - a) * t;
   }
   return out;

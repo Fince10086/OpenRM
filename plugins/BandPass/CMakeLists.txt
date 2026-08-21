@@ -18,6 +18,8 @@ iplug_add_plugin(${PROJECT_NAME}
     src/BandPass.cpp
     src/dsp/BandPassCore.h
     src/controls/FilterNodePad.h
+    src/controls/PresetSlotControl.h
+    src/PresetFileIO.h
   RESOURCES
     resources/fonts/Outfit-Regular.ttf
     resources/fonts/Outfit-SemiBold.ttf
@@ -25,3 +27,6 @@ iplug_add_plugin(${PROJECT_NAME}
   FORMATS APP AU VST3
   DEFINES SAMPLE_TYPE_FLOAT
 )
+
+# nlohmann/json (iPlug2 vendored) 不在默认 include path, 补一行供 PresetFileIO.h 使用
+target_include_directories(_${PROJECT_NAME}-base INTERFACE "${IPLUG2_DIR}/Dependencies/Extras")
