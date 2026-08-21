@@ -102,12 +102,13 @@ public:
   void DrawValue(IGraphics& g, bool mouseOver) override
   {
     if (mouseOver)
-      g.FillRect(GetColor(kHL), mValueBounds, &mBlend);
+      g.FillRect(GetColor(kHL), mWidgetBounds, &mBlend);
 
+    // 文本画在按钮本体中央 (showLabel/showValue 关闭后 widget 即整个矩形)
     const bool on = GetValue() > 0.5;
     IText t = mStyle.valueText;
     t.mFGColor = on ? COLOR_WHITE : COL_BLACK;
-    g.DrawText(t, on ? mOnText.Get() : mOffText.Get(), mValueBounds, &mBlend);
+    g.DrawText(t, on ? mOnText.Get() : mOffText.Get(), mWidgetBounds, &mBlend);
   }
 };
 
@@ -180,8 +181,12 @@ GRMBandPass::GRMBandPass(const InstanceInfo& info)
 
     const IVStyle style   = MakeGRMStyle();
     const IVStyle btnStyle= MakeButtonStyle();
+    // 开关用: 关闭标签条预留, 让可点区域占满整个按钮矩形
+    IVStyle toggleStyle = btnStyle;
+    toggleStyle.showLabel = false;
+    toggleStyle.showValue = false;
 
-    // ================= 主控区: LEFT / RIGHT 双通道 =================
+    // ================= 主控区: LEFT / RIGHT 双通道 (上下堆叠) =================
     // LEFT 模块
     mFreqLText = new ITextControl(IRECT(24, 12, 200, 34),
       "CENTER 1.00k", IText(13, COL_TEXT, "Outfit-SemiBold", EAlign::Far, EVAlign::Middle));
@@ -190,22 +195,22 @@ GRMBandPass::GRMBandPass(const InstanceInfo& info)
       "BW 1.00", IText(13, COL_TEXT, "Outfit-SemiBold", EAlign::Far, EVAlign::Middle));
     pGraphics->AttachControl(mBwLText);
 
-    // LEFT 滤波节点板 (纯带通: X=中心频率, Y=带宽). 移除原 pass 按钮与 HP/LP 滑块, 直接放大填充足区域
-    mPadL = new FilterNodePad(IRECT(24, 52, 324, 416), { kFreqL, kBwL }, "LEFT", style);
+    // LEFT 滤波节点板 (纯带通: X=中心频率, Y=带宽), 横长纵短
+    mPadL = new FilterNodePad(IRECT(24, 40, 672, 284), { kFreqL, kBwL }, "LEFT", style);
     pGraphics->AttachControl(mPadL);
 
-    // RIGHT 模块 (x 偏移 +348)
-    mFreqRText = new ITextControl(IRECT(372, 12, 548, 34),
+    // RIGHT 模块 (y 偏移 +284)
+    mFreqRText = new ITextControl(IRECT(24, 296, 200, 318),
       "CENTER 1.00k", IText(13, COL_TEXT, "Outfit-SemiBold", EAlign::Far, EVAlign::Middle));
     pGraphics->AttachControl(mFreqRText);
-    mBwRText = new ITextControl(IRECT(552, 12, 692, 34),
+    mBwRText = new ITextControl(IRECT(204, 296, 344, 318),
       "BW 1.00", IText(13, COL_TEXT, "Outfit-SemiBold", EAlign::Far, EVAlign::Middle));
     pGraphics->AttachControl(mBwRText);
-    pGraphics->AttachControl(mPadR = new FilterNodePad(IRECT(372, 52, 672, 416), { kFreqR, kBwR }, "RIGHT", style));
+    pGraphics->AttachControl(mPadR = new FilterNodePad(IRECT(24, 324, 672, 568), { kFreqR, kBwR }, "RIGHT", style));
 
-    // gain 纵向列 (最右侧)
-    pGraphics->AttachControl(new IVSliderControl(IRECT(700, 76, 724, 222), kGainL, "GAIN L", style, false, EDirection::Vertical));
-    pGraphics->AttachControl(new IVSliderControl(IRECT(700, 230, 724, 374), kGainR, "GAIN R", style, false, EDirection::Vertical));
+    // gain 纵向列 (最右侧, 与各自 pad 对齐)
+    pGraphics->AttachControl(new IVSliderControl(IRECT(700, 40, 724, 284), kGainL, "GAIN L", style, false, EDirection::Vertical));
+    pGraphics->AttachControl(new IVSliderControl(IRECT(700, 324, 724, 568), kGainR, "GAIN R", style, false, EDirection::Vertical));
 
     // ================= 右侧控制面板 =================
     pGraphics->AttachControl(new ITextControl(IRECT(748, 10, 908, 30), "PRESETS",
@@ -219,7 +224,7 @@ GRMBandPass::GRMBandPass(const InstanceInfo& info)
         char label[8];
         snprintf(label, 8, "%d", idx + 1);
         pGraphics->AttachControl(MakeMomentary(
-          IRECT(748 + c * 64, 36 + r * 26, 806 + c * 64, 56 + r * 26),
+          IRECT(748 + c * 64, 36 + r * 26, 804 + c * 64, 58 + r * 26),
           [this, idx](IControl*) { LoadSlot(idx); }, label, btnStyle));
       }
     }
@@ -227,7 +232,7 @@ GRMBandPass::GRMBandPass(const InstanceInfo& info)
     // Agitation 区 (TIME 区已移除: kTime1/kTime2 为无 DSP 行为的死参数)
     pGraphics->AttachControl(new ITextControl(IRECT(748, 250, 908, 268), "AGITATION",
       IText(11, COL_TEXT, "Outfit-Bold", EAlign::Near, EVAlign::Middle)));
-    pGraphics->AttachControl(new InvertToggleControl(IRECT(748, 272, 804, 294), kAgOn, " ", btnStyle, "OFF", "ON"));
+    pGraphics->AttachControl(new InvertToggleControl(IRECT(748, 272, 804, 294), kAgOn, " ", toggleStyle, "OFF", "ON"));
     pGraphics->AttachControl(new IVKnobControl(IRECT(812, 268, 890, 326), kAgAmount, "INTENSITY", style));
     pGraphics->AttachControl(new IVKnobControl(IRECT(898, 268, 976, 326), kAgRate, "RATE", style));
 
@@ -237,21 +242,21 @@ GRMBandPass::GRMBandPass(const InstanceInfo& info)
     // L->R / R->L / FLIP 现在是 click 触发: 拷贝/交换 L,R 数值 (非开关)
     pGraphics->AttachControl(MakeMomentary(IRECT(748, 356, 804, 378), [this](IControl*) { CopyLtoR(); }, "L->R", btnStyle));
     pGraphics->AttachControl(MakeMomentary(IRECT(812, 356, 868, 378), [this](IControl*) { CopyRtoL(); }, "R->L", btnStyle));
-    pGraphics->AttachControl(new InvertToggleControl(IRECT(876, 356, 932, 378), kLink, " ", btnStyle, "LINK", "LINK")); // 黑白反转表示状态
+    pGraphics->AttachControl(new InvertToggleControl(IRECT(876, 356, 932, 378), kLink, " ", toggleStyle, "LINK", "LINK")); // 黑白反转表示状态
     pGraphics->AttachControl(MakeMomentary(IRECT(940, 356, 996, 378), [this](IControl*) { FlipLR(); }, "FLIP", btnStyle));
     pGraphics->AttachControl(new IVSliderControl(IRECT(748, 390, 996, 416), kMix, "MIX", style, false, EDirection::Horizontal));
 
-    // undo / redo
-    pGraphics->AttachControl(MakeMomentary(IRECT(748, 428, 822, 456), [this](IControl*) { Undo(); }, "UNDO", btnStyle));
-    pGraphics->AttachControl(MakeMomentary(IRECT(830, 428, 904, 456), [this](IControl*) { Redo(); }, "REDO", btnStyle));
+    // undo / redo (统一按钮尺寸 56x22)
+    pGraphics->AttachControl(MakeMomentary(IRECT(748, 430, 804, 452), [this](IControl*) { Undo(); }, "UNDO", btnStyle));
+    pGraphics->AttachControl(MakeMomentary(IRECT(812, 430, 868, 452), [this](IControl*) { Redo(); }, "REDO", btnStyle));
 
-    // ================= 底部条 =================
+    // ================= 底部条 (统一按钮尺寸 56x22) =================
     for (int i = 0; i < kNumQuick; ++i)
     {
       char label[8];
       snprintf(label, 8, "Q%d", i + 1);
       pGraphics->AttachControl(MakeMomentary(
-        IRECT(24 + i * 78, 602, 90 + i * 78, 630),
+        IRECT(24 + i * 78, 605, 80 + i * 78, 627),
         [this, i](IControl*) { LoadSlot(i); }, label, btnStyle));
     }
     // 预设 morph 条: 贯穿 Q1..Q8, 在相邻槽位参数间平滑插值
@@ -260,8 +265,8 @@ GRMBandPass::GRMBandPass(const InstanceInfo& info)
         MaybePushGestureUndo();          // 新手势起点记录 morph 前状态
         OnMorphDrag(pCtrl->GetValue(0));
       }, btnStyle));
-    pGraphics->AttachControl(MakeMomentary(IRECT(748, 602, 822, 630), [this](IControl*) { SaveToSlot(mCurrentPreset); }, "SAVE", btnStyle));
-    pGraphics->AttachControl(MakeMomentary(IRECT(830, 602, 904, 630), [this](IControl*) { LoadSlot(mCurrentPreset); }, "LOAD", btnStyle));
+    pGraphics->AttachControl(MakeMomentary(IRECT(748, 605, 804, 627), [this](IControl*) { SaveToSlot(mCurrentPreset); }, "SAVE", btnStyle));
+    pGraphics->AttachControl(MakeMomentary(IRECT(812, 605, 868, 627), [this](IControl*) { LoadSlot(mCurrentPreset); }, "LOAD", btnStyle));
 
     // 品牌标识 + 版本号 (标题下方)
     pGraphics->AttachControl(new ITextControl(IRECT(960, 596, 1152, 618), "GRM BANDPASS",
