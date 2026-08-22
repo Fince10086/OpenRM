@@ -50,6 +50,7 @@ public:
     g.FillRect(fill, b.GetPadded(-BLOCK_GAP));
     IText t = mStyle.valueText;
     t.mFGColor = pressed ? COLOR_WHITE : COL_BLACK;
+    strcpy(t.mFont, FontSemiBold());
     g.DrawText(t, mLabelStr.Get(), b);
   }
 };
@@ -122,6 +123,7 @@ public:
   }
 
   void SetValueFormatter(std::function<void(WDL_String&)> f) { mValueFormatter = std::move(f); }
+  void SetHeaderLabel(const char* s) { mHeaderLabel.Set(s); SetDirty(false); }
 
   void OnResize() override
   {
@@ -218,6 +220,11 @@ protected:
         std::snprintf(buf, sizeof(buf), p->Value() < 10. ? "%.2fs" : "%.1fs", p->Value());
         ds.Set(buf);
         break;
+      case kGainL:
+      case kGainR:
+        std::snprintf(buf, sizeof(buf), "%.1fdB", p->Value());
+        ds.Set(buf);
+        break;
       default:
         p->GetDisplay(ds, false);
         break;
@@ -232,17 +239,17 @@ protected:
     if (rot == 0.f)
     {
       const IRECT hdr(mRECT.L, mRECT.T, mRECT.R, mRECT.T + kHeaderH);
-      g.DrawText(IText(20, COL_BLACK, "Outfit-SemiBold", EAlign::Near, EVAlign::Middle),
+      g.DrawText(IText(20, COL_BLACK, FontSemiBold(), EAlign::Near, EVAlign::Middle),
                  mHeaderLabel.Get(), IRECT(hdr.L, hdr.T, hdr.MW(), hdr.B));
-      g.DrawText(IText(20, COL_DIM, "Outfit", EAlign::Far, EVAlign::Middle),
+      g.DrawText(IText(20, COL_DIM, FontRegular(), EAlign::Far, EVAlign::Middle),
                  ds.Get(), IRECT(hdr.MW(), hdr.T, hdr.R, hdr.B));
     }
     else
     {
       const IRECT hdr(mRECT.L, mRECT.T, mRECT.L + kHeaderW, mRECT.B);
-      g.DrawText(IText(20, COL_BLACK, "Outfit-SemiBold", EAlign::Near, EVAlign::Bottom, rot),
+      g.DrawText(IText(20, COL_BLACK, FontSemiBold(), EAlign::Near, EVAlign::Bottom, rot),
                  mHeaderLabel.Get(), hdr);
-      g.DrawText(IText(20, COL_DIM, "Outfit", EAlign::Far, EVAlign::Top, rot),
+      g.DrawText(IText(20, COL_DIM, FontRegular(), EAlign::Far, EVAlign::Top, rot),
                  ds.Get(), hdr);
     }
   }
@@ -298,11 +305,9 @@ protected:
     FormatValue(ds);
 
     const IRECT hdr = TextRect();
-    // Value: top edge flush with the track's visible top; label: bottom edge
-    // flush with the track's visible bottom.
-    g.DrawText(IText(20, COL_DIM, "Outfit", EAlign::Center, EVAlign::Top, 90.f),
+    g.DrawText(IText(20, COL_DIM, FontRegular(), EAlign::Center, EVAlign::Top, 90.f),
                ds.Get(), IRECT(hdr.L, TrackVisTop(), hdr.R, hdr.B));
-    g.DrawText(IText(20, COL_BLACK, "Outfit-SemiBold", EAlign::Center, EVAlign::Bottom, 90.f),
+    g.DrawText(IText(20, COL_BLACK, FontSemiBold(), EAlign::Center, EVAlign::Bottom, 90.f),
                mHeaderLabel.Get(), hdr);
   }
 };
@@ -317,11 +322,15 @@ public:
     SetActionFunction(EmptyClickActionFunc);
   }
 
+  void SetOnText(const char* s)  { mOnText.Set(s); SetDirty(false); }
+  void SetOffText(const char* s) { mOffText.Set(s); SetDirty(false); }
+
   void DrawValue(IGraphics& g, bool) override
   {
     const bool on = GetValue() > 0.5;
     IText t = mStyle.valueText;
     t.mFGColor = on ? COLOR_WHITE : COL_BLACK;
+    strcpy(t.mFont, FontSemiBold());
     g.DrawText(t, on ? mOnText.Get() : mOffText.Get(), mWidgetBounds, &mBlend);
   }
 };
@@ -342,15 +351,71 @@ public:
   }
 };
 
+class SectionTitleControl : public ITextControl
+{
+public:
+  SectionTitleControl(const IRECT& bounds, const char* str, const IText& text)
+  : ITextControl(bounds, str, text) {}
+
+  void Draw(IGraphics& g) override
+  {
+    IText t = mText;
+    strcpy(t.mFont, FontBold());
+    g.DrawText(t, mStr.Get(), mRECT, &mBlend);
+  }
+};
+
+class SettingsMenuButton : public IControl
+{
+public:
+  SettingsMenuButton(const IRECT& bounds,
+                     std::function<void(IControl*, float, float)> openMenu)
+  : IControl(bounds), mOpenMenu(std::move(openMenu)) {}
+
+  void Draw(IGraphics& g) override
+  {
+    const float cx = mRECT.MW(), cy = mRECT.MH();
+    const float r = mRECT.W() * 0.5f - 2.f;
+    const IColor col = GetMouseIsOver() ? COL_BLACK : COL_DIM;
+
+    g.PathClear();
+    g.PathTransformReset();
+    g.PathTransformTranslate(cx, cy);
+    g.PathCircle(0.f, 0.f, r * 0.72f);
+    for (int i = 0; i < 8; ++i)
+    {
+      g.PathTransformReset();
+      g.PathTransformTranslate(cx, cy);
+      g.PathTransformRotate(i * 45.f);
+      g.PathRect(IRECT(-r * 0.17f, -r, r * 0.17f, -r * 0.70f));
+    }
+    g.PathFill(col);
+
+    g.PathClear();
+    g.PathTransformReset();
+    g.PathTransformTranslate(cx, cy);
+    g.PathCircle(0.f, 0.f, r * 0.30f);
+    g.PathFill(COL_BG);
+  }
+
+  void OnMouseDown(float x, float y, const IMouseMod& mod) override
+  {
+    if (mOpenMenu) mOpenMenu(this, x, y);
+  }
+
+private:
+  std::function<void(IControl*, float, float)> mOpenMenu;
+};
+
 ORMBandPass::ORMBandPass(const InstanceInfo& info)
 : Plugin(info, MakeConfig(kNumParams, 1))
 {
   GetParam(kFreqL)->InitDouble("FreqL", 1000., 20., 20000., 0.01, "Hz", 0, "", IParam::ShapeExp());
   GetParam(kBwL)  ->InitDouble("BW L", 1.41, 1., 31., 0.01, "x", 0, "", IParam::ShapeExp());
-  GetParam(kGainL)->InitDouble("Gain L", 1., 0., 2., 0.01, "");
-  GetParam(kFreqR)->InitDouble("FreqR", 1000., 20., 20000., 0.01, "Hz", 0, "", IParam::ShapeExp());
+  GetParam(kGainL)->InitDouble("Gain L", 0., -96., 12., 0.01, "");
+  GetParam(kFreqR)->InitDouble("FreqR", 20., 20., 20000., 0.01, "Hz", 0, "", IParam::ShapeExp());
   GetParam(kBwR)  ->InitDouble("BW R", 1.41, 1., 31., 0.01, "x", 0, "", IParam::ShapeExp());
-  GetParam(kGainR)->InitDouble("Gain R", 1., 0., 2., 0.01, "");
+  GetParam(kGainR)->InitDouble("Gain R", 0., -96., 12., 0.01, "");
   GetParam(kLink) ->InitBool("Link", false);
   GetParam(kMix)  ->InitDouble("Mix", 1., 0., 1., 0.01, "");
   GetParam(kAgOn) ->InitBool("Agitation", false);
@@ -469,12 +534,24 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
     pGraphics->LoadFont("Outfit", OUTFIT_FN);
     pGraphics->LoadFont("Outfit-SemiBold", OUTFIT_SB_FN);
     pGraphics->LoadFont("Outfit-Bold", OUTFIT_BD_FN);
+    pGraphics->LoadFont("CJK", CJK_FN);
+    pGraphics->LoadFont("CJK-SemiBold", CJK_SB_FN);
+    pGraphics->LoadFont("CJK-Bold", CJK_BD_FN);
 
     const IVStyle style   = MakeORMStyle();
     const IVStyle btnStyle= MakeButtonStyle();
     IVStyle toggleStyle = btnStyle;
     toggleStyle.showLabel = false;
     toggleStyle.showValue = false;
+
+    mTextBindings.clear();
+    mTooltipBindings.clear();
+    auto bindText = [this](int id, std::function<void(const char*)> apply) {
+      mTextBindings.push_back({ id, std::move(apply) });
+    };
+    auto bindTip = [this](IControl* c, int id) {
+      mTooltipBindings.push_back({ c, id });
+    };
 
     constexpr float kCol1X     = 740.f;
     constexpr float kCol2X     = 824.f;
@@ -500,19 +577,43 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
 
     mPadL = new FilterNodePad(IRECT(20, 38, 668, 218), { kFreqL, kBwL }, "LEFT", style, padHooks(kFreqL, kBwL));
     pGraphics->AttachControl(mPadL);
+    bindText(orm::kTxtLeft, [this](const char* s) { mPadL->SetSideLabel(s); });
+    bindText(orm::kTxtCenter, [this](const char* s) { mPadL->SetCenterPrefix(s); });
+    bindText(orm::kTxtBandwidth, [this](const char* s) { mPadL->SetBwPrefix(s); });
+    bindTip(mPadL, orm::kTxtTipPad);
     mBandL = new BandRangeSlider(IRECT(20, 224, 668, 270), { kFreqL, kBwL }, bandHooks(kFreqL, kBwL));
     pGraphics->AttachControl(mBandL);
+    bindText(orm::kTxtLowCut, [this](const char* s) { mBandL->SetLowPrefix(s); });
+    bindText(orm::kTxtHighCut, [this](const char* s) { mBandL->SetHighPrefix(s); });
+    bindTip(mBandL, orm::kTxtTipBand);
 
     mPadR = new FilterNodePad(IRECT(20, 296, 668, 476), { kFreqR, kBwR }, "RIGHT", style, padHooks(kFreqR, kBwR));
     pGraphics->AttachControl(mPadR);
+    bindText(orm::kTxtRight, [this](const char* s) { mPadR->SetSideLabel(s); });
+    bindText(orm::kTxtCenter, [this](const char* s) { mPadR->SetCenterPrefix(s); });
+    bindText(orm::kTxtBandwidth, [this](const char* s) { mPadR->SetBwPrefix(s); });
+    bindTip(mPadR, orm::kTxtTipPad);
     mBandR = new BandRangeSlider(IRECT(20, 482, 668, 528), { kFreqR, kBwR }, bandHooks(kFreqR, kBwR));
     pGraphics->AttachControl(mBandR);
+    bindText(orm::kTxtLowCut, [this](const char* s) { mBandR->SetLowPrefix(s); });
+    bindText(orm::kTxtHighCut, [this](const char* s) { mBandR->SetHighPrefix(s); });
+    bindTip(mBandR, orm::kTxtTipBand);
 
-    pGraphics->AttachControl(new GainSlider(IRECT(672, 38, 730, 218), kGainL, "GAIN L", style));
-    pGraphics->AttachControl(new GainSlider(IRECT(672, 296, 730, 476), kGainR, "GAIN R", style));
+    GainSlider* gainL = new GainSlider(IRECT(672, 38, 730, 218), kGainL, "GAIN L", style);
+    pGraphics->AttachControl(gainL);
+    bindText(orm::kTxtGainL, [gainL](const char* s) { gainL->SetHeaderLabel(s); });
+    bindTip(gainL, orm::kTxtTipGain);
+    GainSlider* gainR = new GainSlider(IRECT(672, 296, 730, 476), kGainR, "GAIN R", style);
+    pGraphics->AttachControl(gainR);
+    bindText(orm::kTxtGainR, [gainR](const char* s) { gainR->SetHeaderLabel(s); });
+    bindTip(gainR, orm::kTxtTipGain);
 
-    pGraphics->AttachControl(new ITextControl(IRECT(kCol1X, 38, 1050, 60), "PRESETS",
-      IText(20, COL_BLACK, "Outfit-Bold", EAlign::Near, EVAlign::Middle)));
+    SectionTitleControl* presetsTitle = new SectionTitleControl(IRECT(kCol1X, 38, 1050, 60), "PRESETS",
+      IText(20, COL_BLACK, "Outfit-Bold", EAlign::Near, EVAlign::Middle));
+    pGraphics->AttachControl(presetsTitle);
+    presetsTitle->SetTargetRECT(IRECT(kCol1X, 38, kCol1X + 130, 60));
+    bindText(orm::kTxtPresets, [presetsTitle](const char* s) { presetsTitle->SetStr(s); presetsTitle->SetDirty(false); });
+    bindTip(presetsTitle, orm::kTxtTipPresets);
 
     auto makeSlotHooks = [this](int pos) -> PresetSlotControl::Hooks
     {
@@ -525,7 +626,7 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
             if (mFadeSlider)
             {
               mFadeSlider->SetValue((float) (pos / (kNumQuick - 1.0)));
-              mFadeSlider->SetDirty(true);
+              mFadeSlider->SetDirty(false);
             }
           }
         },
@@ -535,9 +636,16 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
         [this, pos](float x, float y) { OnDragMove(x, y); },
         [this, pos](float x, float y) { OnDragDrop(pos, x, y); },
         [this, pos]() -> std::string {
-          char buf[24];
-          snprintf(buf, sizeof(buf), "Preset %d", mSlotNumber[pos] + 1);
-          return buf;
+          char buf[32];
+          snprintf(buf, sizeof(buf), orm::Tr(orm::kTxtPreset, orm::UILang()), mSlotNumber[pos] + 1);
+          std::string s = buf;
+          s += "\n";
+          s += orm::Tr(orm::kTxtTipDrag, orm::UILang());
+          s += "\n";
+          s += orm::Tr(orm::kTxtTipSaveHere, orm::UILang());
+          s += "\n";
+          s += orm::Tr(orm::kTxtTipMenu, orm::UILang());
+          return s;
         },
       };
     };
@@ -569,23 +677,57 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
       ds.Set(buf);
     });
     pGraphics->AttachControl(morphSlider);
+    bindText(orm::kTxtMorph, [morphSlider](const char* s) { morphSlider->SetHeaderLabel(s); });
+    bindTip(morphSlider, orm::kTxtTipMorph);
 
-    pGraphics->AttachControl(new ITextControl(IRECT(kCol1X, 242, 1050, 268), "AGITATION",
-      IText(20, COL_BLACK, "Outfit-Bold", EAlign::Near, EVAlign::Middle)));
-    pGraphics->AttachControl(new FlatToggleControl(IRECT(kCol1X + 116, 242, kPanelR, 268), kAgOn, " ", toggleStyle, "OFF", "ON"));
-    pGraphics->AttachControl(new ORMSlider(IRECT(kCol1X, 272, kPanelR, 314), kAgAmount, "AMP", style, EDirection::Horizontal));
-    pGraphics->AttachControl(new ORMSlider(IRECT(kCol1X, 318, kPanelR, 360), kAgRate, "SPEED", style, EDirection::Horizontal));
+    SectionTitleControl* randomTitle = new SectionTitleControl(IRECT(kCol1X, 242, 1050, 268), "RANDOM",
+      IText(20, COL_BLACK, "Outfit-Bold", EAlign::Near, EVAlign::Middle));
+    pGraphics->AttachControl(randomTitle);
+    randomTitle->SetTargetRECT(IRECT(kCol1X, 242, kCol1X + 130, 268));
+    bindText(orm::kTxtRandom, [randomTitle](const char* s) { randomTitle->SetStr(s); randomTitle->SetDirty(false); });
+    bindTip(randomTitle, orm::kTxtTipRandom);
+    FlatToggleControl* agToggle = new FlatToggleControl(IRECT(kCol1X + 116, 242, kPanelR, 268), kAgOn, " ", toggleStyle, "OFF", "ON");
+    pGraphics->AttachControl(agToggle);
+    bindText(orm::kTxtOff, [agToggle](const char* s) { agToggle->SetOffText(s); });
+    bindText(orm::kTxtOn, [agToggle](const char* s) { agToggle->SetOnText(s); });
+    ORMSlider* rangeSlider = new ORMSlider(IRECT(kCol1X, 272, kPanelR, 314), kAgAmount, "RANGE", style, EDirection::Horizontal);
+    pGraphics->AttachControl(rangeSlider);
+    bindText(orm::kTxtRange, [rangeSlider](const char* s) { rangeSlider->SetHeaderLabel(s); });
+    bindTip(rangeSlider, orm::kTxtTipRange);
+    ORMSlider* speedSlider = new ORMSlider(IRECT(kCol1X, 318, kPanelR, 360), kAgRate, "SPEED", style, EDirection::Horizontal);
+    pGraphics->AttachControl(speedSlider);
+    bindText(orm::kTxtSpeed, [speedSlider](const char* s) { speedSlider->SetHeaderLabel(s); });
+    bindTip(speedSlider, orm::kTxtTipSpeed);
 
-    pGraphics->AttachControl(MakeMomentary(IRECT(kCol1X, 364, kCol1X + 78, 394), [this](IControl*) { CopyLtoR(); }, "L->R", btnStyle));
-    pGraphics->AttachControl(MakeMomentary(IRECT(kCol1X + 78, 364, kPanelR, 394), [this](IControl*) { CopyRtoL(); }, "R->L", btnStyle));
-    pGraphics->AttachControl(new FlatToggleControl(IRECT(kCol1X, 394, kCol1X + 78, 424), kLink, " ", toggleStyle, "LINK", "LINK"));
-    pGraphics->AttachControl(MakeMomentary(IRECT(kCol1X + 78, 394, kPanelR, 424), [this](IControl*) { FlipLR(); }, "FLIP", btnStyle));
-    pGraphics->AttachControl(new ORMSlider(IRECT(kCol1X, 428, kPanelR, 470), kMix, "MIX", style, EDirection::Horizontal));
+    IVButtonControl* copyLRBtn = MakeMomentary(IRECT(kCol1X, 364, kCol1X + 78, 394), [this](IControl*) { CopyLtoR(); }, "L->R", btnStyle);
+    pGraphics->AttachControl(copyLRBtn);
+    bindText(orm::kTxtCopyLR, [copyLRBtn](const char* s) { copyLRBtn->SetLabelStr(s); copyLRBtn->SetDirty(false); });
+    IVButtonControl* copyRLBtn = MakeMomentary(IRECT(kCol1X + 78, 364, kPanelR, 394), [this](IControl*) { CopyRtoL(); }, "R->L", btnStyle);
+    pGraphics->AttachControl(copyRLBtn);
+    bindText(orm::kTxtCopyRL, [copyRLBtn](const char* s) { copyRLBtn->SetLabelStr(s); copyRLBtn->SetDirty(false); });
+    FlatToggleControl* linkToggle = new FlatToggleControl(IRECT(kCol1X, 394, kCol1X + 78, 424), kLink, " ", toggleStyle, "LINK", "LINK");
+    pGraphics->AttachControl(linkToggle);
+    bindText(orm::kTxtLink, [linkToggle](const char* s) { linkToggle->SetOnText(s); linkToggle->SetOffText(s); });
+    IVButtonControl* flipBtn = MakeMomentary(IRECT(kCol1X + 78, 394, kPanelR, 424), [this](IControl*) { FlipLR(); }, "FLIP", btnStyle);
+    pGraphics->AttachControl(flipBtn);
+    bindText(orm::kTxtFlip, [flipBtn](const char* s) { flipBtn->SetLabelStr(s); flipBtn->SetDirty(false); });
+    ORMSlider* mixSlider = new ORMSlider(IRECT(kCol1X, 428, kPanelR, 470), kMix, "MIX", style, EDirection::Horizontal);
+    pGraphics->AttachControl(mixSlider);
+    bindText(orm::kTxtMix, [mixSlider](const char* s) { mixSlider->SetHeaderLabel(s); });
+    bindTip(mixSlider, orm::kTxtTipMix);
 
-    pGraphics->AttachControl(MakeMomentary(IRECT(kCol1X, 474, kCol1X + 78, 504), [this](IControl*) { Undo(); }, "UNDO", btnStyle));
-    pGraphics->AttachControl(MakeMomentary(IRECT(kCol1X + 78, 474, kPanelR, 504), [this](IControl*) { Redo(); }, "REDO", btnStyle));
-    pGraphics->AttachControl(MakeMomentary(IRECT(kCol1X, 504, kCol1X + 78, 534), [this](IControl*) { SaveFile(); }, "SAVE", btnStyle));
-    pGraphics->AttachControl(MakeMomentary(IRECT(kCol1X + 78, 504, kPanelR, 534), [this](IControl*) { LoadFile(); }, "LOAD", btnStyle));
+    IVButtonControl* undoBtn = MakeMomentary(IRECT(kCol1X, 474, kCol1X + 78, 504), [this](IControl*) { Undo(); }, "UNDO", btnStyle);
+    pGraphics->AttachControl(undoBtn);
+    bindText(orm::kTxtUndo, [undoBtn](const char* s) { undoBtn->SetLabelStr(s); undoBtn->SetDirty(false); });
+    IVButtonControl* redoBtn = MakeMomentary(IRECT(kCol1X + 78, 474, kPanelR, 504), [this](IControl*) { Redo(); }, "REDO", btnStyle);
+    pGraphics->AttachControl(redoBtn);
+    bindText(orm::kTxtRedo, [redoBtn](const char* s) { redoBtn->SetLabelStr(s); redoBtn->SetDirty(false); });
+    IVButtonControl* saveBtn = MakeMomentary(IRECT(kCol1X, 504, kCol1X + 78, 534), [this](IControl*) { SaveFile(); }, "SAVE", btnStyle);
+    pGraphics->AttachControl(saveBtn);
+    bindText(orm::kTxtSave, [saveBtn](const char* s) { saveBtn->SetLabelStr(s); saveBtn->SetDirty(false); });
+    IVButtonControl* loadBtn = MakeMomentary(IRECT(kCol1X + 78, 504, kPanelR, 534), [this](IControl*) { LoadFile(); }, "LOAD", btnStyle);
+    pGraphics->AttachControl(loadBtn);
+    bindText(orm::kTxtLoad, [loadBtn](const char* s) { loadBtn->SetLabelStr(s); loadBtn->SetDirty(false); });
 
     for (int i = 0; i < kNumBottom; ++i)
     {
@@ -607,15 +749,25 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
         OnFadeDrag(pCtrl->GetValue(0));
       }, btnStyle);
     pGraphics->AttachControl(mFadeSlider);
+    bindTip(mFadeSlider, orm::kTxtTipFade);
 
-    pGraphics->AttachControl(new ITextControl(IRECT(kCol1X, 552, kCol1X + 120, 586), "ORM",
-      IText(32, COL_BLACK, "Outfit-Bold", EAlign::Near, EVAlign::Bottom)));
+    IText ormText(32, COL_BLACK, "Outfit-Bold", EAlign::Near, EVAlign::Bottom);
+    pGraphics->AttachControl(new ITextControl(IRECT(kCol1X, 552, kCol1X + 120, 586), "ORM", ormText));
+    // Align the gear and version to the actual ink box of "ORM" so the gear
+    // bottom sits on the baseline rather than on the descender line.
+    IRECT ormInk(kCol1X, 552, kCol1X + 120, 586);
+    pGraphics->MeasureText(ormText, "ORM", ormInk);
+    const float gearL = ormInk.R + 8.f;
+    const float gearR = gearL + (ormInk.B - ormInk.T);
+    pGraphics->AttachControl(new SettingsMenuButton(IRECT(gearL, ormInk.T, gearR, ormInk.B),
+      [this](IControl* caller, float x, float y) { OpenSettingsMenu(caller, x, y); }));
     pGraphics->AttachControl(new ITextControl(IRECT(kCol1X, 584, 1060, 618), "BandPass",
       IText(32, COL_BLACK, "Outfit-Bold", EAlign::Near, EVAlign::Middle)));
-    pGraphics->AttachControl(new ITextControl(IRECT(kCol1X + 84, 549, 1060, 583), "v" PLUG_VERSION_STR,
+    pGraphics->AttachControl(new ITextControl(IRECT(gearR + 8.f, 549, 1060, 583), "v" PLUG_VERSION_STR,
       IText(20, COL_FAINT, "Outfit", EAlign::Near, EVAlign::Bottom)));
 
     pGraphics->EnableTooltips(true);
+    ApplyLanguage();
     UpdatePads();
   };
 #endif
@@ -684,10 +836,10 @@ orm::BandPassCore::Params ORMBandPass::CollectParams() const
   orm::BandPassCore::Params p;
   p.freqL  = GetParam(kFreqL)->Value();
   p.bwL    = BwMultToOct(GetParam(kBwL)->Value());
-  p.gainL  = static_cast<float>(GetParam(kGainL)->Value());
+  p.gainL  = static_cast<float>(std::pow(10., GetParam(kGainL)->Value() / 20.));
   p.freqR  = GetParam(kFreqR)->Value();
   p.bwR    = BwMultToOct(GetParam(kBwR)->Value());
-  p.gainR  = static_cast<float>(GetParam(kGainR)->Value());
+  p.gainR  = static_cast<float>(std::pow(10., GetParam(kGainR)->Value() / 20.));
   p.linked = GetParam(kLink)->Value() > 0.5;
   p.mix    = static_cast<float>(GetParam(kMix)->Value());
   p.agOn   = GetParam(kAgOn)->Value() > 0.5;
@@ -1005,7 +1157,7 @@ void ORMBandPass::ReadPresetFileFrom(const std::string& path, std::string& err)
   if (mFadeSlider)
   {
     mFadeSlider->SetValue((float) (mFadePos / (kNumQuick - 1.0)));
-    mFadeSlider->SetDirty(true);
+    mFadeSlider->SetDirty(false);
   }
 
   for (int i = 0; i < kNumPresets; ++i)
@@ -1152,4 +1304,79 @@ void ORMBandPass::StartFade(const ParamSnapshot& to)
   mFadeTo = to;
   mFadeStartTime = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
   mFading = true;
+}
+
+void ORMBandPass::ApplyLanguage()
+{
+  for (auto& binding : mTextBindings)
+    if (binding.second) binding.second(orm::Tr(binding.first, orm::UILang()));
+  ApplyTooltips();
+#if IPLUG_EDITOR
+  if (GetUI())
+  {
+    GetUI()->SetAllControlsDirty();
+    GetUI()->UpdateTooltips();
+  }
+#endif
+}
+
+void ORMBandPass::ApplyTooltips()
+{
+  for (auto& binding : mTooltipBindings)
+    if (binding.first) binding.first->SetTooltip(orm::Tr(binding.second, orm::UILang()));
+}
+
+void ORMBandPass::OpenSettingsMenu(IControl* caller, float x, float y)
+{
+  if (!GetUI()) return;
+  const int lang = orm::UILang();
+
+  mSettingsMenu.Clear();
+  mSettingsMenu.SetFunction([this](IPopupMenu* menu) { OnSettingsMenuChoice(menu); });
+
+  IPopupMenu* langMenu = new IPopupMenu();
+  langMenu->AddItem("English");
+  langMenu->AddItem("中文");
+  langMenu->CheckItemAlone(lang);
+  mLangMenuPtr = langMenu;
+  mSettingsMenu.AddItem(orm::Tr(orm::kTxtLanguage, lang), langMenu);
+  mSettingsMenu.AddSeparator();
+
+  IPopupMenu::Item* darkItem = mSettingsMenu.AddItem(orm::Tr(orm::kTxtDark, lang));
+  IPopupMenu::Item* lightItem = mSettingsMenu.AddItem(orm::Tr(orm::kTxtLight, lang));
+  darkItem->SetChecked(mThemeMode == 1);
+  lightItem->SetChecked(mThemeMode == 0);
+  mSettingsMenu.AddSeparator();
+
+  IPopupMenu* colorMenu = new IPopupMenu();
+  colorMenu->AddItem("Graphite");
+  colorMenu->AddItem("Blue");
+  colorMenu->AddItem("Green");
+  colorMenu->CheckItemAlone(mThemeColorIdx);
+  mColorMenuPtr = colorMenu;
+  mSettingsMenu.AddItem(orm::Tr(orm::kTxtThemeColor, lang), colorMenu);
+
+  GetUI()->CreatePopupMenu(*caller, mSettingsMenu, x, y);
+}
+
+void ORMBandPass::OnSettingsMenuChoice(IPopupMenu* menu)
+{
+  const int idx = menu->GetChosenItemIdx();
+  if (idx < 0) return;
+  if (menu == mLangMenuPtr)
+  {
+    if (idx != orm::UILang())
+    {
+      orm::UILang() = idx;
+      ApplyLanguage();
+    }
+  }
+  else if (menu == mColorMenuPtr)
+  {
+    mThemeColorIdx = idx;
+  }
+  else
+  {
+    mThemeMode = idx;
+  }
 }

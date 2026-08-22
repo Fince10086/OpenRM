@@ -59,3 +59,6 @@
 #define OUTFIT_FN "Outfit-Regular.ttf"
 #define OUTFIT_SB_FN "Outfit-SemiBold.ttf"
 #define OUTFIT_BD_FN "Outfit-Bold.ttf"
+#define CJK_FN "OPPOSans-ZH-Regular.ttf"
+#define CJK_SB_FN "OPPOSans-ZH-SemiBold.ttf"
+#define CJK_BD_FN "OPPOSans-ZH-Bold.ttf"

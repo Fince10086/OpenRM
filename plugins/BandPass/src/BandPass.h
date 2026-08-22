@@ -2,9 +2,14 @@
 
 #include "IPlug_include_in_plug_hdr.h"
 #include "dsp/BandPassCore.h"
+#include "Strings.h"
+#include "IGraphicsPopupMenu.h"
 
 #include <array>
 #include <deque>
+#include <functional>
+#include <utility>
+#include <vector>
 
 enum EParams
 {
@@ -32,6 +37,7 @@ using namespace iplug;
 using namespace igraphics;
 
 namespace iplug { namespace igraphics {
+  class IControl;
   class IVSliderControl;
   class FilterNodePad;
   class BandRangeSlider;
@@ -82,6 +88,14 @@ private:
   double mLastUIChangeTime = -1e9;
   bool mGesturePending = false;
 
+  int mThemeMode = 0;
+  int mThemeColorIdx = 0;
+  std::vector<std::pair<int, std::function<void(const char*)>>> mTextBindings;
+  std::vector<std::pair<IControl*, int>> mTooltipBindings;
+  IPopupMenu mSettingsMenu;
+  IPopupMenu* mLangMenuPtr = nullptr;
+  IPopupMenu* mColorMenuPtr = nullptr;
+
   orm::BandPassCore::Params CollectParams() const;
   void PublishParamsToCore();
 
@@ -124,4 +138,8 @@ private:
   ParamSnapshot MixSnapshots(const ParamSnapshot& a, const ParamSnapshot& b, double t) const;
   void OnFadeDrag(double normalizedPos);
   void StartFade(const ParamSnapshot& to);
+  void ApplyLanguage();
+  void ApplyTooltips();
+  void OpenSettingsMenu(IControl* caller, float x, float y);
+  void OnSettingsMenuChoice(IPopupMenu* menu);
 };

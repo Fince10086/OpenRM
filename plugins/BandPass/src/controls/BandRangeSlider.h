@@ -34,6 +34,9 @@ public:
     SetTextEntryLength(20);
   }
 
+  void SetLowPrefix(const char* s) { mLowPrefix.Set(s); SetDirty(false); }
+  void SetHighPrefix(const char* s) { mHighPrefix.Set(s); SetDirty(false); }
+
   void Draw(IGraphics& g) override
   {
     DrawHeader(g);
@@ -48,7 +51,7 @@ public:
       {
         WDL_String init; GetCutValue(id, init, false);
         const EAlign align = (id == kCornerLow) ? EAlign::Near : EAlign::Far;
-        const IText t(20, COL_BLACK, "Outfit-SemiBold", align, EVAlign::Middle);
+        const IText t(20, COL_BLACK, FontSemiBold(), align, EVAlign::Middle);
         mEditingCorner = id;
         GetUI()->CreateTextEntry(*this, t, CutValueRect(id), init.Get(), kNoValIdx);
         return;
@@ -164,24 +167,24 @@ private:
   void DrawHeader(IGraphics& g)
   {
     const IRECT hdr = HeaderRect();
-    const IText t(20, COL_BLACK, "Outfit-SemiBold", EAlign::Near, EVAlign::Middle);
-    const IText tf(20, COL_BLACK, "Outfit-SemiBold", EAlign::Far, EVAlign::Middle);
+    const IText t(20, COL_BLACK, FontSemiBold(), EAlign::Near, EVAlign::Middle);
+    const IText tf(20, COL_BLACK, FontSemiBold(), EAlign::Far, EVAlign::Middle);
 
     WDL_String value;
     IRECT measured;
     GetCutValue(kCornerLow, value, true);
-    g.MeasureText(t, "LOWCUT", measured);
+    g.MeasureText(t, mLowPrefix.Get(), measured);
     const float lowPrefixW = measured.W();
     g.MeasureText(t, value.Get(), measured);
     mCutValueRect[0] = IRECT(hdr.L + lowPrefixW + LABEL_VALUE_GAP, hdr.T,
                              hdr.L + lowPrefixW + LABEL_VALUE_GAP + measured.W(), hdr.B);
-    g.DrawText(t, "LOWCUT", hdr);
+    g.DrawText(t, mLowPrefix.Get(), hdr);
     g.DrawText(t, value.Get(), mCutValueRect[0]);
 
     GetCutValue(kCornerHigh, value, true);
     g.MeasureText(tf, value.Get(), measured);
     mCutValueRect[1] = IRECT(hdr.R - measured.W(), hdr.T, hdr.R, hdr.B);
-    g.DrawText(tf, "HIGHCUT", IRECT(hdr.L, hdr.T, mCutValueRect[1].L - LABEL_VALUE_GAP, hdr.B));
+    g.DrawText(tf, mHighPrefix.Get(), IRECT(hdr.L, hdr.T, mCutValueRect[1].L - LABEL_VALUE_GAP, hdr.B));
     g.DrawText(tf, value.Get(), mCutValueRect[1]);
   }
 
@@ -235,6 +238,8 @@ private:
   }
 
   Hooks mHooks;
+  WDL_String mLowPrefix { "LOWCUT" };
+  WDL_String mHighPrefix { "HIGHCUT" };
   IRECT mCutValueRect[2];
   int   mEditingCorner = -1;
   int   mActiveHandle = -1;

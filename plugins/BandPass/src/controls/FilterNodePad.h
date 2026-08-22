@@ -29,6 +29,10 @@ public:
     SetTextEntryLength(20);
   }
 
+  void SetSideLabel(const char* s) { mSideLabel.Set(s); SetDirty(false); }
+  void SetCenterPrefix(const char* s) { mCenterPrefix.Set(s); SetDirty(false); }
+  void SetBwPrefix(const char* s) { mBwPrefix.Set(s); SetDirty(false); }
+
   void Draw(IGraphics& g) override
   {
     IVXYPadControl::Draw(g);
@@ -39,14 +43,13 @@ public:
 
   void OnMouseDown(float x, float y, const IMouseMod& mod) override
   {
-    mOverCorner = -1;
     for (int id : { kCornerCenter, kCornerBw })
     {
       if (CornerValueRect(id).Contains(x, y))
       {
         WDL_String init; GetCornerValue(id, init, false);
         EAlign align = (id == kCornerBw) ? EAlign::Far : EAlign::Near;
-        IText t(20, COL_BLACK, "Outfit-SemiBold", align, EVAlign::Middle);
+        IText t(20, COL_BLACK, FontSemiBold(), align, EVAlign::Middle);
         mEditingCorner = id;
         GetUI()->CreateTextEntry(*this, t, CornerValueRect(id), init.Get(), kNoValIdx);
         return;
@@ -57,21 +60,6 @@ public:
 
   // Don't inherit the base-class double-click reset-to-default behavior.
   void OnMouseDblClick(float x, float y, const IMouseMod& mod) override {}
-
-  void OnMouseOver(float x, float y, const IMouseMod& mod) override
-  {
-    int hit = -1;
-    for (int id : { kCornerCenter, kCornerBw })
-      if (CornerValueRect(id).Contains(x, y)) { hit = id; break; }
-    if (hit != mOverCorner) { mOverCorner = hit; SetDirty(false); }
-    IVXYPadControl::OnMouseOver(x, y, mod);
-  }
-
-  void OnMouseOut() override
-  {
-    if (mOverCorner != -1) { mOverCorner = -1; SetDirty(false); }
-    IVXYPadControl::OnMouseOut();
-  }
 
   void OnTextEntryCompletion(const char* str, int valIdx) override
   {
@@ -134,7 +122,7 @@ public:
   {
     if (mSideLabel.GetLength() == 0) return;
     const IRECT r = SideLabelRect();
-    IText t(24, COL_ACCENT, "Outfit-Bold", EAlign::Center, EVAlign::Middle, -90.f);
+    IText t(24, COL_ACCENT, FontBold(), EAlign::Center, EVAlign::Middle, -90.f);
     g.DrawText(t, mSideLabel.Get(), r);
   }
 
@@ -170,8 +158,8 @@ private:
     const IRECT r = CornerRect(id);
     const bool far = (id == kCornerBw);
     const EAlign align = far ? EAlign::Far : EAlign::Near;
-    const IText t(20, COL_BLACK, "Outfit-SemiBold", align, EVAlign::Middle);
-    const char* prefix = far ? "BANDWIDTH" : "CENTER";
+    const IText t(20, COL_BLACK, FontSemiBold(), align, EVAlign::Middle);
+    const char* prefix = far ? mBwPrefix.Get() : mCenterPrefix.Get();
     WDL_String value;
     GetCornerValue(id, value, true);
     IRECT measured;
@@ -179,8 +167,6 @@ private:
     {
       g.MeasureText(t, value.Get(), measured);
       mCornerValueRect[1] = IRECT(r.R - measured.W(), r.T, r.R, r.B);
-      if (mOverCorner == id)
-        g.FillRoundRect(COL_HOVER, mCornerValueRect[1].GetPadded(-2.f), 4.f);
       g.DrawText(t, prefix, IRECT(r.L, r.T, mCornerValueRect[1].L - LABEL_VALUE_GAP, r.B));
       g.DrawText(t, value.Get(), mCornerValueRect[1]);
     }
@@ -191,8 +177,6 @@ private:
       g.MeasureText(t, value.Get(), measured);
       mCornerValueRect[0] = IRECT(r.L + prefixW + LABEL_VALUE_GAP, r.T,
                                   r.L + prefixW + LABEL_VALUE_GAP + measured.W(), r.B);
-      if (mOverCorner == id)
-        g.FillRoundRect(COL_HOVER, mCornerValueRect[0].GetPadded(-2.f), 4.f);
       g.DrawText(t, prefix, r);
       g.DrawText(t, value.Get(), mCornerValueRect[0]);
     }
@@ -244,9 +228,10 @@ private:
 
   Hooks mHooks;
   WDL_String mSideLabel;
+  WDL_String mCenterPrefix { "CENTER" };
+  WDL_String mBwPrefix { "BANDWIDTH" };
   IRECT mCornerValueRect[2];
   int   mEditingCorner = -1;
-  int   mOverCorner = -1;
 };
 
 END_IGRAPHICS_NAMESPACE

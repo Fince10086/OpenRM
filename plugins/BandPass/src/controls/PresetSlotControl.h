@@ -132,10 +132,7 @@ private:
 
   std::string BuildTooltip() const
   {
-    std::string s = mHooks.getTooltipPrefix ? mHooks.getTooltipPrefix() : std::string();
-    if (!s.empty()) s += "\n";
-    s += "Drag onto another slot to swap\n⌘Click: save here\nRight-click: menu";
-    return s;
+    return mHooks.getTooltipPrefix ? mHooks.getTooltipPrefix() : std::string();
   }
 
   void ShowPopupMenu(float x, float y)
