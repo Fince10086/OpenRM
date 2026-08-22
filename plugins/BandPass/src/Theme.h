@@ -5,9 +5,9 @@
 
 namespace iplug { namespace igraphics {
 
-inline const char* FontRegular()  { return orm::UILang() == orm::kLangZH ? "CJK" : "Outfit"; }
-inline const char* FontSemiBold() { return orm::UILang() == orm::kLangZH ? "CJK-SemiBold" : "Outfit-SemiBold"; }
-inline const char* FontBold()     { return orm::UILang() == orm::kLangZH ? "CJK-Bold" : "Outfit-Bold"; }
+inline const char* FontRegular()  { return orm::UILang() == orm::kLangZH ? "Mixed" : "Outfit"; }
+inline const char* FontSemiBold() { return orm::UILang() == orm::kLangZH ? "Mixed-SemiBold" : "Outfit-SemiBold"; }
+inline const char* FontBold()     { return orm::UILang() == orm::kLangZH ? "Mixed-Bold" : "Outfit-Bold"; }
 
 static const IColor COL_BG    (255, 255, 255, 255);
 static const IColor COL_BLACK (255,   0,   0,   0);

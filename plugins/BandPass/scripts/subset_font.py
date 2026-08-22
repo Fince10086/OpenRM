@@ -1,21 +1,28 @@
 #!/usr/bin/env python3
-# 将 OPPO Sans 可变字体按插件实际用到的字符子集化, 并实例化出三个字重
-# 用法: subset_font.py <source.ttf> <Strings.h> [<更多文本文件>...] <输出目录>
+# 将 OPPO Sans(可变字体) 按插件用到的中文字符子集化并实例化字重,
+# 再与对应字重的 Outfit 合成 Mixed 字体: ASCII 用 Outfit 字形, 中文用 OPPO 字形
+# 用法: subset_font.py <OPPO源字体> <Outfit目录> <Strings.h> <输出目录>
 import io
 import os
 import sys
-
-from fontTools import subset
-from fontTools.ttLib import TTFont
-from fontTools.varLib.instancer import instantiateVariableFont
+import tempfile
 
 os.environ["SOURCE_DATE_EPOCH"] = "0"
 
-WEIGHTS = [("Regular", 400), ("SemiBold", 600), ("Bold", 700)]
+from fontTools import subset
+from fontTools.merge import Merger
+from fontTools.ttLib import TTFont
+from fontTools.varLib.instancer import instantiateVariableFont
+
+WEIGHTS = [
+    ("Regular", 400, "Outfit-Regular.ttf"),
+    ("SemiBold", 600, "Outfit-SemiBold.ttf"),
+    ("Bold", 700, "Outfit-Bold.ttf"),
+]
 
 
 def collect_charset(paths):
-    chars = {chr(c) for c in range(0x20, 0x7F)}
+    chars = set()
     for p in paths:
         with open(p, encoding="utf-8") as f:
             for ch in f.read():
@@ -24,10 +31,9 @@ def collect_charset(paths):
     return chars
 
 
-def build_weight(source, wght, charset):
+def build_cjk_part(source, wght, charset):
     font = TTFont(source)
-    if "fvar" in font:
-        instantiateVariableFont(font, {"wght": wght}, inplace=True)
+    instantiateVariableFont(font, {"wght": wght}, inplace=True)
 
     cmap = font.getBestCmap()
     missing = [ord(c) for c in sorted(charset) if ord(c) not in cmap]
@@ -37,13 +43,11 @@ def build_weight(source, wght, charset):
 
     opts = subset.Options()
     opts.layout_features = ["*"]
+    opts.drop_tables += ["STAT", "vhea", "vmtx"]
     sub = subset.Subsetter(options=opts)
     sub.populate(text="".join(sorted(charset)))
     sub.subset(font)
-
-    buf = io.BytesIO()
-    font.save(buf)
-    return buf.getvalue()
+    return font
 
 
 def write_if_changed(path, data):
@@ -57,22 +61,26 @@ def write_if_changed(path, data):
 
 
 def main():
-    if len(sys.argv) < 4:
+    if len(sys.argv) < 5:
         sys.exit(__doc__)
-    source = sys.argv[1]
-    text_files = sys.argv[2:-1]
-    out_dir = sys.argv[-1]
+    source, outfit_dir, strings_file, out_dir = sys.argv[1:5]
     os.makedirs(out_dir, exist_ok=True)
 
-    charset = collect_charset(text_files)
-    print(f"subset_font.py: {len(charset)} 个字符 (来自 {', '.join(os.path.basename(p) for p in text_files)})")
+    charset = collect_charset([strings_file])
+    print(f"subset_font.py: 中文字符 {len(charset)} 个 (来自 {os.path.basename(strings_file)})")
 
-    for suffix, wght in WEIGHTS:
-        data = build_weight(source, wght, charset)
-        out = os.path.join(out_dir, f"OPPOSans-ZH-{suffix}.ttf")
-        changed = write_if_changed(out, data)
-        state = "生成" if changed else "未变"
-        print(f"  OPPOSans-ZH-{suffix}.ttf (wght={wght}): {len(data) / 1024:.1f} KB [{state}]")
+    for suffix, wght, outfit_name in WEIGHTS:
+        cjk = build_cjk_part(source, wght, charset)
+        fd, tmp_path = tempfile.mkstemp(suffix=".ttf", dir=out_dir)
+        os.close(fd)
+        cjk.save(tmp_path)
+        merged = Merger().merge([os.path.join(outfit_dir, outfit_name), tmp_path])
+        os.remove(tmp_path)
+        buf = io.BytesIO()
+        merged.save(buf)
+        changed = write_if_changed(os.path.join(out_dir, f"Mixed-{suffix}.ttf"), buf.getvalue())
+        print(f"  Mixed-{suffix}.ttf ({outfit_name} + OPPO wght={wght}): "
+              f"{len(buf.getvalue()) / 1024:.1f} KB [{'生成' if changed else '未变'}]")
 
 
 if __name__ == "__main__":

@@ -122,7 +122,7 @@ public:
   {
     if (mSideLabel.GetLength() == 0) return;
     const IRECT r = SideLabelRect();
-    IText t(24, COL_ACCENT, FontBold(), EAlign::Center, EVAlign::Middle, -90.f);
+    IText t(28, COL_HOVER, FontBold(), EAlign::Center, EVAlign::Middle, -90.f);
     g.DrawText(t, mSideLabel.Get(), r);
   }
 

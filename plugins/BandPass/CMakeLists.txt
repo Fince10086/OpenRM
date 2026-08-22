@@ -9,8 +9,8 @@ endif()
 include(${IPLUG2_DIR}/iPlug2.cmake)
 find_package(iPlug2 REQUIRED)
 
-# OPPO Sans 中文子集字体: 编译时按 Strings.h 实际用到的字符自动子集化(含 ASCII),
-# 并从可变字体实例化出三个字重, 与 Outfit 的 Regular/SemiBold/Bold 一一对应
+# 合成字体: 编译时按 Strings.h 用到的中文, 将 OPPO Sans(实例化字重+子集化)
+# 与对应字重的 Outfit 合成 Mixed-*.ttf (ASCII 用 Outfit 字形, 中文用 OPPO 字形)
 # 在 CMake 找到的解释器和 PATH 中的 python3 里挑一个带 fontTools 的
 find_package(Python3 COMPONENTS Interpreter QUIET)
 set(ORM_PY_CANDIDATES)
@@ -31,24 +31,29 @@ foreach(_py IN LISTS ORM_PY_CANDIDATES)
   endif()
 endforeach()
 if(NOT ORM_PYTHON_SUBSET)
-  message(FATAL_ERROR "OPPOSans 子集化需要带 fontTools 的 Python3, 请执行: pip3 install fonttools")
+  message(FATAL_ERROR "合成字体需要带 fontTools 的 Python3, 请执行: pip3 install fonttools")
 endif()
 message(STATUS "Font subsetter python: ${ORM_PYTHON_SUBSET}")
-set(OPPO_SANS_DIR ${CMAKE_CURRENT_BINARY_DIR}/fonts)
-set(OPPO_SANS_SUBSETS
-  ${OPPO_SANS_DIR}/OPPOSans-ZH-Regular.ttf
-  ${OPPO_SANS_DIR}/OPPOSans-ZH-SemiBold.ttf
-  ${OPPO_SANS_DIR}/OPPOSans-ZH-Bold.ttf
+set(MIXED_FONT_DIR ${CMAKE_CURRENT_BINARY_DIR}/fonts)
+set(MIXED_FONTS
+  ${MIXED_FONT_DIR}/Mixed-Regular.ttf
+  ${MIXED_FONT_DIR}/Mixed-SemiBold.ttf
+  ${MIXED_FONT_DIR}/Mixed-Bold.ttf
 )
 add_custom_command(
-  OUTPUT ${OPPO_SANS_SUBSETS}
-  COMMAND ${CMAKE_COMMAND} -E make_directory ${OPPO_SANS_DIR}
+  OUTPUT ${MIXED_FONTS}
+  COMMAND ${CMAKE_COMMAND} -E make_directory ${MIXED_FONT_DIR}
   COMMAND ${ORM_PYTHON_SUBSET} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/subset_font.py
           ${CMAKE_CURRENT_SOURCE_DIR}/resources/fonts/OPPOSans-Source.ttf
+          ${CMAKE_CURRENT_SOURCE_DIR}/resources/fonts
           ${CMAKE_CURRENT_SOURCE_DIR}/src/Strings.h
-          ${OPPO_SANS_DIR}
-  DEPENDS resources/fonts/OPPOSans-Source.ttf src/Strings.h scripts/subset_font.py
-  COMMENT "Subsetting OPPO Sans (Chinese UI glyphs)"
+          ${MIXED_FONT_DIR}
+  DEPENDS resources/fonts/OPPOSans-Source.ttf
+          resources/fonts/Outfit-Regular.ttf
+          resources/fonts/Outfit-SemiBold.ttf
+          resources/fonts/Outfit-Bold.ttf
+          src/Strings.h scripts/subset_font.py
+  COMMENT "Merging Outfit + OPPO Sans (Chinese UI glyphs)"
   VERBATIM
 )
 
@@ -70,7 +75,7 @@ iplug_add_plugin(${PROJECT_NAME}
     resources/fonts/Outfit-Regular.ttf
     resources/fonts/Outfit-SemiBold.ttf
     resources/fonts/Outfit-Bold.ttf
-    ${OPPO_SANS_SUBSETS}
+    ${MIXED_FONTS}
   FORMATS APP AU VST3
   DEFINES SAMPLE_TYPE_FLOAT
 )

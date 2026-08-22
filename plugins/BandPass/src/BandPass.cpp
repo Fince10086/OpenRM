@@ -375,7 +375,9 @@ public:
   void Draw(IGraphics& g) override
   {
     const float cx = mRECT.MW(), cy = mRECT.MH();
-    const float r = mRECT.W() * 0.5f - 2.f;
+    // Draw the gear slightly smaller than its hit-area rect, keeping it
+    // centered on the text cap-height.
+    const float r = (mRECT.W() * 0.5f - 2.f) * 0.8f;
     const IColor col = GetMouseIsOver() ? COL_BLACK : COL_DIM;
 
     g.PathClear();
@@ -534,9 +536,9 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
     pGraphics->LoadFont("Outfit", OUTFIT_FN);
     pGraphics->LoadFont("Outfit-SemiBold", OUTFIT_SB_FN);
     pGraphics->LoadFont("Outfit-Bold", OUTFIT_BD_FN);
-    pGraphics->LoadFont("CJK", CJK_FN);
-    pGraphics->LoadFont("CJK-SemiBold", CJK_SB_FN);
-    pGraphics->LoadFont("CJK-Bold", CJK_BD_FN);
+    pGraphics->LoadFont("Mixed", MIXED_FN);
+    pGraphics->LoadFont("Mixed-SemiBold", MIXED_SB_FN);
+    pGraphics->LoadFont("Mixed-Bold", MIXED_BD_FN);
 
     const IVStyle style   = MakeORMStyle();
     const IVStyle btnStyle= MakeButtonStyle();
