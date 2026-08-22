@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.14)
-project(ORMBandPass VERSION 0.1.0)
+project(ORMBandPass VERSION 0.1.1)
 
 # 定位 iPlug2 (默认相对本文件路径, 可用 -DIPLUG2_DIR=... 覆盖)
 if(NOT DEFINED IPLUG2_DIR)
