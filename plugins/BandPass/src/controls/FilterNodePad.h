@@ -86,16 +86,38 @@ public:
   void DrawTrack(IGraphics& g) override
   {
     const IRECT tb = PlotRect();
-    g.FillRect(COL_BLOCK, tb);
     const IParam* pf = GetParam(0);
-    for (int decade = 1; decade <= 10000; decade *= 10)
+    auto xOf = [&](double f) { return tb.L + (float) pf->ToNormalized(f) * tb.W(); };
+
+    struct Band { double lo, hi; float v0, v1; };
+    static const Band kBands[] = {
+      { 20.,    100.,   194.f, 218.f },
+      { 100.,   1000.,  205.f, 229.f },
+      { 1000.,  10000., 216.f, 240.f },
+      { 10000., 20000., 227.f, 227.f },
+    };
+
+    for (const Band& band : kBands)
     {
-      for (int m = 1; m <= 9; ++m)
+      double edges[16]; int n = 0;
+      edges[n++] = band.lo;
+      for (int decade = 1; decade <= 10000; decade *= 10)
+        for (int m = 1; m <= 9; ++m)
+        {
+          const double f = m * decade;
+          if (f > band.lo && f < band.hi) edges[n++] = f;
+        }
+      edges[n++] = band.hi;
+
+      float xs[16];
+      for (int i = 0; i < n; ++i) xs[i] = xOf(edges[i]);
+
+      const int cells = n - 1;
+      for (int i = 0; i < cells; ++i)
       {
-        const double f = m * decade;
-        if (f < 20. || f > 20000.) continue;
-        const float x = tb.L + (float) pf->ToNormalized(f) * tb.W();
-        g.DrawLine(COL_BG, x, tb.T, x, tb.B, nullptr, 1.f);
+        const float t = (cells > 1) ? (float) i / (cells - 1) : 0.f;
+        const int v = (int) std::lround(band.v0 + (band.v1 - band.v0) * t);
+        g.FillRect(IColor(255, v, v, v), IRECT(xs[i], tb.T, xs[i + 1], tb.B));
       }
     }
   }
@@ -104,7 +126,6 @@ public:
   {
     const float cx = handleBounds.MW();
     const float cy = handleBounds.MH();
-    g.FillCircle(COL_BLOCK, cx, cy, mHandleRadius + HANDLE_RING);
     g.FillCircle(COL_ACCENT, cx, cy, mHandleRadius);
     g.FillCircle(COLOR_WHITE, cx, cy, mHandleRadius * 0.25f);
   }
