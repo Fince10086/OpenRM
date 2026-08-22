@@ -28,7 +28,7 @@ inline int& ThemeSatMax() { static int satMax = 15; return satMax; }
 
 // Six brightness stops the palette is built from (B% of HSB).
 constexpr int kLightB[5] = { 10, 40, 60, 90, 95 }; // light mode: 900..100
-constexpr int kDarkB[5]  = { 90, 60, 40, 10,  5 }; // dark mode: reversed ramp
+constexpr int kDarkB[5]  = { 90, 60, 40, 20, 10 }; // dark mode: reversed ramp
 
 // Saturation for a given brightness: S = satMax * ((100 - B) / 100)^0.8
 inline float SatForB(int B)
@@ -57,7 +57,7 @@ inline IColor HSBToIColor(int h, float s, float b)
 
 // The five ramp tokens, computed live from hue / saturation / theme.
 // Light mode walks the last five brightness stops (B10..B95), dark mode
-// walks the first five reversed (B90..B5) - same hue family, inverted ramp.
+// walks the first five reversed (B90..B10) - same hue family, inverted ramp.
 inline IColor COL_900() { const int B = ThemeMode() ? kDarkB[0] : kLightB[0]; return HSBToIColor(ThemeHue(), SatForB(B) / 100.f, B / 100.f); }
 inline IColor COL_700() { const int B = ThemeMode() ? kDarkB[1] : kLightB[1]; return HSBToIColor(ThemeHue(), SatForB(B) / 100.f, B / 100.f); }
 inline IColor COL_500() { const int B = ThemeMode() ? kDarkB[2] : kLightB[2]; return HSBToIColor(ThemeHue(), SatForB(B) / 100.f, B / 100.f); }
@@ -66,10 +66,12 @@ inline IColor COL_100() { const int B = ThemeMode() ? kDarkB[4] : kLightB[4]; re
 
 // Map a 0..255 gray step onto the live warm hue: same saturation formula as
 // the ramp tokens, so the band background shares hue and saturation. In dark
-// mode the input step is mirrored (255 - v) to walk the dark end.
+// mode the input step is mirrored (255 - v) to walk the dark end, plus a
+// small brightness lift so the pad gradient doesn't sink into near-black.
 inline IColor WarmGray(int v)
 {
-  const int vv = ThemeMode() ? 255 - v : v;
+  int vv = ThemeMode() ? 255 - v : v;
+  if (ThemeMode()) vv = std::min(255, vv + 16);    // lift dark-mode ramp ~6%
   const float b = vv / 255.f;                       // brightness 0..1
   const int B = (int) std::lround(b * 100.f);       // brightness 0..100 for the formula
   const float s = SatForB(B) / 100.f;               // saturation 0..1
