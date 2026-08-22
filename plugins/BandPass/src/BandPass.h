@@ -1,6 +1,7 @@
 #pragma once
 
 #include "IPlug_include_in_plug_hdr.h"
+#include "ISender.h"
 #include "dsp/BandPassCore.h"
 #include "Strings.h"
 #include "IGraphicsPopupMenu.h"
@@ -35,6 +36,16 @@ constexpr int kNumPresets = 24;
 constexpr int kNumQuick   = 8;
 constexpr int kNumBottom  = 8;
 
+// Spectrum analysis settings (FFT runs on the main thread inside TransmitData)
+constexpr int kSpectrumFFTSize  = 4096;
+constexpr int kSpectrumOverlap  = 4;
+
+enum EControlTags
+{
+  kCtrlTagPadL = 100,
+  kCtrlTagPadR = 101
+};
+
 using namespace iplug;
 using namespace igraphics;
 
@@ -58,10 +69,14 @@ public:
   void OnParamChangeUI(int paramIdx, EParamSource source) override;
 #endif
   void OnIdle() override;
+  void OnParentWindowResize(int width, int height) override;
 
 private:
   orm::BandPassCore mCore;
   orm::ParamMailbox<orm::BandPassCore::Params> mParamMailbox;
+
+  ISpectrumSender<2> mSpectrumL; // ch0 = L dry input, ch1 = L processed output
+  ISpectrumSender<2> mSpectrumR; // ch0 = R dry input, ch1 = R processed output
 
   FilterNodePad*  mPadL = nullptr;
   FilterNodePad*  mPadR = nullptr;

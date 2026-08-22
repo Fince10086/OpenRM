@@ -584,7 +584,7 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
     };
 
     mPadL = new FilterNodePad(IRECT(20, 38, 668, 218), { kFreqL, kBwL }, "LEFT", style, padHooks(kFreqL, kBwL, kSlopeL));
-    pGraphics->AttachControl(mPadL);
+    pGraphics->AttachControl(mPadL, kCtrlTagPadL);
     bindText(orm::kTxtLeft, [this](const char* s) { mPadL->SetSideLabel(s); });
     bindText(orm::kTxtCenter, [this](const char* s) { mPadL->SetCenterPrefix(s); });
     bindText(orm::kTxtBandwidth, [this](const char* s) { mPadL->SetBwPrefix(s); });
@@ -597,7 +597,7 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
     bindTip(mBandL, orm::kTxtTipBand);
 
     mPadR = new FilterNodePad(IRECT(20, 296, 668, 476), { kFreqR, kBwR }, "RIGHT", style, padHooks(kFreqR, kBwR, kSlopeR));
-    pGraphics->AttachControl(mPadR);
+    pGraphics->AttachControl(mPadR, kCtrlTagPadR);
     bindText(orm::kTxtRight, [this](const char* s) { mPadR->SetSideLabel(s); });
     bindText(orm::kTxtCenter, [this](const char* s) { mPadR->SetCenterPrefix(s); });
     bindText(orm::kTxtBandwidth, [this](const char* s) { mPadR->SetBwPrefix(s); });
@@ -810,12 +810,37 @@ void ORMBandPass::ProcessBlock(sample** inputs, sample** outputs, int nFrames)
     for (int c = 1; c < nOuts; ++c)
       std::memcpy(outputs[c], outputs[0], nFrames * sizeof(sample));
   }
+
+  // Feed the pad spectra: ch0 = dry input, ch1 = processed output.
+  if (nIns >= 2)
+  {
+    sample* specL[2] = { inputs[0], outputs[0] };
+    sample* specR[2] = { inputs[1], outputs[1] };
+    mSpectrumL.ProcessBlock(specL, nFrames, kCtrlTagPadL, 2);
+    mSpectrumR.ProcessBlock(specR, nFrames, kCtrlTagPadR, 2);
+  }
+  else
+  {
+    sample* specM[2] = { inputs[0], outputs[0] };
+    mSpectrumL.ProcessBlock(specM, nFrames, kCtrlTagPadL, 2);
+  }
 }
 
 void ORMBandPass::OnReset()
 {
   mCore.setParams(CollectParams());
   mCore.prepare(GetSampleRate(), GetBlockSize());
+
+  // Configure the spectrum analyzers (FFT runs on the main thread in TransmitData)
+  mSpectrumL.SetFFTSizeAndOverlap(kSpectrumFFTSize, kSpectrumOverlap);
+  mSpectrumR.SetFFTSizeAndOverlap(kSpectrumFFTSize, kSpectrumOverlap);
+
+  const double sr = GetSampleRate();
+  const int fftSize = kSpectrumFFTSize;
+  SendControlMsgFromDelegate(kCtrlTagPadL, FilterNodePad::kMsgTagSampleRate, sizeof(double), &sr);
+  SendControlMsgFromDelegate(kCtrlTagPadL, FilterNodePad::kMsgTagFFTSize, sizeof(int), &fftSize);
+  SendControlMsgFromDelegate(kCtrlTagPadR, FilterNodePad::kMsgTagSampleRate, sizeof(double), &sr);
+  SendControlMsgFromDelegate(kCtrlTagPadR, FilterNodePad::kMsgTagFFTSize, sizeof(int), &fftSize);
 }
 
 void ORMBandPass::OnParamChange(int paramIdx, EParamSource source, int sampleOffset)
@@ -1017,6 +1042,10 @@ void ORMBandPass::MaybePushGestureUndo()
 
 void ORMBandPass::OnIdle()
 {
+  // Spectrum FFT + UI transfer happens here (main thread), never on the audio thread.
+  mSpectrumL.TransmitData(*this);
+  mSpectrumR.TransmitData(*this);
+
   using namespace std::chrono;
   const double now = duration<double>(steady_clock::now().time_since_epoch()).count();
   if (mGesturePending && now - mLastUIChangeTime > kGestureGapSec)
@@ -1038,6 +1067,20 @@ void ORMBandPass::OnIdle()
       ApplySnapshot(MixSnapshots(mFadeFrom, mFadeTo, t));
       mInFadeApply = false;
     }
+  }
+}
+
+// 拖拽 App 窗口/宿主缩放视图时, 保持布局逻辑尺寸不变, 按两轴较小比例等比缩放 UI。
+// needsPlatformResize=false 避免在 live resize 中反向改动窗口尺寸形成回路;
+// 窗口宽高比由平台层的 contentAspectRatio 锁定, 因此两轴比例始终一致。
+void ORMBandPass::OnParentWindowResize(int width, int height)
+{
+  if (auto* pGraphics = GetUI())
+  {
+    const float platformScale = pGraphics->GetPlatformWindowScale();
+    const float sx = static_cast<float>(width) / platformScale / static_cast<float>(pGraphics->Width());
+    const float sy = static_cast<float>(height) / platformScale / static_cast<float>(pGraphics->Height());
+    pGraphics->Resize(pGraphics->Width(), pGraphics->Height(), std::min(sx, sy), false);
   }
 }
 

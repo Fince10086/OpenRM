@@ -1,9 +1,11 @@
 #pragma once
 
 #include "IControls.h"
+#include "ISender.h"
 #include "../Theme.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -21,6 +23,15 @@ public:
     std::function<void(int slopeDb)> editSlope;
   };
 
+  // Matches ISpectrumSender<2> (MAX_FFT_SIZE = 4096)
+  using TDataPacket = std::array<float, 4096>;
+
+  enum MsgTags
+  {
+    kMsgTagSampleRate = 1,
+    kMsgTagFFTSize,
+  };
+
   FilterNodePad(const IRECT& bounds, const std::initializer_list<int>& params,
                 const char* label, const IVStyle& style, const Hooks& hooks,
                 float handleRadius = 9.f)
@@ -29,6 +40,36 @@ public:
   , mSideLabel(label)
   {
     SetTextEntryLength(20);
+  }
+
+  // Receives the spectrum packets pushed by ISpectrumSender<2> (ch0 = dry input,
+  // ch1 = processed output) plus the sample rate / FFT size configuration messages.
+  void OnMsgFromDelegate(int msgTag, int dataSize, const void* pData) override
+  {
+    IByteStream stream(pData, dataSize);
+
+    if (msgTag == ISender<>::kUpdateMessage)
+    {
+      ISenderData<2, TDataPacket> d;
+      stream.Get(&d, 0);
+      const int nBins = std::min((int) d.vals[0].size(), std::max(mNumBins, 0));
+      if (nBins <= 0) return;
+      mSpectrumIn.assign(d.vals[0].begin(), d.vals[0].begin() + nBins);
+      mSpectrumOut.assign(d.vals[1].begin(), d.vals[1].begin() + nBins);
+      SetDirty(false);
+    }
+    else if (msgTag == kMsgTagSampleRate)
+    {
+      double sr;
+      stream.Get(&sr, 0);
+      mSampleRate = sr;
+    }
+    else if (msgTag == kMsgTagFFTSize)
+    {
+      int fftSize;
+      stream.Get(&fftSize, 0);
+      mNumBins = std::max(fftSize / 2, 1);
+    }
   }
 
   void SetSideLabel(const char* s) { mSideLabel.Set(s); SetDirty(false); }
@@ -85,6 +126,7 @@ public:
   void DrawWidget(IGraphics& g) override
   {
     DrawTrack(g);
+    DrawSpectrum(g);
     const IRECT tb = PlotRect();
     const float xpos = (float) GetValue(0) * tb.W();
     const float ypos = (float) GetValue(1) * tb.H();
@@ -156,6 +198,41 @@ public:
     const IRECT r = SideLabelRect();
     IText t(28, COL_HOVER, FontBold(), EAlign::Center, EVAlign::Middle, -90.f);
     g.DrawText(t, mSideLabel.Get(), r);
+  }
+
+  // Overlays the received spectra onto the plot area. The pad's X axis is the
+  // (log) frequency of param 0, so the same mapping used by DrawTrack places the
+  // FFT bins on screen. Y maps amplitude -90..0 dBFS over the plot height.
+  // ch0 (dry input) is drawn as a thin line, ch1 (processed output) as a thick one.
+  void DrawSpectrum(IGraphics& g)
+  {
+    const IRECT tb = PlotRect();
+    if (tb.W() <= 0.f || tb.H() <= 0.f) return;
+    if (mSpectrumIn.empty() || mSpectrumOut.empty() || mNumBins <= 0) return;
+
+    const IParam* pf = GetParam(0);
+    const double binHz = mSampleRate / std::max((double) mNumBins * 2.0, 1.0);
+
+    auto drawLine = [&](const std::vector<float>& spec, const IColor& col, float width)
+    {
+      g.PathClear();
+      bool started = false;
+      for (int i = 0; i < mNumBins && i < (int) spec.size(); ++i)
+      {
+        const double f = (double) i * binHz;
+        if (f < 20.0 || f > 20000.0) continue;
+        const float x = tb.L + (float) pf->ToNormalized(f) * tb.W();
+        const float amp = spec[i];
+        const float db = (amp > 1e-6f) ? std::clamp(20.f * std::log10(amp), -90.f, 0.f) : -90.f;
+        const float y = tb.B - (db + 90.f) / 90.f * tb.H();
+        if (!started) { g.PathMoveTo(x, y); started = true; }
+        else          { g.PathLineTo(x, y); }
+      }
+      g.PathStroke(IPattern(col), width);
+    };
+
+    drawLine(mSpectrumIn,  COL_DIM,    1.f); // dry input
+    drawLine(mSpectrumOut, COL_ACCENT, 2.f); // processed output
   }
 
 private:
@@ -318,6 +395,11 @@ private:
   IPopupMenu mSlopeMenu;
   int   mEditingCorner = -1;
   int   mSlopeIndex = kSlopeDefaultIdx;
+
+  std::vector<float> mSpectrumIn;   // ch0: dry input spectrum (magnitudes)
+  std::vector<float> mSpectrumOut;  // ch1: processed output spectrum (magnitudes)
+  int    mNumBins = 0;              // FFT size / 2, set via kMsgTagFFTSize
+  double mSampleRate = 44100.0;     // set via kMsgTagSampleRate
 };
 
 END_IGRAPHICS_NAMESPACE

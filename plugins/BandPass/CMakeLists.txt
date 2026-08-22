@@ -71,6 +71,7 @@ iplug_add_plugin(${PROJECT_NAME}
     src/controls/BandRangeSlider.h
     src/controls/PresetSlotControl.h
     src/PresetFileIO.h
+    ${IPLUG2_DIR}/WDL/fft.c
   RESOURCES
     resources/fonts/Outfit-Regular.ttf
     resources/fonts/Outfit-SemiBold.ttf
