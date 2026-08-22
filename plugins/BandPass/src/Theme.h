@@ -9,7 +9,7 @@ static const IColor COL_BLACK (255,   0,   0,   0);
 static const IColor COL_DIM   (255, 102, 102, 102);
 static const IColor COL_FAINT (255, 153, 153, 153);
 static const IColor COL_TRACK (255, 243, 243, 243);
-static const IColor COL_BLOCK (255, 221, 221, 221);
+static const IColor COL_BLOCK (255, 232, 232, 232);
 static const IColor COL_HOVER (255, 166, 166, 166);
 static const IColor COL_ACCENT(255,  56,  56,  56);
 

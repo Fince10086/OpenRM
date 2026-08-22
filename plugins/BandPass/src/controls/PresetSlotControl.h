@@ -134,7 +134,7 @@ private:
   {
     std::string s = mHooks.getTooltipPrefix ? mHooks.getTooltipPrefix() : std::string();
     if (!s.empty()) s += "\n";
-    s += "Drag onto another slot to swap · ⌘Click: save here · Right-click: menu";
+    s += "Drag onto another slot to swap\n⌘Click: save here\nRight-click: menu";
     return s;
   }
 

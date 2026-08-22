@@ -93,6 +93,12 @@ public:
       g.FillRect(COL_ACCENT, IRECT(x - 1.f, mTrackBounds.B, x + 1.f, mTrackBounds.B + 3.f));
     }
   }
+  void DrawHandle(IGraphics& g, const IRECT& bounds) override
+  {
+    const float cx = bounds.MW(), cy = bounds.MH();
+    g.FillCircle(COL_BG, cx, cy, HANDLE_R + HANDLE_RING);
+    g.FillCircle(COL_ACCENT, cx, cy, HANDLE_R);
+  }
 };
 
 class ORMSlider : public IVSliderControl
@@ -181,10 +187,33 @@ protected:
     return IRECT(mRECT.L, mRECT.T, mRECT.L + kHeaderW + 4.f, mRECT.T + 44.f);
   }
 
+  virtual void FormatValue(WDL_String& ds) const
+  {
+    ds.Set("");
+    const IParam* p = GetParam();
+    if (!p) return;
+    char buf[32];
+    switch (GetParamIdx())
+    {
+      case kAgAmount:
+      case kMix:
+        std::snprintf(buf, sizeof(buf), "%.0f%%", p->Value() * 100.);
+        ds.Set(buf);
+        break;
+      case kAgRate:
+        std::snprintf(buf, sizeof(buf), p->Value() < 10. ? "%.2fs" : "%.1fs", p->Value());
+        ds.Set(buf);
+        break;
+      default:
+        p->GetDisplay(ds, false);
+        break;
+    }
+  }
+
   virtual void DrawHeader(IGraphics& g, float rot)
   {
     WDL_String ds;
-    if (GetParam()) GetParam()->GetDisplay(ds, false);
+    FormatValue(ds);
 
     if (rot == 0.f)
     {
@@ -217,8 +246,8 @@ public:
   : ORMSlider(bounds, paramIdx, label, style, EDirection::Vertical) {}
 
 protected:
-  static constexpr float kTextW = 20.f;   // text column width
-  static constexpr float kTextGap = 4.f;  // right padding inside the control
+  static constexpr float kTextW = 16.f;   // text column width
+  static constexpr float kTextGap = 2.f;  // right padding inside the control
   static constexpr float kPlotTopInset = 30.f; // FilterNodePad's kTopPad
 
   IRECT TextRect() const
@@ -251,7 +280,7 @@ protected:
   void DrawHeader(IGraphics& g, float) override
   {
     WDL_String ds;
-    if (GetParam()) GetParam()->GetDisplay(ds, false);
+    FormatValue(ds);
 
     const IRECT hdr = TextRect();
     // Value: top edge flush with the track's visible top; label: bottom edge
@@ -311,7 +340,7 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
   GetParam(kMix)  ->InitDouble("Mix", 1., 0., 1., 0.01, "");
   GetParam(kAgOn) ->InitBool("Agitation", false);
   GetParam(kAgAmount)->InitDouble("Ag Amount", 0.1, 0., 1., 0.01, "");
-  GetParam(kAgRate)->InitDouble("Ag Speed", 1., 0.01, 60., 0.01, "s", 0, "", IParam::ShapeExp());
+  GetParam(kAgRate)->InitDouble("Ag Speed", 1., 0.01, 60., 0.01, "", 0, "", IParam::ShapeExp());
 
   for (int i = 0; i < kNumPresets; ++i)
   {
@@ -524,14 +553,8 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
     {
       char label[8];
       snprintf(label, 8, "%d", mSlotNumber[i] + 1);
-      // Same cell width as the PRESETS grid. Align with the morph slider's
-      // tick marks: its track is inset by the handle radius on both sides and
-      // carries kNumQuick evenly spaced ticks (both ends included).
-      constexpr float kHandleInset = 8.f;
-      const float trackL = 56.f + kHandleInset;
-      const float trackR = 668.f - kHandleInset;
-      const float tick = trackL + (trackR - trackL) * i / (kNumQuick - 1.f);
-      const float l = tick - 19.5f;                 // centred on the tick
+      const float tick = 39.5f + 609.f * i / (kNumQuick - 1.f);
+      const float l = tick - 19.5f;
       PresetSlotControl* btn = new PresetSlotControl(
         IRECT(l, 560, l + 39.f, 590),
         makeSlotHooks(i), label, btnStyle);
@@ -539,7 +562,7 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
       pGraphics->AttachControl(btn);
     }
 
-    mMorphSlider = new PresetMorphSlider(IRECT(56, 600, 668, 624),
+    mMorphSlider = new PresetMorphSlider(IRECT(31.5f, 600, 656.5f, 624),
       [this](IControl* pCtrl) {
         MaybePushGestureUndo();
         mMorphPos = pCtrl->GetValue(0) * (kNumQuick - 1.0);

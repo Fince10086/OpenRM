@@ -42,15 +42,17 @@ public:
 
   void OnMouseDown(float x, float y, const IMouseMod& mod) override
   {
-    if (HeaderRect().Contains(x, y))
+    for (int id : { kCornerLow, kCornerHigh })
     {
-      const int id = x < HeaderRect().MW() ? kCornerLow : kCornerHigh;
-      WDL_String init; GetCutLabel(id, init);
-      const EAlign align = (id == kCornerLow) ? EAlign::Near : EAlign::Far;
-      const IText t(20, COL_BLACK, "Outfit-SemiBold", align, EVAlign::Middle);
-      mEditingCorner = id;
-      GetUI()->CreateTextEntry(*this, t, HeaderRect(), init.Get(), kNoValIdx);
-      return;
+      if (CutValueRect(id).Contains(x, y))
+      {
+        WDL_String init; GetCutValue(id, init, false);
+        const EAlign align = (id == kCornerLow) ? EAlign::Near : EAlign::Far;
+        const IText t(20, COL_BLACK, "Outfit-SemiBold", align, EVAlign::Middle);
+        mEditingCorner = id;
+        GetUI()->CreateTextEntry(*this, t, CutValueRect(id), init.Get(), kNoValIdx);
+        return;
+      }
     }
     SelectHandle(x);
     if (mHooks.gestureBegin) mHooks.gestureBegin();
@@ -161,14 +163,25 @@ private:
 
   void DrawHeader(IGraphics& g)
   {
-    WDL_String low, high;
-    GetCutLabel(kCornerLow, low);
-    GetCutLabel(kCornerHigh, high);
     const IRECT hdr = HeaderRect();
-    g.DrawText(IText(20, COL_BLACK, "Outfit-SemiBold", EAlign::Near, EVAlign::Middle),
-               low.Get(), IRECT(hdr.L, hdr.T, hdr.MW(), hdr.B));
-    g.DrawText(IText(20, COL_BLACK, "Outfit-SemiBold", EAlign::Far, EVAlign::Middle),
-               high.Get(), IRECT(hdr.MW(), hdr.T, hdr.R, hdr.B));
+    const IText t(20, COL_BLACK, "Outfit-SemiBold", EAlign::Near, EVAlign::Middle);
+    const IText tf(20, COL_BLACK, "Outfit-SemiBold", EAlign::Far, EVAlign::Middle);
+
+    WDL_String value;
+    IRECT measured;
+    GetCutValue(kCornerLow, value, true);
+    g.MeasureText(t, "LOWCUT ", measured);
+    const float lowPrefixW = measured.W();
+    g.MeasureText(t, value.Get(), measured);
+    mCutValueRect[0] = IRECT(hdr.L + lowPrefixW, hdr.T, hdr.L + lowPrefixW + measured.W(), hdr.B);
+    g.DrawText(t, "LOWCUT ", hdr);
+    g.DrawText(t, value.Get(), mCutValueRect[0]);
+
+    GetCutValue(kCornerHigh, value, true);
+    g.MeasureText(tf, value.Get(), measured);
+    mCutValueRect[1] = IRECT(hdr.R - measured.W(), hdr.T, hdr.R, hdr.B);
+    g.DrawText(tf, "HIGHCUT ", IRECT(hdr.L, hdr.T, mCutValueRect[1].L, hdr.B));
+    g.DrawText(tf, value.Get(), mCutValueRect[1]);
   }
 
   void DrawBand(IGraphics& g)
@@ -186,22 +199,27 @@ private:
     }
   }
 
-  void GetCutLabel(int id, WDL_String& out) const
+  IRECT CutValueRect(int id) const { return mCutValueRect[id == kCornerHigh]; }
+
+  void GetCutValue(int id, WDL_String& out, bool withUnit) const
   {
     const IParam* pf = GetParam(0);
     const double c = pf->FromNormalized(GetValue(0));
     const double bw = GetParam(1)->FromNormalized(GetValue(1));
+    double hz = (id == kCornerLow) ? c / bw : c * bw;
+    if (id == kCornerLow) hz = std::max(hz, 20.);
+    else                  hz = std::min(hz, 20500.);
     char buf[32];
-    if (id == kCornerLow) FormatFreq(buf, 32, c / bw);
-    else                  FormatFreq(buf, 32, c * bw);
-    out.SetFormatted(64, "%s%s", id == kCornerLow ? "LOWCUT " : "HIGHCUT ", buf);
+    FormatFreq(buf, 32, hz, withUnit);
+    out.Set(buf);
   }
 
-  static void FormatFreq(char* b, int n, double hz)
+  static void FormatFreq(char* b, int n, double hz, bool withUnit)
   {
-    if (hz >= 10000.) std::snprintf(b, n, "%.1fk", hz / 1000.);
-    else if (hz >= 1000.) std::snprintf(b, n, "%.2fk", hz / 1000.);
-    else std::snprintf(b, n, "%.0f", hz);
+    const char* u = withUnit ? "Hz" : "";
+    if (hz >= 10000.) std::snprintf(b, n, "%.1fk%s", hz / 1000., u);
+    else if (hz >= 1000.) std::snprintf(b, n, "%.2fk%s", hz / 1000., u);
+    else std::snprintf(b, n, "%.0f%s", hz, u);
   }
 
   static bool ParseFreq(const char* s, double& hz)
@@ -216,6 +234,7 @@ private:
   }
 
   Hooks mHooks;
+  IRECT mCutValueRect[2];
   int   mEditingCorner = -1;
   int   mActiveHandle = -1;
   float mStartX = 0.f, mStartLow = 0.f, mStartHigh = 1.f;

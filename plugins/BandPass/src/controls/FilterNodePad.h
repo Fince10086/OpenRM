@@ -42,13 +42,13 @@ public:
     mOverCorner = -1;
     for (int id : { kCornerCenter, kCornerBw })
     {
-      if (CornerRect(id).Contains(x, y))
+      if (CornerValueRect(id).Contains(x, y))
       {
-        WDL_String init; GetCornerLabel(id, init);
+        WDL_String init; GetCornerValue(id, init, false);
         EAlign align = (id == kCornerBw) ? EAlign::Far : EAlign::Near;
         IText t(20, COL_BLACK, "Outfit-SemiBold", align, EVAlign::Middle);
         mEditingCorner = id;
-        GetUI()->CreateTextEntry(*this, t, CornerRect(id), init.Get(), kNoValIdx);
+        GetUI()->CreateTextEntry(*this, t, CornerValueRect(id), init.Get(), kNoValIdx);
         return;
       }
     }
@@ -62,7 +62,7 @@ public:
   {
     int hit = -1;
     for (int id : { kCornerCenter, kCornerBw })
-      if (CornerRect(id).Contains(x, y)) { hit = id; break; }
+      if (CornerValueRect(id).Contains(x, y)) { hit = id; break; }
     if (hit != mOverCorner) { mOverCorner = hit; SetDirty(false); }
     IVXYPadControl::OnMouseOver(x, y, mod);
   }
@@ -167,32 +167,60 @@ private:
   void DrawCorner(IGraphics& g, int id)
   {
     const IRECT r = CornerRect(id);
-    if (mOverCorner == id)
-      g.FillRoundRect(COL_HOVER, r.GetPadded(-2.f), 4.f);
-    WDL_String label; GetCornerLabel(id, label);
-    const EAlign align = (id == kCornerBw) ? EAlign::Far : EAlign::Near;
+    const bool far = (id == kCornerBw);
+    const EAlign align = far ? EAlign::Far : EAlign::Near;
     const IText t(20, COL_BLACK, "Outfit-SemiBold", align, EVAlign::Middle);
-    g.DrawText(t, label.Get(), r);
-  }
-
-  void GetCornerLabel(int id, WDL_String& out) const
-  {
-    const IParam* pf = GetParam(0);
-    const double c = pf->FromNormalized(GetValue(0));
-    const double bw = GetParam(1)->FromNormalized(GetValue(1));
-    char buf[32];
-    switch (id)
+    const char* prefix = far ? "BANDWIDTH " : "CENTER ";
+    WDL_String value;
+    GetCornerValue(id, value, true);
+    IRECT measured;
+    if (far)
     {
-      case kCornerCenter: FormatFreq(buf, 32, c);            out.SetFormatted(64, "CENTER %s", buf); break;
-      case kCornerBw:     std::snprintf(buf, 32, "%.2f", bw); out.SetFormatted(64, "BANDWIDTH %s", buf); break;
+      g.MeasureText(t, value.Get(), measured);
+      mCornerValueRect[1] = IRECT(r.R - measured.W(), r.T, r.R, r.B);
+      if (mOverCorner == id)
+        g.FillRoundRect(COL_HOVER, mCornerValueRect[1].GetPadded(-2.f), 4.f);
+      g.DrawText(t, prefix, IRECT(r.L, r.T, mCornerValueRect[1].L, r.B));
+      g.DrawText(t, value.Get(), mCornerValueRect[1]);
+    }
+    else
+    {
+      g.MeasureText(t, prefix, measured);
+      const float prefixW = measured.W();
+      g.MeasureText(t, value.Get(), measured);
+      mCornerValueRect[0] = IRECT(r.L + prefixW, r.T, r.L + prefixW + measured.W(), r.B);
+      if (mOverCorner == id)
+        g.FillRoundRect(COL_HOVER, mCornerValueRect[0].GetPadded(-2.f), 4.f);
+      g.DrawText(t, prefix, r);
+      g.DrawText(t, value.Get(), mCornerValueRect[0]);
     }
   }
 
-  static void FormatFreq(char* b, int n, double hz)
+  IRECT CornerValueRect(int id) const { return mCornerValueRect[id == kCornerBw]; }
+
+  void GetCornerValue(int id, WDL_String& out, bool withUnit) const
   {
-    if (hz >= 10000.) std::snprintf(b, n, "%.1fk", hz / 1000.);
-    else if (hz >= 1000.) std::snprintf(b, n, "%.2fk", hz / 1000.);
-    else std::snprintf(b, n, "%.0f", hz);
+    char buf[32];
+    if (id == kCornerBw)
+    {
+      const double bw = GetParam(1)->FromNormalized(GetValue(1));
+      std::snprintf(buf, 32, "%.2f", bw);
+    }
+    else
+    {
+      const IParam* pf = GetParam(0);
+      const double c = pf->FromNormalized(GetValue(0));
+      FormatFreq(buf, 32, c, withUnit);
+    }
+    out.Set(buf);
+  }
+
+  static void FormatFreq(char* b, int n, double hz, bool withUnit)
+  {
+    const char* u = withUnit ? "Hz" : "";
+    if (hz >= 10000.) std::snprintf(b, n, "%.1fk%s", hz / 1000., u);
+    else if (hz >= 1000.) std::snprintf(b, n, "%.2fk%s", hz / 1000., u);
+    else std::snprintf(b, n, "%.0f%s", hz, u);
   }
 
   static bool ParseFreq(const char* s, double& hz)
@@ -214,6 +242,7 @@ private:
 
   Hooks mHooks;
   WDL_String mSideLabel;
+  IRECT mCornerValueRect[2];
   int   mEditingCorner = -1;
   int   mOverCorner = -1;
 };
