@@ -57,6 +57,8 @@ namespace iplug { namespace igraphics {
   class PresetSlotControl;
 } }
 
+class SettingsPanelControl; // defined in BandPass.cpp (global scope)
+
 class ORMBandPass final : public Plugin
 {
 public:
@@ -116,12 +118,10 @@ private:
   bool mGesturePending = false;
 
   int mThemeMode = 0;
-  int mThemeColorIdx = 0;
+  bool mThemeDirty = false; // deferred UI rebuild flag (see ApplyTheme)
+  SettingsPanelControl* mSettingsPanel = nullptr;
   std::vector<std::pair<int, std::function<void(const char*)>>> mTextBindings;
   std::vector<std::pair<IControl*, int>> mTooltipBindings;
-  IPopupMenu mSettingsMenu;
-  IPopupMenu* mLangMenuPtr = nullptr;
-  IPopupMenu* mColorMenuPtr = nullptr;
 
   orm::BandPassCore::Params CollectParams() const;
   void PublishParamsToCore();
@@ -169,6 +169,6 @@ private:
   void StartFade(const ParamSnapshot& to);
   void ApplyLanguage();
   void ApplyTooltips();
-  void OpenSettingsMenu(IControl* caller, float x, float y);
-  void OnSettingsMenuChoice(IPopupMenu* menu);
+  void ApplyTheme();
+  void ToggleSettingsPanel();
 };
