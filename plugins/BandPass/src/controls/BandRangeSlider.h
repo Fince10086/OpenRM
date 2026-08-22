@@ -51,7 +51,7 @@ public:
       {
         WDL_String init; GetCutValue(id, init, false);
         const EAlign align = (id == kCornerLow) ? EAlign::Near : EAlign::Far;
-        const IText t(20, COL_BLACK, FontSemiBold(), align, EVAlign::Middle);
+        const IText t(20, COL_900, FontSemiBold(), align, EVAlign::Middle);
         mEditingCorner = id;
         GetUI()->CreateTextEntry(*this, t, CutValueRect(id), init.Get(), kNoValIdx);
         return;
@@ -167,8 +167,8 @@ private:
   void DrawHeader(IGraphics& g)
   {
     const IRECT hdr = HeaderRect();
-    const IText t(20, COL_BLACK, FontSemiBold(), EAlign::Near, EVAlign::Middle);
-    const IText tf(20, COL_BLACK, FontSemiBold(), EAlign::Far, EVAlign::Middle);
+    const IText t(20, COL_900, FontSemiBold(), EAlign::Near, EVAlign::Middle);
+    const IText tf(20, COL_900, FontSemiBold(), EAlign::Far, EVAlign::Middle);
 
     WDL_String value;
     IRECT measured;
@@ -194,12 +194,12 @@ private:
     const float y = s.MH();
     const float lx = NormToX(LowNorm());
     const float hx = NormToX(HighNorm());
-    g.FillRect(COL_TRACK, IRECT(mRECT.L, y - 2.f, mRECT.R, y + 2.f));
-    g.FillRect(COL_HOVER, IRECT(lx, y - 2.f, hx, y + 2.f));
+    g.FillRect(COL_300, IRECT(mRECT.L, y - 2.f, mRECT.R, y + 2.f));
+    g.FillRect(COL_500, IRECT(lx, y - 2.f, hx, y + 2.f));
     for (float px : { lx, hx })
     {
-      g.FillCircle(COL_BG, px, y, HANDLE_R + HANDLE_RING);
-      g.FillCircle(COL_ACCENT, px, y, HANDLE_R);
+      g.FillCircle(COL_100, px, y, HANDLE_R + HANDLE_RING);
+      g.FillCircle(COL_900, px, y, HANDLE_R);
     }
   }
 

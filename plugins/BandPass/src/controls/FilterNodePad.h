@@ -118,7 +118,7 @@ public:
       {
         WDL_String init; GetCornerValue(id, init, false);
         EAlign align = (id == kCornerBw) ? EAlign::Far : EAlign::Near;
-        IText t(20, COL_BLACK, FontSemiBold(), align, EVAlign::Middle);
+        IText t(20, COL_900, FontSemiBold(), align, EVAlign::Middle);
         mEditingCorner = id;
         GetUI()->CreateTextEntry(*this, t, CornerValueRect(id), init.Get(), kNoValIdx);
         return;
@@ -187,7 +187,7 @@ public:
       {
         const float t = (cells > 1) ? (float) i / (cells - 1) : 0.f;
         const int v = (int) std::lround(band.v0 + (band.v1 - band.v0) * t);
-        g.FillRect(IColor(255, v, v, v), IRECT(xs[i], tb.T, xs[i + 1], tb.B));
+        g.FillRect(WarmGray(v), IRECT(xs[i], tb.T, xs[i + 1], tb.B));
       }
     }
   }
@@ -196,8 +196,8 @@ public:
   {
     const float cx = handleBounds.MW();
     const float cy = handleBounds.MH();
-    g.FillCircle(COL_ACCENT, cx, cy, mHandleRadius);
-    g.FillCircle(COLOR_WHITE, cx, cy, mHandleRadius * 0.25f);
+    g.FillCircle(COL_900, cx, cy, mHandleRadius);
+    g.FillCircle(COL_100, cx, cy, mHandleRadius * 0.25f);
   }
 
   bool IsHit(float x, float y) const override
@@ -214,7 +214,7 @@ public:
   {
     if (mSideLabel.GetLength() == 0) return;
     const IRECT r = SideLabelRect();
-    IText t(28, COL_HOVER, FontBold(), EAlign::Center, EVAlign::Middle, -90.f);
+    IText t(28, COL_500, FontBold(), EAlign::Center, EVAlign::Middle, -90.f);
     g.DrawText(t, mSideLabel.Get(), r);
   }
 
@@ -300,8 +300,8 @@ public:
       g.PathFill(fill);
     };
 
-    drawFill(mSpectrumIn,  IColor(110, 153, 153, 153), IColor(0, 153, 153, 153)); // dry input (light grey)
-    drawFill(mSpectrumOut, IColor(170,  56,  56,  56), IColor(0,  56,  56,  56)); // band-pass wet output (dark grey)
+    drawFill(mSpectrumIn,  IColor(110, 153, 150, 142), IColor(0, 153, 150, 142)); // dry input (COL_500)
+    drawFill(mSpectrumOut, IColor(170,  26,  25,  22), IColor(0,  26,  25,  22)); // band-pass wet output (COL_900)
   }
 
 private:
@@ -336,7 +336,7 @@ private:
     const IRECT r = CornerRect(id);
     const bool far = (id == kCornerBw);
     const EAlign align = far ? EAlign::Far : EAlign::Near;
-    const IText t(20, COL_BLACK, FontSemiBold(), align, EVAlign::Middle);
+    const IText t(20, COL_900, FontSemiBold(), align, EVAlign::Middle);
     const char* prefix = far ? mBwPrefix.Get() : mCenterPrefix.Get();
     WDL_String value;
     GetCornerValue(id, value, true);
@@ -373,7 +373,7 @@ private:
   void DrawSlope(IGraphics& g)
   {
     const IRECT r = SlopeRect();
-    const IText t(20, COL_BLACK, FontSemiBold(), EAlign::Center, EVAlign::Middle);
+    const IText t(20, COL_900, FontSemiBold(), EAlign::Center, EVAlign::Middle);
 
     WDL_String value; GetSlopeValue(value);
     IRECT m1, m2;

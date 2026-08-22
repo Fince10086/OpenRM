@@ -17,20 +17,20 @@
 
 static IVStyle MakeORMStyle()
 {
-  IVColorSpec colors = { COL_BG, COL_BG, COL_ACCENT, COL_BLACK,
-                         COL_HOVER, COL_TRACK, COL_BLOCK, COL_BLACK, COL_BLACK };
-  const IText labelText(20, COL_DIM, "Outfit", EAlign::Center, EVAlign::Bottom);
-  const IText valueText(20, COL_BLACK, "Outfit-SemiBold", EAlign::Center, EVAlign::Top);
+  IVColorSpec colors = { COL_100, COL_100, COL_900, COL_900,
+                         COL_500, COL_300, COL_300, COL_900, COL_900 };
+  const IText labelText(20, COL_700, "Outfit", EAlign::Center, EVAlign::Bottom);
+  const IText valueText(20, COL_900, "Outfit-SemiBold", EAlign::Center, EVAlign::Top);
   return IVStyle(true, true, colors, labelText, valueText,
                  true, true, false, false, 0.2f, 1.5f, 0.f, 1.f, 0.f);
 }
 
 static IVStyle MakeButtonStyle()
 {
-  IVColorSpec colors = { COL_BG, COL_BG, COL_ACCENT, COL_BLACK,
-                         COL_HOVER, COL_TRACK, COL_BLOCK, COL_BLACK, COL_BLACK };
-  const IText labelText(20, COL_BLACK, "Outfit-SemiBold", EAlign::Center, EVAlign::Middle);
-  const IText valueText(20, COL_BLACK, "Outfit-SemiBold", EAlign::Center, EVAlign::Middle);
+  IVColorSpec colors = { COL_100, COL_100, COL_900, COL_900,
+                         COL_500, COL_300, COL_300, COL_900, COL_900 };
+  const IText labelText(20, COL_900, "Outfit-SemiBold", EAlign::Center, EVAlign::Middle);
+  const IText valueText(20, COL_900, "Outfit-SemiBold", EAlign::Center, EVAlign::Middle);
   return IVStyle(true, true, colors, labelText, valueText, true, true, false, false,
                  0.f, 2.f, 0.f, 1.f, 0.f);
 }
@@ -46,11 +46,11 @@ public:
   {
     const IRECT b = GetWidgetBounds();
     const bool pressed = GetValue() > 0.5;
-    const IColor fill = pressed ? COL_ACCENT
-                     : GetMouseIsOver() ? COL_HOVER : COL_BLOCK;
+    const IColor fill = pressed ? COL_900
+                     : GetMouseIsOver() ? COL_500 : COL_300;
     g.FillRect(fill, b.GetPadded(-BLOCK_GAP));
     IText t = mStyle.valueText;
-    t.mFGColor = pressed ? COLOR_WHITE : COL_BLACK;
+    t.mFGColor = pressed ? COL_100 : COL_900;
     strcpy(t.mFont, FontSemiBold());
     g.DrawText(t, mLabelStr.Get(), b);
   }
@@ -83,23 +83,23 @@ public:
   {
     const float cr = GetRoundedCornerRadius(mTrackBounds);
     const IRECT tb = mTrackBounds.GetHPadded(mHandleSize);
-    g.FillRoundRect(COL_TRACK, tb, cr, &mBlend);
+    g.FillRoundRect(COL_300, tb, cr, &mBlend);
     const IRECT fill(tb.L, filledArea.T, std::max(filledArea.R, mTrackBounds.L), filledArea.B);
-    g.FillRoundRect(COL_HOVER, fill, cr, &mBlend);
+    g.FillRoundRect(COL_500, fill, cr, &mBlend);
 
     const float x0 = mTrackBounds.L, w = mTrackBounds.W();
     for (int i = 0; i < kNumQuick; ++i)
     {
       const float x = x0 + w * i / (kNumQuick - 1.f);
-      g.FillRect(COL_ACCENT, IRECT(x - 1.f, mTrackBounds.T - 3.f, x + 1.f, mTrackBounds.T));
-      g.FillRect(COL_ACCENT, IRECT(x - 1.f, mTrackBounds.B, x + 1.f, mTrackBounds.B + 3.f));
+      g.FillRect(COL_900, IRECT(x - 1.f, mTrackBounds.T - 3.f, x + 1.f, mTrackBounds.T));
+      g.FillRect(COL_900, IRECT(x - 1.f, mTrackBounds.B, x + 1.f, mTrackBounds.B + 3.f));
     }
   }
   void DrawHandle(IGraphics& g, const IRECT& bounds) override
   {
     const float cx = bounds.MW(), cy = bounds.MH();
-    g.FillCircle(COL_BG, cx, cy, HANDLE_R + HANDLE_RING);
-    g.FillCircle(COL_ACCENT, cx, cy, HANDLE_R);
+    g.FillCircle(COL_100, cx, cy, HANDLE_R + HANDLE_RING);
+    g.FillCircle(COL_900, cx, cy, HANDLE_R);
   }
 };
 
@@ -174,18 +174,18 @@ public:
     const float cr = GetRoundedCornerRadius(mTrackBounds);
     const IRECT tb = horiz ? mTrackBounds.GetHPadded(mHandleSize)
                            : mTrackBounds.GetVPadded(mHandleSize);
-    g.FillRoundRect(COL_TRACK, tb, cr, &mBlend);
+    g.FillRoundRect(COL_300, tb, cr, &mBlend);
     const IRECT fill = horiz
       ? IRECT(tb.L, filledArea.T, std::max(filledArea.R, mTrackBounds.L), filledArea.B)
       : IRECT(filledArea.L, filledArea.T, filledArea.R, tb.B);
-    g.FillRoundRect(COL_HOVER, fill, cr, &mBlend);
+    g.FillRoundRect(COL_500, fill, cr, &mBlend);
   }
 
   void DrawHandle(IGraphics& g, const IRECT& bounds) override
   {
     const float cx = bounds.MW(), cy = bounds.MH();
-    g.FillCircle(COL_BG, cx, cy, HANDLE_R + HANDLE_RING);
-    g.FillCircle(COL_ACCENT, cx, cy, HANDLE_R);
+    g.FillCircle(COL_100, cx, cy, HANDLE_R + HANDLE_RING);
+    g.FillCircle(COL_900, cx, cy, HANDLE_R);
   }
 
 protected:
@@ -240,17 +240,17 @@ protected:
     if (rot == 0.f)
     {
       const IRECT hdr(mRECT.L, mRECT.T, mRECT.R, mRECT.T + kHeaderH);
-      g.DrawText(IText(20, COL_BLACK, FontSemiBold(), EAlign::Near, EVAlign::Middle),
+      g.DrawText(IText(20, COL_900, FontSemiBold(), EAlign::Near, EVAlign::Middle),
                  mHeaderLabel.Get(), IRECT(hdr.L, hdr.T, hdr.MW(), hdr.B));
-      g.DrawText(IText(20, COL_DIM, FontRegular(), EAlign::Far, EVAlign::Middle),
+      g.DrawText(IText(20, COL_700, FontRegular(), EAlign::Far, EVAlign::Middle),
                  ds.Get(), IRECT(hdr.MW(), hdr.T, hdr.R, hdr.B));
     }
     else
     {
       const IRECT hdr(mRECT.L, mRECT.T, mRECT.L + kHeaderW, mRECT.B);
-      g.DrawText(IText(20, COL_BLACK, FontSemiBold(), EAlign::Near, EVAlign::Bottom, rot),
+      g.DrawText(IText(20, COL_900, FontSemiBold(), EAlign::Near, EVAlign::Bottom, rot),
                  mHeaderLabel.Get(), hdr);
-      g.DrawText(IText(20, COL_DIM, FontRegular(), EAlign::Far, EVAlign::Top, rot),
+      g.DrawText(IText(20, COL_700, FontRegular(), EAlign::Far, EVAlign::Top, rot),
                  ds.Get(), hdr);
     }
   }
@@ -306,9 +306,9 @@ protected:
     FormatValue(ds);
 
     const IRECT hdr = TextRect();
-    g.DrawText(IText(20, COL_DIM, FontRegular(), EAlign::Center, EVAlign::Top, 90.f),
+    g.DrawText(IText(20, COL_700, FontRegular(), EAlign::Center, EVAlign::Top, 90.f),
                ds.Get(), IRECT(hdr.L, TrackVisTop(), hdr.R, hdr.B));
-    g.DrawText(IText(20, COL_BLACK, FontSemiBold(), EAlign::Center, EVAlign::Bottom, 90.f),
+    g.DrawText(IText(20, COL_900, FontSemiBold(), EAlign::Center, EVAlign::Bottom, 90.f),
                mHeaderLabel.Get(), hdr);
   }
 };
@@ -330,7 +330,7 @@ public:
   {
     const bool on = GetValue() > 0.5;
     IText t = mStyle.valueText;
-    t.mFGColor = on ? COLOR_WHITE : COL_BLACK;
+    t.mFGColor = on ? COL_100 : COL_900;
     strcpy(t.mFont, FontSemiBold());
     g.DrawText(t, on ? mOnText.Get() : mOffText.Get(), mWidgetBounds, &mBlend);
   }
@@ -345,8 +345,8 @@ public:
   {
     const IRECT b = GetWidgetBounds();
     const bool on = GetValue() > 0.5;
-    const IColor fill = on ? COL_ACCENT
-                     : GetMouseIsOver() ? COL_HOVER : COL_BLOCK;
+    const IColor fill = on ? COL_900
+                     : GetMouseIsOver() ? COL_500 : COL_300;
     g.FillRect(fill, b.GetPadded(-BLOCK_GAP));
     DrawValue(g, false);
   }
@@ -379,7 +379,7 @@ public:
     // Draw the gear slightly smaller than its hit-area rect, keeping it
     // centered on the text cap-height.
     const float r = (mRECT.W() * 0.5f - 2.f) * 0.8f;
-    const IColor col = GetMouseIsOver() ? COL_BLACK : COL_DIM;
+    const IColor col = GetMouseIsOver() ? COL_900 : COL_700;
 
     g.PathClear();
     g.PathTransformReset();
@@ -398,7 +398,7 @@ public:
     g.PathTransformReset();
     g.PathTransformTranslate(cx, cy);
     g.PathCircle(0.f, 0.f, r * 0.30f);
-    g.PathFill(COL_BG);
+    g.PathFill(COL_100);
   }
 
   void OnMouseDown(float x, float y, const IMouseMod& mod) override
@@ -537,7 +537,7 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
   mLayoutFunc = [&](IGraphics* pGraphics)
   {
     pGraphics->AttachCornerResizer(EUIResizerMode::Scale, false);
-    pGraphics->AttachPanelBackground(COL_BG);
+    pGraphics->AttachPanelBackground(COL_100);
     pGraphics->LoadFont("Outfit", OUTFIT_FN);
     pGraphics->LoadFont("Outfit-SemiBold", OUTFIT_SB_FN);
     pGraphics->LoadFont("Outfit-Bold", OUTFIT_BD_FN);
@@ -619,7 +619,7 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
     bindTip(gainR, orm::kTxtTipGain);
 
     SectionTitleControl* presetsTitle = new SectionTitleControl(IRECT(kCol1X, 38, 1050, 60), "PRESETS",
-      IText(20, COL_BLACK, "Outfit-Bold", EAlign::Near, EVAlign::Middle));
+      IText(20, COL_900, "Outfit-Bold", EAlign::Near, EVAlign::Middle));
     pGraphics->AttachControl(presetsTitle);
     presetsTitle->SetTargetRECT(IRECT(kCol1X, 38, kCol1X + 130, 60));
     bindText(orm::kTxtPresets, [presetsTitle](const char* s) { presetsTitle->SetStr(s); presetsTitle->SetDirty(false); });
@@ -694,7 +694,7 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
     bindTip(morphSlider, orm::kTxtTipMorph);
 
     SectionTitleControl* randomTitle = new SectionTitleControl(IRECT(kCol1X, 242, 1050, 268), "RANDOM",
-      IText(20, COL_BLACK, "Outfit-Bold", EAlign::Near, EVAlign::Middle));
+      IText(20, COL_900, "Outfit-Bold", EAlign::Near, EVAlign::Middle));
     pGraphics->AttachControl(randomTitle);
     randomTitle->SetTargetRECT(IRECT(kCol1X, 242, kCol1X + 130, 268));
     bindText(orm::kTxtRandom, [randomTitle](const char* s) { randomTitle->SetStr(s); randomTitle->SetDirty(false); });
@@ -764,7 +764,7 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
     pGraphics->AttachControl(mFadeSlider);
     bindTip(mFadeSlider, orm::kTxtTipFade);
 
-    IText ormText(32, COL_BLACK, "Outfit-Bold", EAlign::Near, EVAlign::Bottom);
+    IText ormText(32, COL_900, "Outfit-Bold", EAlign::Near, EVAlign::Bottom);
     pGraphics->AttachControl(new ITextControl(IRECT(kCol1X, 552, kCol1X + 120, 586), "ORM", ormText));
     // Align the gear and version to the actual ink box of "ORM" so the gear
     // bottom sits on the baseline rather than on the descender line.
@@ -775,9 +775,9 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
     pGraphics->AttachControl(new SettingsMenuButton(IRECT(gearL, ormInk.T, gearR, ormInk.B),
       [this](IControl* caller, float x, float y) { OpenSettingsMenu(caller, x, y); }));
     pGraphics->AttachControl(new ITextControl(IRECT(kCol1X, 584, 1060, 618), "BandPass",
-      IText(32, COL_BLACK, "Outfit-Bold", EAlign::Near, EVAlign::Middle)));
+      IText(32, COL_900, "Outfit-Bold", EAlign::Near, EVAlign::Middle)));
     pGraphics->AttachControl(new ITextControl(IRECT(gearR + 8.f, 549, 1060, 583), "v" PLUG_VERSION_STR,
-      IText(20, COL_FAINT, "Outfit", EAlign::Near, EVAlign::Bottom)));
+      IText(20, COL_500, "Outfit", EAlign::Near, EVAlign::Bottom)));
 
     pGraphics->EnableTooltips(true);
     ApplyLanguage();

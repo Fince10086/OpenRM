@@ -114,16 +114,16 @@ public:
   {
     const IRECT b = GetWidgetBounds();
     const bool pressed = GetValue() > 0.5;
-    const IColor fill = mDragTarget ? COL_HOVER
-                      : pressed     ? COL_ACCENT
-                      : GetMouseIsOver() ? COL_HOVER : COL_BLOCK;
+    const IColor fill = mDragTarget ? COL_500
+                      : pressed     ? COL_900
+                      : GetMouseIsOver() ? COL_500 : COL_300;
     g.FillRect(fill, b.GetPadded(-BLOCK_GAP));
     IText t = mStyle.valueText;
-    t.mFGColor = pressed ? COLOR_WHITE : COL_BLACK;
+    t.mFGColor = pressed ? COL_100 : COL_900;
     g.DrawText(t, mLabelStr.Get(), b);
     if (mDragging)
     {
-      g.FillRect(IColor(70, 0, 0, 0), b);
+      g.FillRect(IColor(70, 26, 25, 22), b);
     }
   }
 
