@@ -992,6 +992,7 @@ void ORMBandPass::SetSlopeFromMenu(int slopeParamIdx, int slopeDb)
   mFading = false;
   MaybePushGestureUndo();
   SetParamFromEditor(slopeParamIdx, (double) idx);
+  MirrorLinkedParams(slopeParamIdx);
   RefreshAfterEdit();
 }
 

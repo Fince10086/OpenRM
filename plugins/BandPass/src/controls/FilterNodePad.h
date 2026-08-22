@@ -23,7 +23,6 @@ public:
     std::function<void(int slopeDb)> editSlope;
   };
 
-  // Matches ISpectrumSender<2> (MAX_FFT_SIZE = 4096)
   using TDataPacket = std::array<float, 4096>;
 
   enum MsgTags
@@ -42,8 +41,6 @@ public:
     SetTextEntryLength(20);
   }
 
-  // Receives the spectrum packets pushed by ISpectrumSender<2> (ch0 = dry input,
-  // ch1 = processed output) plus the sample rate / FFT size configuration messages.
   void OnMsgFromDelegate(int msgTag, int dataSize, const void* pData) override
   {
     IByteStream stream(pData, dataSize);
@@ -55,9 +52,6 @@ public:
       const int nBins = std::min((int) d.vals[0].size(), std::max(mNumBins, 0));
       if (nBins <= 0) return;
 
-      // Time smoothing: attack is fast, release is slow, so fast transients stay
-      // visible while steady-state (and noise) doesn't flicker. Coeffs are
-      // one-pole exp(-updatePeriod / tau); updatePeriod = hop = FFT/overlap (4x).
       const double updatePeriod = (double) nBins * 2.0 / 4.0 / std::max(mSampleRate, 1.0);
       mAttackCoeff  = (float) std::exp(-updatePeriod / 0.003);
       mReleaseCoeff = (float) std::exp(-updatePeriod / 0.08);
@@ -224,12 +218,6 @@ public:
     g.DrawText(t, mSideLabel.Get(), r);
   }
 
-  // Overlays the received spectra onto the plot area. The pad's X axis is the
-  // (log) frequency of param 0, so the same mapping used by DrawTrack places the
-  // FFT bins on screen. Y maps amplitude -90..0 dBFS over the plot height.
-  // ch0 (dry input) is drawn as a thin light-grey line, ch1 (band-pass wet output)
-  // as a slightly thicker dark-grey line. Points are joined with a Catmull-Rom to
-  // Bezier interpolation (tension 0.6) to remove the jagged polyline look.
   void DrawSpectrum(IGraphics& g)
   {
     const IRECT tb = PlotRect();
@@ -241,7 +229,7 @@ public:
 
     struct Pt { float x, y; };
 
-    auto drawLine = [&](const std::vector<float>& spec, const IColor& col, float width)
+    auto drawFill = [&](const std::vector<float>& spec, const IColor& topColor, const IColor& bottomColor)
     {
       // Logarithmic band aggregation: fold the linear FFT bins into a fixed
       // number of log-spaced bands (max per band keeps peaks), which removes
@@ -303,11 +291,17 @@ public:
         for (int i = 1; i < (int) pts.size(); ++i)
           g.PathLineTo(pts[i].x, pts[i].y);
       }
-      g.PathStroke(IPattern(col), width);
+      g.PathLineTo(pts.back().x, tb.B);
+      g.PathLineTo(pts[0].x, tb.B);
+      g.PathClose();
+
+      IPattern fill = IPattern::CreateLinearGradient(tb, EDirection::Vertical,
+                       { IColorStop(topColor, 0.f), IColorStop(bottomColor, 1.f) });
+      g.PathFill(fill);
     };
 
-    drawLine(mSpectrumIn,  COL_FAINT,  1.f);   // dry input (light grey)
-    drawLine(mSpectrumOut, COL_ACCENT, 1.5f);  // band-pass wet output (dark grey)
+    drawFill(mSpectrumIn,  IColor(110, 153, 153, 153), IColor(0, 153, 153, 153)); // dry input (light grey)
+    drawFill(mSpectrumOut, IColor(170,  56,  56,  56), IColor(0,  56,  56,  56)); // band-pass wet output (dark grey)
   }
 
 private:
