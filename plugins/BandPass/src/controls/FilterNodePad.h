@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <cctype>
 
@@ -17,6 +18,7 @@ public:
   struct Hooks
   {
     std::function<void(int cornerId, double value)> editCorner;
+    std::function<void(int slopeDb)> editSlope;
   };
 
   FilterNodePad(const IRECT& bounds, const std::initializer_list<int>& params,
@@ -32,17 +34,25 @@ public:
   void SetSideLabel(const char* s) { mSideLabel.Set(s); SetDirty(false); }
   void SetCenterPrefix(const char* s) { mCenterPrefix.Set(s); SetDirty(false); }
   void SetBwPrefix(const char* s) { mBwPrefix.Set(s); SetDirty(false); }
+  void SetSlopePrefix(const char* s) { mSlopePrefix.Set(s); SetDirty(false); }
+  void SetSlopeIndex(int idx) { mSlopeIndex = idx; SetDirty(false); }
 
   void Draw(IGraphics& g) override
   {
     IVXYPadControl::Draw(g);
     DrawCorner(g, kCornerCenter);
     DrawCorner(g, kCornerBw);
+    DrawSlope(g);
     DrawSideLabel(g);
   }
 
   void OnMouseDown(float x, float y, const IMouseMod& mod) override
   {
+    if (mSlopeRect.Contains(x, y))
+    {
+      OpenSlopeMenu();
+      return;
+    }
     for (int id : { kCornerCenter, kCornerBw })
     {
       if (CornerValueRect(id).Contains(x, y))
@@ -135,6 +145,7 @@ public:
     if (mTargetRECT.Contains(x, y)) return true;
     for (int id : { kCornerCenter, kCornerBw })
       if (CornerRect(id).Contains(x, y)) return true;
+    if (mSlopeRect.Contains(x, y)) return true;
     if (SideLabelRect().Contains(x, y)) return true;
     return false;
   }
@@ -205,6 +216,56 @@ private:
 
   IRECT CornerValueRect(int id) const { return mCornerValueRect[id == kCornerBw]; }
 
+  // ---- SLOPE dropdown (centred between CENTER and BANDWIDTH) ----
+
+  IRECT SlopeRect() const
+  {
+    const IRECT& w = mWidgetBounds;
+    return IRECT(w.L + kCornerW, w.T - kSideH, w.R - kCornerW, w.T + kCornerTextH);
+  }
+
+  void DrawSlope(IGraphics& g)
+  {
+    const IRECT r = SlopeRect();
+    const IText t(20, COL_BLACK, FontSemiBold(), EAlign::Center, EVAlign::Middle);
+
+    WDL_String value; GetSlopeValue(value);
+    IRECT m1, m2;
+    g.MeasureText(t, mSlopePrefix.Get(), m1);
+    g.MeasureText(t, value.Get(), m2);
+    const float totalW = m1.W() + LABEL_VALUE_GAP + m2.W();
+    const float x0 = r.MW() - totalW * 0.5f;
+    mSlopeRect = IRECT(x0, r.T, x0 + totalW, r.B);
+    g.DrawText(t, mSlopePrefix.Get(), IRECT(x0, r.T, x0 + m1.W(), r.B));
+    g.DrawText(t, value.Get(), IRECT(x0 + m1.W() + LABEL_VALUE_GAP, r.T, x0 + totalW, r.B));
+  }
+
+  void GetSlopeValue(WDL_String& out) const
+  {
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%d dB/oct", kSlopeDb[std::clamp(mSlopeIndex, 0, 3)]);
+    out.Set(buf);
+  }
+
+  void OpenSlopeMenu()
+  {
+    if (!GetUI()) return;
+    mSlopeMenu.Clear();
+    mSlopeMenu.SetFunction([this](IPopupMenu* menu) {
+      const int idx = menu ? menu->GetChosenItemIdx() : -1;
+      if (idx < 0 || idx >= 4) return;
+      if (mHooks.editSlope) mHooks.editSlope(kSlopeDb[idx]);
+    });
+    for (int i = 0; i < 4; ++i)
+    {
+      char buf[32];
+      std::snprintf(buf, sizeof(buf), "%d dB/oct", kSlopeDb[i]);
+      mSlopeMenu.AddItem(buf);
+    }
+    mSlopeMenu.CheckItemAlone(std::clamp(mSlopeIndex, 0, 3));
+    GetUI()->CreatePopupMenu(*this, mSlopeMenu, mSlopeRect, kNoValIdx);
+  }
+
   void GetCornerValue(int id, WDL_String& out, bool withUnit) const
   {
     char buf[32];
@@ -251,8 +312,12 @@ private:
   WDL_String mSideLabel;
   WDL_String mCenterPrefix { "CENTER" };
   WDL_String mBwPrefix { "BANDWIDTH" };
+  WDL_String mSlopePrefix { "SLOPE" };
   IRECT mCornerValueRect[2];
+  IRECT mSlopeRect;
+  IPopupMenu mSlopeMenu;
   int   mEditingCorner = -1;
+  int   mSlopeIndex = kSlopeDefaultIdx;
 };
 
 END_IGRAPHICS_NAMESPACE

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cmath>
 #include <algorithm>
 #include <atomic>
@@ -49,12 +50,6 @@ private:
     double mA1 = 0.0, mA2 = 0.0, mA3 = 0.0, mK = 0.0;
 };
 
-inline double octaveToQ(double oct) noexcept
-{
-    const double w = std::pow(2.0, oct * 0.5) - std::pow(2.0, -oct * 0.5);
-    return 1.0 / std::max(w, 1e-3);
-}
-
 template <typename T>
 class ParamMailbox
 {
@@ -82,39 +77,86 @@ private:
     T mSnapshot {};
 };
 
+// One channel of the band-pass: two independent Butterworth filters in series,
+// a high-pass at LOWCUT followed by a low-pass at HIGHCUT. Each edge has
+// M = 2*(slopeDb/12) poles (12/24/48/96 dB/oct -> 2/4/8/16 poles), realized as
+// M/2 cascaded 2nd-order TPT SVF sections whose Q values come from the
+// Butterworth pole angles: Q_k = 1/(2*cos(theta_k)), theta_k = (2k-1)*pi/(2M).
+// This is a true Butterworth response (unlike an equal-Q cascade): maximally
+// flat passband, -3 dB exactly at the cut, and 6M dB/oct rolloff — one octave
+// past the cut attenuates by the selected slope value, independent of bandwidth.
 class ChannelChain
 {
 public:
+    static constexpr int kMaxSections = 8; // 96 dB/oct per edge = 16 poles = 8 sections
+
     void prepare(double sr) noexcept
     {
         mSampleRate = sr;
-        bp.prepare(sr);
+        for (auto& f : mHp) f.prepare(sr);
+        for (auto& f : mLp) f.prepare(sr);
         reset();
     }
-    void reset() noexcept { bp.reset(); }
-
-    void setParams(double bpHz, double bwOct) noexcept
+    void reset() noexcept
     {
-        mQ = octaveToQ(bwOct);
-        mBandNorm = 1.0 / mQ;
-        bp.setParams(bpHz, mQ);
+        for (auto& f : mHp) f.reset();
+        for (auto& f : mLp) f.reset();
     }
 
-    void setFreq(double bpHz) noexcept { bp.setParams(bpHz, mQ); }
+    // lowHz: LOWCUT (high-pass cutoff), highHz: HIGHCUT (low-pass cutoff),
+    // slopeDb: rolloff in dB/oct (12/24/48/96 -> 1/2/4/8 sections per edge).
+    void setParams(double lowHz, double highHz, double slopeDb) noexcept
+    {
+        const int sections = std::clamp((int) std::lround(slopeDb / 12.0), 1, kMaxSections);
+        if (sections != mSections)
+        {
+            mSections = sections;
+            for (auto& f : mHp) f.reset();
+            for (auto& f : mLp) f.reset();
+        }
+        const int poles = 2 * sections;
+        for (int k = 0; k < sections; ++k)
+        {
+            const double theta = (2.0 * k + 1.0) * M_PI / (2.0 * poles);
+            mQ[k] = 1.0 / (2.0 * std::cos(theta));
+            mHp[k].setParams(lowHz, mQ[k]);
+            mLp[k].setParams(highHz, mQ[k]);
+        }
+    }
+
+    // Agitation: per-sample cutoff update, keeping the per-section Q values.
+    void setFreqs(double lowHz, double highHz) noexcept
+    {
+        for (int k = 0; k < mSections; ++k)
+        {
+            mHp[k].setParams(lowHz, mQ[k]);
+            mLp[k].setParams(highHz, mQ[k]);
+        }
+    }
 
     inline float process(float x) noexcept
     {
-        float lo, b, h;
-        bp.process(x, lo, b, h);
-        return b * static_cast<float>(mBandNorm);
+        for (int k = 0; k < mSections; ++k)
+        {
+            float lo, b, h;
+            mHp[k].process(x, lo, b, h);
+            x = h;
+        }
+        for (int k = 0; k < mSections; ++k)
+        {
+            float lo, b, h;
+            mLp[k].process(x, lo, b, h);
+            x = lo;
+        }
+        return x;
     }
-
-    SvfFilter bp;
 
 private:
     double mSampleRate = 44100.0;
-    double mQ = 1.0;
-    double mBandNorm = 1.0;
+    int    mSections = 1;
+    double mQ[kMaxSections] = {};
+    std::array<SvfFilter, kMaxSections> mHp;
+    std::array<SvfFilter, kMaxSections> mLp;
 };
 
 class BandPassCore
@@ -135,6 +177,8 @@ public:
         bool   agOn     = false;
         float  agAmount = 0.1f;
         double agRate   = 1.0;
+        double slopeDbL = 96.0; // L rolloff in dB/oct: 12/24/48/96
+        double slopeDbR = 96.0; // R rolloff in dB/oct: 12/24/48/96
     };
 
     BandPassCore() = default;
@@ -146,6 +190,8 @@ public:
         mChainR.prepare(sampleRate);
         mSmFreqL = mParams.freqL; mSmBwL = mParams.bwL;
         mSmFreqR = mParams.freqR; mSmBwR = mParams.bwR;
+        mHalfBwL = std::pow(2.0, mSmBwL * 0.5);
+        mHalfBwR = std::pow(2.0, mSmBwR * 0.5);
         mAgPhase = 0.0;
         reset();
     }
@@ -159,6 +205,8 @@ public:
         mParams.gainR = std::clamp(p.gainR, 0.0f, 2.0f);
         mParams.mix   = std::clamp(p.mix, 0.0f, 1.0f);
         mParams.agAmount = std::clamp(p.agAmount, 0.0f, 1.0f);
+        mSlopeDbL = p.slopeDbL;
+        mSlopeDbR = p.slopeDbR;
     }
 
     const Params& getParams() const noexcept { return mParams; }
@@ -180,8 +228,11 @@ public:
             mSmBwR   += (mParams.bwR   - mSmBwR)   * coef;
         }
 
-        mChainL.setParams(mSmFreqL, mSmBwL);
-        mChainR.setParams(mSmFreqR, mSmBwR);
+        mHalfBwL = std::pow(2.0, mSmBwL * 0.5);
+        mHalfBwR = std::pow(2.0, mSmBwR * 0.5);
+        mChainL.setParams(mSmFreqL / mHalfBwL, mSmFreqL * mHalfBwL, mSlopeDbL);
+        mChainR.setParams(mSmFreqR / mHalfBwR, mSmFreqR * mHalfBwR,
+                          mParams.linked ? mSlopeDbL : mSlopeDbR);
     }
 
     void process(const float* const inL, const float* const inR,
@@ -210,8 +261,8 @@ public:
             {
                 const double fL = std::clamp(mSmFreqL * std::exp2(modOct), 20.0, mSampleRate * 0.49);
                 const double fR = std::clamp(mSmFreqR * std::exp2(modOct), 20.0, mSampleRate * 0.49);
-                mChainL.setFreq(fL);
-                mChainR.setFreq(fR);
+                mChainL.setFreqs(fL / mHalfBwL, fL * mHalfBwL);
+                mChainR.setFreqs(fR / mHalfBwR, fR * mHalfBwR);
             }
             wetL = mChainL.process(xl) * gL;
             wetR = mChainR.process(xr) * gR;
@@ -240,7 +291,7 @@ public:
             if (modOct != 0.0)
             {
                 const double f = std::clamp(mSmFreqL * std::exp2(modOct), 20.0, mSampleRate * 0.49);
-                mChainL.setFreq(f);
+                mChainL.setFreqs(f / mHalfBwL, f * mHalfBwL);
             }
             const float wet = mChainL.process(in[i]) * g;
             out[i] = in[i] * dryGain + wet * wetGain;
@@ -254,9 +305,11 @@ private:
     Params mParams;
     ChannelChain mChainL, mChainR;
     double mAgPhase = 0.0;
+    double mSlopeDbL = 96.0, mSlopeDbR = 96.0;
 
     double mSmFreqL = 1000.0, mSmBwL = 1.0;
     double mSmFreqR = 1000.0, mSmBwR = 1.0;
+    double mHalfBwL = 1.0, mHalfBwR = 1.0;
 };
 
 }

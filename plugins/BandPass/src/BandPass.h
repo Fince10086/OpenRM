@@ -24,6 +24,8 @@ enum EParams
   kAgOn,
   kAgAmount,
   kAgRate,
+  kSlopeL,
+  kSlopeR,
   kNumParams
 };
 
@@ -72,7 +74,7 @@ private:
   int mCurrentPreset = 0;
   double mFadePos = 0.0;
   IVSliderControl* mFadeSlider = nullptr;
-  double mFadeTime = 0.0;
+  double mFadeTime = 0.25;
   bool mFading = false;
   bool mInFadeApply = false;
   double mFadeStartTime = 0.0;
@@ -106,6 +108,7 @@ private:
   void EditCorner(int kFreq, int kBw, int cornerId, double value);
   void EditBand(int kFreq, int kBw, double lowNorm, double highNorm);
   void ClampAndSet(int kFreq, int kBw, double centerHz, double bw);
+  void SetSlopeFromMenu(int slopeParamIdx, int slopeDb);
 
   ParamSnapshot Snapshot() const;
   void ApplySnapshot(const ParamSnapshot& s);

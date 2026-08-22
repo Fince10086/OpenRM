@@ -13,6 +13,7 @@
 #include <chrono>
 #include <cmath>
 #include <algorithm>
+#include <string>
 
 static IVStyle MakeORMStyle()
 {
@@ -412,10 +413,10 @@ private:
 ORMBandPass::ORMBandPass(const InstanceInfo& info)
 : Plugin(info, MakeConfig(kNumParams, 1))
 {
-  GetParam(kFreqL)->InitDouble("FreqL", 1000., 20., 20000., 0.01, "Hz", 0, "", IParam::ShapeExp());
+  GetParam(kFreqL)->InitDouble("FreqL", std::sqrt(300. * 4000.), 20., 20000., 0.01, "Hz", 0, "", IParam::ShapeExp());
   GetParam(kBwL)  ->InitDouble("BW L", 1.41, 1., 31., 0.01, "x", 0, "", IParam::ShapeExp());
   GetParam(kGainL)->InitDouble("Gain L", 0., -96., 12., 0.01, "");
-  GetParam(kFreqR)->InitDouble("FreqR", 20., 20., 20000., 0.01, "Hz", 0, "", IParam::ShapeExp());
+  GetParam(kFreqR)->InitDouble("FreqR", std::sqrt(300. * 4000.), 20., 20000., 0.01, "Hz", 0, "", IParam::ShapeExp());
   GetParam(kBwR)  ->InitDouble("BW R", 1.41, 1., 31., 0.01, "x", 0, "", IParam::ShapeExp());
   GetParam(kGainR)->InitDouble("Gain R", 0., -96., 12., 0.01, "");
   GetParam(kLink) ->InitBool("Link", false);
@@ -423,6 +424,10 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
   GetParam(kAgOn) ->InitBool("Agitation", false);
   GetParam(kAgAmount)->InitDouble("Ag Amount", 0.1, 0., 1., 0.01, "");
   GetParam(kAgRate)->InitDouble("Ag Speed", 1., 0.01, 60., 0.01, "", 0, "", IParam::ShapeExp());
+  GetParam(kSlopeL)->InitEnum("Slope L", kSlopeDefaultIdx,
+    { "12 dB/oct", "24 dB/oct", "48 dB/oct", "96 dB/oct" });
+  GetParam(kSlopeR)->InitEnum("Slope R", kSlopeDefaultIdx,
+    { "12 dB/oct", "24 dB/oct", "48 dB/oct", "96 dB/oct" });
 
   for (int i = 0; i < kNumPresets; ++i)
   {
@@ -563,9 +568,10 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
     constexpr float kSliderH   = 42.f;
     constexpr float kPanelR    = kCol2X + kBtnW;
 
-    auto padHooks = [&](int kF, int kB) -> FilterNodePad::Hooks {
+    auto padHooks = [&](int kF, int kB, int kSlope) -> FilterNodePad::Hooks {
       return FilterNodePad::Hooks{
         [this, kF, kB](int id, double v) { EditCorner(kF, kB, id, v); },
+        [this, kSlope](int slopeDb) { SetSlopeFromMenu(kSlope, slopeDb); },
       };
     };
 
@@ -577,11 +583,12 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
       };
     };
 
-    mPadL = new FilterNodePad(IRECT(20, 38, 668, 218), { kFreqL, kBwL }, "LEFT", style, padHooks(kFreqL, kBwL));
+    mPadL = new FilterNodePad(IRECT(20, 38, 668, 218), { kFreqL, kBwL }, "LEFT", style, padHooks(kFreqL, kBwL, kSlopeL));
     pGraphics->AttachControl(mPadL);
     bindText(orm::kTxtLeft, [this](const char* s) { mPadL->SetSideLabel(s); });
     bindText(orm::kTxtCenter, [this](const char* s) { mPadL->SetCenterPrefix(s); });
     bindText(orm::kTxtBandwidth, [this](const char* s) { mPadL->SetBwPrefix(s); });
+    bindText(orm::kTxtSlope, [this](const char* s) { mPadL->SetSlopePrefix(s); });
     bindTip(mPadL, orm::kTxtTipPad);
     mBandL = new BandRangeSlider(IRECT(20, 224, 668, 270), { kFreqL, kBwL }, bandHooks(kFreqL, kBwL));
     pGraphics->AttachControl(mBandL);
@@ -589,11 +596,12 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
     bindText(orm::kTxtHighCut, [this](const char* s) { mBandL->SetHighPrefix(s); });
     bindTip(mBandL, orm::kTxtTipBand);
 
-    mPadR = new FilterNodePad(IRECT(20, 296, 668, 476), { kFreqR, kBwR }, "RIGHT", style, padHooks(kFreqR, kBwR));
+    mPadR = new FilterNodePad(IRECT(20, 296, 668, 476), { kFreqR, kBwR }, "RIGHT", style, padHooks(kFreqR, kBwR, kSlopeR));
     pGraphics->AttachControl(mPadR);
     bindText(orm::kTxtRight, [this](const char* s) { mPadR->SetSideLabel(s); });
     bindText(orm::kTxtCenter, [this](const char* s) { mPadR->SetCenterPrefix(s); });
     bindText(orm::kTxtBandwidth, [this](const char* s) { mPadR->SetBwPrefix(s); });
+    bindText(orm::kTxtSlope, [this](const char* s) { mPadR->SetSlopePrefix(s); });
     bindTip(mPadR, orm::kTxtTipPad);
     mBandR = new BandRangeSlider(IRECT(20, 482, 668, 528), { kFreqR, kBwR }, bandHooks(kFreqR, kBwR));
     pGraphics->AttachControl(mBandR);
@@ -671,7 +679,8 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
     ORMSlider* morphSlider = new ORMSlider(IRECT(kCol1X, 196, kPanelR, 238),
       [this](IControl* pCtrl) {
         MaybePushGestureUndo();
-        mFadeTime = pCtrl->GetValue(0) * 60.;
+        const double n = pCtrl->GetValue(0);
+        mFadeTime = (n <= 0.) ? 0. : 0.01 * std::pow(6000., n);
       }, "MORPH", style);
     morphSlider->SetValueFormatter([this](WDL_String& ds) {
       char buf[32];
@@ -679,6 +688,8 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
       ds.Set(buf);
     });
     pGraphics->AttachControl(morphSlider);
+    morphSlider->SetValue(std::log(0.25 / 0.01) / std::log(6000.));
+    morphSlider->SetDirty(false);
     bindText(orm::kTxtMorph, [morphSlider](const char* s) { morphSlider->SetHeaderLabel(s); });
     bindTip(morphSlider, orm::kTxtTipMorph);
 
@@ -847,6 +858,8 @@ orm::BandPassCore::Params ORMBandPass::CollectParams() const
   p.agOn   = GetParam(kAgOn)->Value() > 0.5;
   p.agAmount = static_cast<float>(GetParam(kAgAmount)->Value());
   p.agRate = 1.0 / GetParam(kAgRate)->Value(); // UI is seconds (period), core expects Hz
+  p.slopeDbL = kSlopeDb[std::clamp(GetParam(kSlopeL)->Int(), 0, 3)];
+  p.slopeDbR = kSlopeDb[std::clamp(GetParam(kSlopeR)->Int(), 0, 3)];
   return p;
 }
 
@@ -920,12 +933,25 @@ void ORMBandPass::ClampAndSet(int kFreq, int kBw, double centerHz, double bw)
   RefreshAfterEdit();
 }
 
+void ORMBandPass::SetSlopeFromMenu(int slopeParamIdx, int slopeDb)
+{
+  int idx = kSlopeDefaultIdx;
+  for (int i = 0; i < 4; ++i)
+    if (kSlopeDb[i] == slopeDb) { idx = i; break; }
+  if (GetParam(slopeParamIdx)->Int() == idx) return;
+  mFading = false;
+  MaybePushGestureUndo();
+  SetParamFromEditor(slopeParamIdx, (double) idx);
+  RefreshAfterEdit();
+}
+
 void ORMBandPass::UpdatePads()
 {
   if (mPadL)
   {
     mPadL->SetValueFromDelegate(GetParam(kFreqL)->GetNormalized(), 0);
     mPadL->SetValueFromDelegate(GetParam(kBwL)->GetNormalized(), 1);
+    mPadL->SetSlopeIndex(GetParam(kSlopeL)->Int());
     mPadL->SetDirty(false);
   }
   if (mBandL)
@@ -938,6 +964,7 @@ void ORMBandPass::UpdatePads()
   {
     mPadR->SetValueFromDelegate(GetParam(kFreqR)->GetNormalized(), 0);
     mPadR->SetValueFromDelegate(GetParam(kBwR)->GetNormalized(), 1);
+    mPadR->SetSlopeIndex(GetParam(kSlopeR)->Int());
     mPadR->SetDirty(false);
   }
   if (mBandR)
@@ -1141,8 +1168,8 @@ void ORMBandPass::ReadPresetFileFrom(const std::string& path, std::string& err)
 
   if ((int) data.presets.size() != kNumPresets) { err = "Preset count mismatch (expected 24)"; return; }
   for (const auto& e : data.presets)
-    if ((int) e.size() != kNumParams)           { err = "Preset parameter count mismatch (expected 11)"; return; }
-  if ((int) data.currentValues.size() != kNumParams) { err = "Current values count mismatch (expected 11)"; return; }
+    if ((int) e.size() != kNumParams)           { err = "Preset parameter count mismatch (expected " + std::to_string(kNumParams) + ")"; return; }
+  if ((int) data.currentValues.size() != kNumParams) { err = "Current values count mismatch (expected " + std::to_string(kNumParams) + ")"; return; }
 
   PushUndo();
   mFading = false;
@@ -1216,6 +1243,7 @@ void ORMBandPass::CopyLtoR()
   SetParamFromEditor(kFreqR, GetParam(kFreqL)->Value());
   SetParamFromEditor(kBwR,   GetParam(kBwL)->Value());
   SetParamFromEditor(kGainR, GetParam(kGainL)->Value());
+  SetParamFromEditor(kSlopeR, GetParam(kSlopeL)->Value());
   RefreshAfterEdit();
 }
 
@@ -1226,6 +1254,7 @@ void ORMBandPass::CopyRtoL()
   SetParamFromEditor(kFreqL, GetParam(kFreqR)->Value());
   SetParamFromEditor(kBwL,   GetParam(kBwR)->Value());
   SetParamFromEditor(kGainL, GetParam(kGainR)->Value());
+  SetParamFromEditor(kSlopeL, GetParam(kSlopeR)->Value());
   RefreshAfterEdit();
 }
 
@@ -1233,13 +1262,15 @@ void ORMBandPass::FlipLR()
 {
   mFading = false;
   PushUndo();
-  const double fL = GetParam(kFreqL)->Value(), bL = GetParam(kBwL)->Value(), gL = GetParam(kGainL)->Value();
+  const double fL = GetParam(kFreqL)->Value(), bL = GetParam(kBwL)->Value(), gL = GetParam(kGainL)->Value(), sL = GetParam(kSlopeL)->Value();
   SetParamFromEditor(kFreqL, GetParam(kFreqR)->Value());
   SetParamFromEditor(kBwL,   GetParam(kBwR)->Value());
   SetParamFromEditor(kGainL, GetParam(kGainR)->Value());
+  SetParamFromEditor(kSlopeL, GetParam(kSlopeR)->Value());
   SetParamFromEditor(kFreqR, fL);
   SetParamFromEditor(kBwR,   bL);
   SetParamFromEditor(kGainR, gL);
+  SetParamFromEditor(kSlopeR, sL);
   RefreshAfterEdit();
 }
 
@@ -1253,9 +1284,11 @@ void ORMBandPass::MirrorLinkedParams(int paramIdx)
     case kFreqL: mirror = kFreqR; break;
     case kBwL:   mirror = kBwR;   break;
     case kGainL: mirror = kGainR; break;
+    case kSlopeL: mirror = kSlopeR; break;
     case kFreqR: mirror = kFreqL; break;
     case kBwR:   mirror = kBwL;   break;
     case kGainR: mirror = kGainL; break;
+    case kSlopeR: mirror = kSlopeL; break;
     default: return;
   }
 
@@ -1274,9 +1307,9 @@ ParamSnapshot ORMBandPass::MixSnapshots(const ParamSnapshot& a, const ParamSnaps
   for (int i = 0; i < kNumParams; ++i)
   {
     const IParam* p = GetParam(i);
-    const double va = p->FromNormalized(p->ToNormalized(a[i]));
-    const double vb = p->FromNormalized(p->ToNormalized(b[i]));
-    out[i] = va + (vb - va) * t;
+    const double na = p->ToNormalized(a[i]);
+    const double nb = p->ToNormalized(b[i]);
+    out[i] = p->FromNormalized(na + (nb - na) * t);
   }
   return out;
 }

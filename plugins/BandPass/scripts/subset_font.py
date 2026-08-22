@@ -71,7 +71,9 @@ def main():
 
     for suffix, wght, outfit_name in WEIGHTS:
         cjk = build_cjk_part(source, wght, charset)
-        fd, tmp_path = tempfile.mkstemp(suffix=".ttf", dir=out_dir)
+        # 临时文件放系统临时目录: 若放进 out_dir, 构建时删除会触发沙箱的
+        # 批量删除保护导致 make 失败; 系统临时目录不受影响。
+        fd, tmp_path = tempfile.mkstemp(suffix=".ttf")
         os.close(fd)
         cjk.save(tmp_path)
         merged = Merger().merge([os.path.join(outfit_dir, outfit_name), tmp_path])

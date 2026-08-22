@@ -33,4 +33,9 @@ enum EPadCorner : int
   kCornerHigh   = 7
 };
 
+// Selectable band-pass rolloff (slope) presets in dB/oct. Each option equals
+// 12 dB/oct per cascaded 2nd-order SVF stage. Default is 96 dB/oct.
+constexpr int kSlopeDb[4] = { 12, 24, 48, 96 };
+constexpr int kSlopeDefaultIdx = 3; // 96 dB/oct
+
 } }
