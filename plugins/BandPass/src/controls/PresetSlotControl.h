@@ -110,33 +110,20 @@ public:
     SetDirty(false);
   }
 
-  // Flat mode: draw without own border/background so a shared grid frame can
-  // wrap several slots into one outlined block (see PresetGridFrame).
-  void SetFlatGrid(bool on) { mFlatGrid = on; }
-
   void Draw(IGraphics& g) override
   {
-    if (!mFlatGrid)
-    {
-      IVButtonControl::Draw(g);
-    }
-    else
-    {
-      const IRECT b = GetWidgetBounds();
-      const bool pressed = GetValue() > 0.5;
-      if (pressed || GetMouseIsOver())
-        g.FillRect(pressed ? COL_BLACK : COL_HOVER, b);
-      IText t = mStyle.valueText;
-      t.mFGColor = pressed ? COLOR_WHITE : COL_BLACK;
-      g.DrawText(t, mLabelStr.Get(), b);
-    }
+    const IRECT b = GetWidgetBounds();
+    const bool pressed = GetValue() > 0.5;
+    const IColor fill = mDragTarget ? COL_HOVER
+                      : pressed     ? COL_ACCENT
+                      : GetMouseIsOver() ? COL_HOVER : COL_BLOCK;
+    g.FillRect(fill, b.GetPadded(-BLOCK_GAP));
+    IText t = mStyle.valueText;
+    t.mFGColor = pressed ? COLOR_WHITE : COL_BLACK;
+    g.DrawText(t, mLabelStr.Get(), b);
     if (mDragging)
     {
-      g.FillRect(IColor(70, 0, 0, 0), GetWidgetBounds());
-    }
-    if (mDragTarget)
-    {
-      g.DrawRect(IColor(255, 0, 0, 0), GetWidgetBounds(), nullptr, 3.f);
+      g.FillRect(IColor(70, 0, 0, 0), b);
     }
   }
 
@@ -171,7 +158,6 @@ private:
   bool mPotentialDrag = false;
   bool mDragging = false;
   bool mDragTarget = false;
-  bool mFlatGrid = false;
   float mDownX = 0.f, mDownY = 0.f;
   IPopupMenu mMenu;
 };

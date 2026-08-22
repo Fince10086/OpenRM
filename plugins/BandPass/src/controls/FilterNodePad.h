@@ -98,8 +98,7 @@ public:
   void DrawTrack(IGraphics& g) override
   {
     const IRECT tb = PlotRect();
-    // Typical EQ frequency grid: every 10 Hz below 100, every 100 Hz up to
-    // 1k, every 1 kHz above that (log-spaced decades).
+    g.FillRect(COL_BLOCK, tb);
     const IParam* pf = GetParam(0);
     for (int decade = 1; decade <= 10000; decade *= 10)
     {
@@ -108,20 +107,17 @@ public:
         const double f = m * decade;
         if (f < 20. || f > 20000.) continue;
         const float x = tb.L + (float) pf->ToNormalized(f) * tb.W();
-        g.DrawLine(COL_GRID, x, tb.T, x, tb.B, nullptr, 1.f);
+        g.DrawLine(COL_BG, x, tb.T, x, tb.B, nullptr, 1.f);
       }
     }
-    g.DrawRect(COL_BLACK, tb, nullptr, 1.f);
   }
 
-  void DrawHandle(IGraphics& g, const IRECT& trackBounds, const IRECT& handleBounds) override
+  void DrawHandle(IGraphics& g, const IRECT&, const IRECT& handleBounds) override
   {
     const float cx = handleBounds.MW();
     const float cy = handleBounds.MH();
-    const float r  = handleBounds.W() * 0.5f;
-    g.DrawLine(COL_BLACK, cx, handleBounds.T, cx, cy - r, nullptr, 1.f);
-    g.FillCircle(COL_BLACK, cx, cy, r);
-    g.FillCircle(COLOR_WHITE, cx, cy, r * 0.25f);
+    g.FillCircle(COL_BLOCK, cx, cy, mHandleRadius + HANDLE_RING);
+    g.FillCircle(COL_ACCENT, cx, cy, mHandleRadius);
   }
 
   bool IsHit(float x, float y) const override
@@ -137,7 +133,7 @@ public:
   {
     if (mSideLabel.GetLength() == 0) return;
     const IRECT r = SideLabelRect();
-    IText t(24, COL_DGRAY, "Outfit-Bold", EAlign::Center, EVAlign::Middle, -90.f);
+    IText t(24, COL_ACCENT, "Outfit-Bold", EAlign::Center, EVAlign::Middle, -90.f);
     g.DrawText(t, mSideLabel.Get(), r);
   }
 

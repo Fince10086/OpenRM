@@ -8,10 +8,14 @@ static const IColor COL_BG    (255, 255, 255, 255);
 static const IColor COL_BLACK (255,   0,   0,   0);
 static const IColor COL_DIM   (255, 102, 102, 102);
 static const IColor COL_FAINT (255, 153, 153, 153);
-static const IColor COL_TRACK (255, 236, 236, 236);
-static const IColor COL_HOVER (255, 240, 240, 240);
-static const IColor COL_GRID  (255, 204, 204, 204);
-static const IColor COL_DGRAY (255,  70,  70, 70);
+static const IColor COL_TRACK (255, 243, 243, 243);
+static const IColor COL_BLOCK (255, 221, 221, 221);
+static const IColor COL_HOVER (255, 166, 166, 166);
+static const IColor COL_ACCENT(255,  56,  56,  56);
+
+static constexpr float BLOCK_GAP = 1.5f;
+static constexpr float HANDLE_R = 7.f;
+static constexpr float HANDLE_RING = 1.5f;
 
 // Corner identifiers shared by the XY pad (CENTER / BANDWIDTH) and the band
 // range slider (LOWCUT / HIGHCUT) text entries.

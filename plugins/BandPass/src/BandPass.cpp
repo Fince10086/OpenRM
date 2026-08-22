@@ -16,8 +16,8 @@
 
 static IVStyle MakeORMStyle()
 {
-  IVColorSpec colors = { COL_BG, COL_BG, COL_DIM, COL_BLACK,
-                         COL_HOVER, COL_TRACK, COL_BLACK, COL_BLACK, COL_BLACK };
+  IVColorSpec colors = { COL_BG, COL_BG, COL_ACCENT, COL_BLACK,
+                         COL_HOVER, COL_TRACK, COL_BLOCK, COL_BLACK, COL_BLACK };
   const IText labelText(20, COL_DIM, "Outfit", EAlign::Center, EVAlign::Bottom);
   const IText valueText(20, COL_BLACK, "Outfit-SemiBold", EAlign::Center, EVAlign::Top);
   return IVStyle(true, true, colors, labelText, valueText,
@@ -26,16 +26,14 @@ static IVStyle MakeORMStyle()
 
 static IVStyle MakeButtonStyle()
 {
-  IVColorSpec colors = { COL_BG, COL_BG, COL_BLACK, COL_BLACK,
-                         COL_HOVER, COL_BG, COL_BLACK, COL_BLACK, COL_BLACK };
+  IVColorSpec colors = { COL_BG, COL_BG, COL_ACCENT, COL_BLACK,
+                         COL_HOVER, COL_TRACK, COL_BLOCK, COL_BLACK, COL_BLACK };
   const IText labelText(20, COL_BLACK, "Outfit-SemiBold", EAlign::Center, EVAlign::Middle);
   const IText valueText(20, COL_BLACK, "Outfit-SemiBold", EAlign::Center, EVAlign::Middle);
   return IVStyle(true, true, colors, labelText, valueText, true, true, false, false,
                  0.f, 2.f, 0.f, 1.f, 0.f);
 }
 
-// Flat variants used inside merged button grids (see PresetGridFrame): no own
-// border/background, just hover shade, inverted colors while active/pressed.
 class FlatActionButton : public IVButtonControl
 {
 public:
@@ -47,8 +45,9 @@ public:
   {
     const IRECT b = GetWidgetBounds();
     const bool pressed = GetValue() > 0.5;
-    if (pressed || GetMouseIsOver())
-      g.FillRect(pressed ? COL_BLACK : COL_HOVER, b);
+    const IColor fill = pressed ? COL_ACCENT
+                     : GetMouseIsOver() ? COL_HOVER : COL_BLOCK;
+    g.FillRect(fill, b.GetPadded(-BLOCK_GAP));
     IText t = mStyle.valueText;
     t.mFGColor = pressed ? COLOR_WHITE : COL_BLACK;
     g.DrawText(t, mLabelStr.Get(), b);
@@ -80,55 +79,20 @@ public:
 
   void DrawTrack(IGraphics& g, const IRECT& filledArea) override
   {
-    // Visible track extends one handle radius past each end (matches ORMSlider);
-    // the min-side (left) extension is always black, the right one stays grey.
     const float cr = GetRoundedCornerRadius(mTrackBounds);
     const IRECT tb = mTrackBounds.GetHPadded(mHandleSize);
     g.FillRoundRect(COL_TRACK, tb, cr, &mBlend);
     const IRECT fill(tb.L, filledArea.T, std::max(filledArea.R, mTrackBounds.L), filledArea.B);
-    g.FillRoundRect(COL_BLACK, fill, cr, &mBlend);
+    g.FillRoundRect(COL_HOVER, fill, cr, &mBlend);
 
     const float x0 = mTrackBounds.L, w = mTrackBounds.W();
     for (int i = 0; i < kNumQuick; ++i)
     {
       const float x = x0 + w * i / (kNumQuick - 1.f);
-      g.FillRect(COL_BLACK, IRECT(x - 1.f, mTrackBounds.T - 3.f, x + 1.f, mTrackBounds.T));
-      g.FillRect(COL_BLACK, IRECT(x - 1.f, mTrackBounds.B, x + 1.f, mTrackBounds.B + 3.f));
+      g.FillRect(COL_ACCENT, IRECT(x - 1.f, mTrackBounds.T - 3.f, x + 1.f, mTrackBounds.T));
+      g.FillRect(COL_ACCENT, IRECT(x - 1.f, mTrackBounds.B, x + 1.f, mTrackBounds.B + 3.f));
     }
   }
-};
-
-// Shared outer frame for a block of preset slots: one rounded border around
-// the whole grid, with plain separator lines between cells.
-class PresetGridFrame : public IControl
-{
-public:
-  PresetGridFrame(const IRECT& bounds, int cols, int rows, float cellW, float cellH)
-  : IControl(bounds), mCols(cols), mRows(rows), mCellW(cellW), mCellH(cellH)
-  {
-    // Purely decorative overlay: let all clicks pass through to the slots.
-    SetIgnoreMouse(true);
-  }
-
-  void Draw(IGraphics& g) override
-  {
-    // Square corners, matching the flat buttons.
-    g.DrawRect(COL_BLACK, mRECT, nullptr, 2.f);
-    for (int c = 1; c < mCols; ++c)
-    {
-      const float x = mRECT.L + c * mCellW;
-      g.DrawLine(COL_BLACK, x, mRECT.T, x, mRECT.B, nullptr, 1.5f);
-    }
-    for (int r = 1; r < mRows; ++r)
-    {
-      const float y = mRECT.T + r * mCellH;
-      g.DrawLine(COL_BLACK, mRECT.L, y, mRECT.R, y, nullptr, 1.5f);
-    }
-  }
-
-private:
-  int mCols, mRows;
-  float mCellW, mCellH;
 };
 
 class ORMSlider : public IVSliderControl
@@ -188,29 +152,22 @@ public:
 
   void DrawTrack(IGraphics& g, const IRECT& filledArea) override
   {
-    // Extend the visible track by one handle radius on both ends, so its
-    // edges line up with the outermost edge of the handle (the handle's
-    // centre travel logic is untouched).
     const bool horiz = (mDirection == EDirection::Horizontal);
     const float cr = GetRoundedCornerRadius(mTrackBounds);
     const IRECT tb = horiz ? mTrackBounds.GetHPadded(mHandleSize)
                            : mTrackBounds.GetVPadded(mHandleSize);
     g.FillRoundRect(COL_TRACK, tb, cr, &mBlend);
-
-    // The min-side extension is always part of the filled (black) region;
-    // the max-side extension stays grey.
     const IRECT fill = horiz
       ? IRECT(tb.L, filledArea.T, std::max(filledArea.R, mTrackBounds.L), filledArea.B)
       : IRECT(filledArea.L, filledArea.T, filledArea.R, tb.B);
-    g.FillRoundRect(COL_BLACK, fill, cr, &mBlend);
+    g.FillRoundRect(COL_HOVER, fill, cr, &mBlend);
   }
 
   void DrawHandle(IGraphics& g, const IRECT& bounds) override
   {
     const float cx = bounds.MW(), cy = bounds.MH();
-    const float r  = bounds.W() * 0.5f;
-    g.FillCircle(COLOR_WHITE, cx, cy, r);
-    g.DrawCircle(COL_BLACK, cx, cy, r - 0.75f, nullptr, 1.5f);
+    g.FillCircle(COL_BG, cx, cy, HANDLE_R + HANDLE_RING);
+    g.FillCircle(COL_ACCENT, cx, cy, HANDLE_R);
   }
 
 protected:
@@ -325,8 +282,6 @@ public:
   }
 };
 
-// Flat variant of InvertToggleControl for merged button grids: black cell
-// with white text while on, hover shade while off.
 class FlatToggleControl : public InvertToggleControl
 {
 public:
@@ -336,8 +291,9 @@ public:
   {
     const IRECT b = GetWidgetBounds();
     const bool on = GetValue() > 0.5;
-    if (on || GetMouseIsOver())
-      g.FillRect(on ? COL_BLACK : COL_HOVER, b);
+    const IColor fill = on ? COL_ACCENT
+                     : GetMouseIsOver() ? COL_HOVER : COL_BLOCK;
+    g.FillRect(fill, b.GetPadded(-BLOCK_GAP));
     DrawValue(g, false);
   }
 };
@@ -500,12 +456,12 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
 
     mPadL = new FilterNodePad(IRECT(20, 38, 668, 218), { kFreqL, kBwL }, "LEFT", style, padHooks(kFreqL, kBwL));
     pGraphics->AttachControl(mPadL);
-    mBandL = new BandRangeSlider(IRECT(56, 224, 668, 270), { kFreqL, kBwL }, bandHooks(kFreqL, kBwL));
+    mBandL = new BandRangeSlider(IRECT(20, 224, 668, 270), { kFreqL, kBwL }, bandHooks(kFreqL, kBwL));
     pGraphics->AttachControl(mBandL);
 
     mPadR = new FilterNodePad(IRECT(20, 296, 668, 476), { kFreqR, kBwR }, "RIGHT", style, padHooks(kFreqR, kBwR));
     pGraphics->AttachControl(mPadR);
-    mBandR = new BandRangeSlider(IRECT(56, 482, 668, 528), { kFreqR, kBwR }, bandHooks(kFreqR, kBwR));
+    mBandR = new BandRangeSlider(IRECT(20, 482, 668, 528), { kFreqR, kBwR }, bandHooks(kFreqR, kBwR));
     pGraphics->AttachControl(mBandR);
 
     pGraphics->AttachControl(new GainSlider(IRECT(672, 38, 730, 218), kGainL, "GAIN L", style));
@@ -542,12 +498,10 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
           IRECT(kCol1X + c * 39, 66 + r * 32,
                 kCol1X + c * 39 + 39, 66 + r * 32 + 32),
           makeSlotHooks(pos), label, btnStyle);
-        btn->SetFlatGrid(true);
         mSlotButtons[pos] = btn;
         pGraphics->AttachControl(btn);
       }
     }
-    pGraphics->AttachControl(new PresetGridFrame(IRECT(kCol1X, 66, kPanelR, 66 + 128), 4, 4, 39.f, 32.f));
 
     pGraphics->AttachControl(new ITextControl(IRECT(kCol1X, 202, 1050, 230), "AGITATION",
       IText(20, COL_BLACK, "Outfit-Bold", EAlign::Near, EVAlign::Middle)));
@@ -565,8 +519,6 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
     pGraphics->AttachControl(MakeMomentary(IRECT(kCol1X + 78, 474, kPanelR, 504), [this](IControl*) { Redo(); }, "REDO", btnStyle));
     pGraphics->AttachControl(MakeMomentary(IRECT(kCol1X, 504, kCol1X + 78, 534), [this](IControl*) { SaveFile(); }, "SAVE", btnStyle));
     pGraphics->AttachControl(MakeMomentary(IRECT(kCol1X + 78, 504, kPanelR, 534), [this](IControl*) { LoadFile(); }, "LOAD", btnStyle));
-    pGraphics->AttachControl(new PresetGridFrame(IRECT(kCol1X, 352, kPanelR, 412), 2, 2, 78.f, 30.f));
-    pGraphics->AttachControl(new PresetGridFrame(IRECT(kCol1X, 474, kPanelR, 534), 2, 2, 78.f, 30.f));
 
     for (int i = 0; i < kNumBottom; ++i)
     {

@@ -111,7 +111,6 @@ public:
 
 private:
   static constexpr float kHeaderH = 26.f;
-  static constexpr float kTrackInset = 2.f;
   static constexpr float kMinGap   = 0.01f;
 
   IRECT HeaderRect() const
@@ -121,8 +120,8 @@ private:
 
   IRECT TrackRect() const
   {
-    return IRECT(mRECT.L + kTrackInset, mRECT.T + kHeaderH,
-                 mRECT.R - kTrackInset, mRECT.B).GetMidVPadded(2.f);
+    return IRECT(mRECT.L + HANDLE_R + HANDLE_RING, mRECT.T + kHeaderH,
+                 mRECT.R - HANDLE_R - HANDLE_RING, mRECT.B).GetMidVPadded(2.f);
   }
 
   float NormToX(float norm) const { const IRECT s = TrackRect(); return s.L + norm * s.W(); }
@@ -178,12 +177,12 @@ private:
     const float y = s.MH();
     const float lx = NormToX(LowNorm());
     const float hx = NormToX(HighNorm());
-    g.FillRect(COL_TRACK, IRECT(s.L, y - 2.f, s.R, y + 2.f));
-    g.FillRect(COL_BLACK, IRECT(lx, y - 2.f, hx, y + 2.f));
+    g.FillRect(COL_TRACK, IRECT(mRECT.L, y - 2.f, mRECT.R, y + 2.f));
+    g.FillRect(COL_HOVER, IRECT(lx, y - 2.f, hx, y + 2.f));
     for (float px : { lx, hx })
     {
-      g.FillCircle(COLOR_WHITE, px, y, 7.f);
-      g.DrawCircle(COL_BLACK, px, y, 7.f, nullptr, 1.5f);
+      g.FillCircle(COL_BG, px, y, HANDLE_R + HANDLE_RING);
+      g.FillCircle(COL_ACCENT, px, y, HANDLE_R);
     }
   }
 
