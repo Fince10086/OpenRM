@@ -456,10 +456,14 @@ public:
     mLangBtns[1]  = IRECT(mCard.L + kPad + bw + kBtnGap, mCard.T + kLangBtnY, mCard.L + kPad + 2.f * bw + kBtnGap, mCard.T + kLangBtnY + kBtnH);
     mThemeBtns[0] = IRECT(mCard.L + kPad, mCard.T + kThemeBtnY, mCard.L + kPad + bw, mCard.T + kThemeBtnY + kBtnH);
     mThemeBtns[1] = IRECT(mCard.L + kPad + bw + kBtnGap, mCard.T + kThemeBtnY, mCard.L + kPad + 2.f * bw + kBtnGap, mCard.T + kThemeBtnY + kBtnH);
-    mHueSlider  = IRECT(mCard.L + kPad, mCard.T + kHueY, mCard.L + kPad + kSliderW, mCard.T + kHueY + kSliderH);
-    mSatSlider  = IRECT(mCard.L + kPad, mCard.T + kSatY, mCard.L + kPad + kSliderW, mCard.T + kSatY + kSliderH);
-    mHueValue   = IRECT(mCard.L + kPad + kSliderW + kValGap, mCard.T + kHueY, mCard.R - kPad, mCard.T + kHueY + kSliderH);
-    mSatValue   = IRECT(mCard.L + kPad + kSliderW + kValGap, mCard.T + kSatY, mCard.R - kPad, mCard.T + kSatY + kSliderH);
+    const float rowW = mCard.W() - 2.f * kPad;
+    for (int i = 0; i < 2; ++i)
+    {
+      const float headerY = mCard.T + (i == 0 ? kHueTitleY : kSatTitleY);
+      mSliderHeader[i] = IRECT(mCard.L + kPad, headerY, mCard.R - kPad, headerY + kHeaderH);
+      const float trackY = mCard.T + (i == 0 ? kHueY : kSatY);
+      mSliderTrack[i] = IRECT(mCard.L + kPad, trackY, mCard.L + kPad + rowW, trackY + kTrackH);
+    }
     mHover = kHoverNone;
   }
 
@@ -474,32 +478,23 @@ public:
     const int theme = ThemeMode();
     const float L = mCard.L + kPad;
 
-    // SETTINGS title: double size, left aligned, uppercase.
-    g.DrawText(IText(kTitleSize * 2.f, COL_900(), FontBold(), EAlign::Near, EVAlign::Middle),
-               orm::Tr(orm::kTxtSettings, lang), IRECT(L, mCard.T + kTitleY, mCard.R - kPad, mCard.T + kTitleY + kTitleSize * 2.f + 6.f));
-    g.DrawRect(COL_300(), IRECT(L, mCard.T + kRuleY, mCard.R - kPad, mCard.T + kRuleY + 1.f), &mBlend, 1.f);
-
     // Group titles: same size as the main panel's section titles, left aligned.
     g.DrawText(IText(kTitleSize, COL_900(), FontBold(), EAlign::Near, EVAlign::Middle),
                orm::Tr(orm::kTxtLanguage, lang), IRECT(L, mCard.T + kLangTitleY, mCard.R - kPad, mCard.T + kLangTitleY + kTitleSize));
     g.DrawText(IText(kTitleSize, COL_900(), FontBold(), EAlign::Near, EVAlign::Middle),
                orm::Tr(orm::kTxtTheme, lang), IRECT(L, mCard.T + kThemeTitleY, mCard.R - kPad, mCard.T + kThemeTitleY + kTitleSize));
-    g.DrawText(IText(kTitleSize, COL_900(), FontBold(), EAlign::Near, EVAlign::Middle),
-               orm::Tr(orm::kTxtHue, lang), IRECT(L, mCard.T + kHueTitleY, mCard.R - kPad, mCard.T + kHueTitleY + kTitleSize));
-    g.DrawText(IText(kTitleSize, COL_900(), FontBold(), EAlign::Near, EVAlign::Middle),
-               orm::Tr(orm::kTxtSaturation, lang), IRECT(L, mCard.T + kSatTitleY, mCard.R - kPad, mCard.T + kSatTitleY + kTitleSize));
 
     // Language names render in their own script: 中文 always uses the CJK
     // Mixed font (Outfit has no Chinese glyphs), English stays latin.
     DrawButton(g, mLangBtns[0],  orm::Tr(orm::kTxtChinese, lang), lang == orm::kLangZH, mHover == kHoverLangZh, FontCJKSemiBold());
-    DrawButton(g, mLangBtns[1],  "English", lang == orm::kLangEN, mHover == kHoverLangEn, "Outfit-SemiBold");
+    DrawButton(g, mLangBtns[1],  "ENGLISH", lang == orm::kLangEN, mHover == kHoverLangEn, "Outfit-SemiBold");
     DrawButton(g, mThemeBtns[0], orm::Tr(orm::kTxtDark,  lang), theme == 1, mHover == kHoverThemeDark);
     DrawButton(g, mThemeBtns[1], orm::Tr(orm::kTxtLight, lang), theme == 0, mHover == kHoverThemeLight);
 
-    DrawSlider(g, mHueSlider, HueNorm());
-    DrawSlider(g, mSatSlider, SatNorm());
-    DrawValue(g, mHueValue, HueLabel(lang));
-    DrawValue(g, mSatValue, SatLabel(lang));
+    DrawSliderHeader(g, mSliderHeader[0], orm::Tr(orm::kTxtHue, lang),        HueLabel(lang));
+    DrawSlider(g, mSliderTrack[0], HueNorm());
+    DrawSliderHeader(g, mSliderHeader[1], orm::Tr(orm::kTxtSaturation, lang), SatLabel(lang));
+    DrawSlider(g, mSliderTrack[1], SatNorm());
   }
 
   void OnMouseDown(float x, float y, const IMouseMod& mod) override
@@ -522,8 +517,8 @@ public:
         return;
       }
     }
-    if (mHueSlider.Contains(x, y)) { mDrag = kDragHue; DragTo(x, y); return; }
-    if (mSatSlider.Contains(x, y)) { mDrag = kDragSat; DragTo(x, y); return; }
+    if (mSliderTrack[0].Contains(x, y)) { mDrag = kDragHue; DragTo(x, y); return; }
+    if (mSliderTrack[1].Contains(x, y)) { mDrag = kDragSat; DragTo(x, y); return; }
   }
 
   void OnMouseDrag(float x, float y, float dX, float dY, const IMouseMod& mod) override
@@ -572,7 +567,7 @@ private:
 
   void DragTo(float x, float y)
   {
-    const IRECT* s = (mDrag == kDragHue) ? &mHueSlider : &mSatSlider;
+    const IRECT* s = (mDrag == kDragHue) ? &mSliderTrack[0] : &mSliderTrack[1];
     const float n = std::clamp((x - s->L) / s->W(), 0.f, 1.f);
     if (mDrag == kDragHue)
     {
@@ -608,8 +603,14 @@ private:
     g.DrawText(IText(16, fg, font ? font : FontSemiBold(), EAlign::Center, EVAlign::Middle), label, b);
   }
 
-  // ORMSlider-style track: COL_300 rail, COL_500 fill, ringed handle. No
-  // rounded corners (matches the panel's flat look). Position is stepped.
+  void DrawSliderHeader(IGraphics& g, const IRECT& hdr, const char* title, const char* value)
+  {
+    g.DrawText(IText(kHeaderFontSize, COL_900(), FontSemiBold(), EAlign::Near, EVAlign::Middle),
+               title, IRECT(hdr.L, hdr.T, hdr.MW(), hdr.B));
+    g.DrawText(IText(kHeaderFontSize, COL_700(), FontRegular(), EAlign::Far, EVAlign::Middle),
+               value, IRECT(hdr.MW(), hdr.T, hdr.R, hdr.B));
+  }
+
   void DrawSlider(IGraphics& g, const IRECT& s, float norm)
   {
     const float y = s.MH();
@@ -618,11 +619,6 @@ private:
     g.FillRect(COL_500(), IRECT(s.L, y - 2.f, x, y + 2.f));
     g.FillCircle(COL_100(), x, y, HANDLE_R + HANDLE_RING);
     g.FillCircle(COL_900(), x, y, HANDLE_R);
-  }
-
-  void DrawValue(IGraphics& g, const IRECT& v, const char* label)
-  {
-    g.DrawText(IText(14, COL_700(), FontSemiBold(), EAlign::Far, EVAlign::Middle), label, v);
   }
 
   const char* HueLabel(int lang) const
@@ -636,37 +632,37 @@ private:
   const char* SatLabel(int lang) const
   {
     static const int kIds[kNumSat] = { orm::kTxtSatNone, orm::kTxtSatLow, orm::kTxtSatMed, orm::kTxtSatHigh };
-    const int idx = std::clamp((ThemeSatMax() - kSatMin) / kSatStep, 0, kNumSat - 1);
+    int idx = 0;
+    for (int i = 0; i < kNumSat; ++i) if (kSatVals[i] == ThemeSatMax()) { idx = i; break; }
     return orm::Tr(kIds[idx], lang);
   }
 
-  // Card layout (fixed, centered).
-  static constexpr float kCardW = 400.f;
-  static constexpr float kCardH = 352.f;
-  static constexpr float kPad = 24.f;
-  static constexpr float kBtnH = 34.f;
-  static constexpr float kBtnGap = 12.f;
-  static constexpr float kSliderW = 250.f;
-  static constexpr float kSliderH = 30.f;
-  static constexpr float kValGap = 12.f;
-  static constexpr float kTitleSize = 20.f;
-  static constexpr float kTitleY = 16.f;
-  static constexpr float kRuleY = 62.f;
-  static constexpr float kLangTitleY = 74.f;
-  static constexpr float kLangBtnY = 102.f;
-  static constexpr float kThemeTitleY = 152.f;
-  static constexpr float kThemeBtnY = 180.f;
-  static constexpr float kHueTitleY = 230.f;
-  static constexpr float kHueY = 258.f;
-  static constexpr float kSatTitleY = 300.f;
-  static constexpr float kSatY = 328.f;
+  // Card layout (fixed, centered). Compact: two button rows, two slider rows
+  // (header + track), and bottom padding. Buttons sit flush like the main
+  // panel's L->R / R->L pair (no gap). Slider header matches ORMSlider.
+  static constexpr float kCardW = 380.f;
+  static constexpr float kCardH = 270.f;
+  static constexpr float kPad = 20.f;
+  static constexpr float kBtnH = 30.f;
+  static constexpr float kBtnGap = 0.f;      // flush, like the main panel buttons
+  static constexpr float kTitleSize = 20.f;   // group titles (main panel size)
+  static constexpr float kHeaderFontSize = 20.f; // slider header text (ORMSlider)
+  static constexpr float kHeaderH = 26.f;     // slider header line height
+  static constexpr float kTrackH = 26.f;      // slider track + handle zone
+  static constexpr float kLangTitleY = 14.f;
+  static constexpr float kLangBtnY = 38.f;
+  static constexpr float kThemeTitleY = 80.f;
+  static constexpr float kThemeBtnY = 104.f;
+  static constexpr float kHueTitleY = 148.f;
+  static constexpr float kHueY = 174.f;
+  static constexpr float kSatTitleY = 206.f;
+  static constexpr float kSatY = 232.f;
 
   static constexpr int kHueMin = 15;
   static constexpr int kHueMax = 360;
   static constexpr int kHueStep = 15;
   static constexpr int kSatMin = 0;
   static constexpr int kSatMax = 50;
-  static constexpr int kSatStep = 1;
   static constexpr int kNumSat = 4;
   static constexpr int kSatVals[kNumSat] = { 0, 15, 30, 50 };
 
@@ -674,7 +670,8 @@ private:
   IRECT mCard;
   IRECT mLangBtns[2];
   IRECT mThemeBtns[2];
-  IRECT mHueSlider, mSatSlider, mHueValue, mSatValue;
+  IRECT mSliderHeader[2];
+  IRECT mSliderTrack[2];
   EHover mHover = kHoverNone;
   EDrag mDrag = kDragNone;
 };
