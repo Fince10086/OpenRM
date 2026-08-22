@@ -16,6 +16,7 @@ static const IColor COL_ACCENT(255,  56,  56,  56);
 static constexpr float BLOCK_GAP = 1.5f;
 static constexpr float HANDLE_R = 7.f;
 static constexpr float HANDLE_RING = 1.5f;
+static constexpr float LABEL_VALUE_GAP = 12.f;
 
 // Corner identifiers shared by the XY pad (CENTER / BANDWIDTH) and the band
 // range slider (LOWCUT / HIGHCUT) text entries.

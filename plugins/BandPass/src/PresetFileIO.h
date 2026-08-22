@@ -11,7 +11,7 @@ struct PresetFileData
   std::vector<std::vector<double>> presets;
   std::vector<double> currentValues;
   int currentPreset = 0;
-  double morphPos = 0.0;
+  double fadePos = 0.0;
 };
 
 inline bool WritePresetFile(const std::string& path, const PresetFileData& data, std::string& err)
@@ -23,7 +23,7 @@ inline bool WritePresetFile(const std::string& path, const PresetFileData& data,
     j["presets"] = data.presets;
     j["currentPreset"] = data.currentPreset;
     j["currentValues"] = data.currentValues;
-    j["morphPos"] = data.morphPos;
+    j["fadePos"] = data.fadePos;
 
     std::ofstream f(path, std::ios::binary);
     if (!f)
@@ -89,7 +89,7 @@ inline bool ReadPresetFile(const std::string& path, PresetFileData& out, std::st
     if (j.contains("currentValues") && j["currentValues"].is_array())
       for (const auto& v : j["currentValues"])
         out.currentValues.push_back(v.get<double>());
-    out.morphPos = j.value("morphPos", 0.0);
+    out.fadePos = j.value("fadePos", 0.0);
     return true;
   }
   catch (const std::exception& e)

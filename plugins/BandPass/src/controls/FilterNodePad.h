@@ -118,6 +118,7 @@ public:
     const float cy = handleBounds.MH();
     g.FillCircle(COL_BLOCK, cx, cy, mHandleRadius + HANDLE_RING);
     g.FillCircle(COL_ACCENT, cx, cy, mHandleRadius);
+    g.FillCircle(COLOR_WHITE, cx, cy, mHandleRadius * 0.25f);
   }
 
   bool IsHit(float x, float y) const override
@@ -170,7 +171,7 @@ private:
     const bool far = (id == kCornerBw);
     const EAlign align = far ? EAlign::Far : EAlign::Near;
     const IText t(20, COL_BLACK, "Outfit-SemiBold", align, EVAlign::Middle);
-    const char* prefix = far ? "BANDWIDTH " : "CENTER ";
+    const char* prefix = far ? "BANDWIDTH" : "CENTER";
     WDL_String value;
     GetCornerValue(id, value, true);
     IRECT measured;
@@ -180,7 +181,7 @@ private:
       mCornerValueRect[1] = IRECT(r.R - measured.W(), r.T, r.R, r.B);
       if (mOverCorner == id)
         g.FillRoundRect(COL_HOVER, mCornerValueRect[1].GetPadded(-2.f), 4.f);
-      g.DrawText(t, prefix, IRECT(r.L, r.T, mCornerValueRect[1].L, r.B));
+      g.DrawText(t, prefix, IRECT(r.L, r.T, mCornerValueRect[1].L - LABEL_VALUE_GAP, r.B));
       g.DrawText(t, value.Get(), mCornerValueRect[1]);
     }
     else
@@ -188,7 +189,8 @@ private:
       g.MeasureText(t, prefix, measured);
       const float prefixW = measured.W();
       g.MeasureText(t, value.Get(), measured);
-      mCornerValueRect[0] = IRECT(r.L + prefixW, r.T, r.L + prefixW + measured.W(), r.B);
+      mCornerValueRect[0] = IRECT(r.L + prefixW + LABEL_VALUE_GAP, r.T,
+                                  r.L + prefixW + LABEL_VALUE_GAP + measured.W(), r.B);
       if (mOverCorner == id)
         g.FillRoundRect(COL_HOVER, mCornerValueRect[0].GetPadded(-2.f), 4.f);
       g.DrawText(t, prefix, r);

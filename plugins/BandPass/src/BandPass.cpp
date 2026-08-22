@@ -69,10 +69,10 @@ static IVButtonControl* MakeMomentary(const IRECT& r,
 // the DSP core still works in octaves.
 static double BwMultToOct(double m) { return 2. * std::log2(m); }
 
-class PresetMorphSlider : public IVSliderControl
+class PresetFadeSlider : public IVSliderControl
 {
 public:
-  PresetMorphSlider(const IRECT& bounds, IActionFunction aF, const IVStyle& style)
+  PresetFadeSlider(const IRECT& bounds, IActionFunction aF, const IVStyle& style)
   : IVSliderControl(bounds, aF, "", style, false, EDirection::Horizontal)
   {
   }
@@ -109,10 +109,19 @@ public:
   : IVSliderControl(bounds, paramIdx, label, style, false, dir)
   , mHeaderLabel(label ? label : "")
   {
-
     mStyle.showLabel = false;
     mStyle.showValue = false;
   }
+
+  ORMSlider(const IRECT& bounds, IActionFunction aF, const char* label, const IVStyle& style)
+  : IVSliderControl(bounds, aF, label, style, false, EDirection::Horizontal)
+  , mHeaderLabel(label ? label : "")
+  {
+    mStyle.showLabel = false;
+    mStyle.showValue = false;
+  }
+
+  void SetValueFormatter(std::function<void(WDL_String&)> f) { mValueFormatter = std::move(f); }
 
   void OnResize() override
   {
@@ -147,10 +156,10 @@ public:
 
   void OnMouseDown(float x, float y, const IMouseMod& mod) override
   {
-
     if (mod.L && !mod.R && !mod.A && ValueRect().Contains(x, y))
     {
-      PromptUserInput(ValueRect());
+      if (GetParam())
+        PromptUserInput(ValueRect());
       return;
     }
     IVSliderControl::OnMouseDown(x, y, mod);
@@ -190,6 +199,11 @@ protected:
   virtual void FormatValue(WDL_String& ds) const
   {
     ds.Set("");
+    if (mValueFormatter)
+    {
+      mValueFormatter(ds);
+      return;
+    }
     const IParam* p = GetParam();
     if (!p) return;
     char buf[32];
@@ -234,6 +248,7 @@ protected:
   }
 
   WDL_String mHeaderLabel;
+  std::function<void(WDL_String&)> mValueFormatter;
 };
 
 // Vertical gain slider variant: track on the left, text column on the right —
@@ -247,7 +262,7 @@ public:
 
 protected:
   static constexpr float kTextW = 16.f;   // text column width
-  static constexpr float kTextGap = 2.f;  // right padding inside the control
+  static constexpr float kTextGap = 6.f;  // right padding inside the control
   static constexpr float kPlotTopInset = 30.f; // FilterNodePad's kTopPad
 
   IRECT TextRect() const
@@ -502,7 +517,18 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
     auto makeSlotHooks = [this](int pos) -> PresetSlotControl::Hooks
     {
       return PresetSlotControl::Hooks{
-        [this, pos]() { LoadSlot(mSlotNumber[pos]); },
+        [this, pos]() {
+          LoadSlot(mSlotNumber[pos]);
+          if (pos < kNumQuick)
+          {
+            mFadePos = pos;
+            if (mFadeSlider)
+            {
+              mFadeSlider->SetValue((float) (pos / (kNumQuick - 1.0)));
+              mFadeSlider->SetDirty(true);
+            }
+          }
+        },
         [this, pos]() { SaveToSlot(mSlotNumber[pos]); },
         [this, pos]() { RestoreDefault(mSlotNumber[pos]); },
         [this, pos]() { OnDragBegin(pos); },
@@ -524,25 +550,37 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
         char label[8];
         snprintf(label, 8, "%d", mSlotNumber[pos] + 1);
         PresetSlotControl* btn = new PresetSlotControl(
-          IRECT(kCol1X + c * 39, 66 + r * 32,
-                kCol1X + c * 39 + 39, 66 + r * 32 + 32),
+          IRECT(kCol1X + c * 39, 64 + r * 32,
+                kCol1X + c * 39 + 39, 64 + r * 32 + 32),
           makeSlotHooks(pos), label, btnStyle);
         mSlotButtons[pos] = btn;
         pGraphics->AttachControl(btn);
       }
     }
 
-    pGraphics->AttachControl(new ITextControl(IRECT(kCol1X, 202, 1050, 230), "AGITATION",
-      IText(20, COL_BLACK, "Outfit-Bold", EAlign::Near, EVAlign::Middle)));
-    pGraphics->AttachControl(new FlatToggleControl(IRECT(kCol1X + 116, 203, kPanelR, 229), kAgOn, " ", toggleStyle, "OFF", "ON"));
-    pGraphics->AttachControl(new ORMSlider(IRECT(kCol1X, 236, kPanelR, 278), kAgAmount, "AMP", style, EDirection::Horizontal));
-    pGraphics->AttachControl(new ORMSlider(IRECT(kCol1X, 284, kPanelR, 326), kAgRate, "SPEED", style, EDirection::Horizontal));
+    ORMSlider* morphSlider = new ORMSlider(IRECT(kCol1X, 196, kPanelR, 238),
+      [this](IControl* pCtrl) {
+        MaybePushGestureUndo();
+        mFadeTime = pCtrl->GetValue(0) * 60.;
+      }, "MORPH", style);
+    morphSlider->SetValueFormatter([this](WDL_String& ds) {
+      char buf[32];
+      snprintf(buf, sizeof(buf), "%.2fs", mFadeTime);
+      ds.Set(buf);
+    });
+    pGraphics->AttachControl(morphSlider);
 
-    pGraphics->AttachControl(MakeMomentary(IRECT(kCol1X, 352, kCol1X + 78, 382), [this](IControl*) { CopyLtoR(); }, "L->R", btnStyle));
-    pGraphics->AttachControl(MakeMomentary(IRECT(kCol1X + 78, 352, kPanelR, 382), [this](IControl*) { CopyRtoL(); }, "R->L", btnStyle));
-    pGraphics->AttachControl(new FlatToggleControl(IRECT(kCol1X, 382, kCol1X + 78, 412), kLink, " ", toggleStyle, "LINK", "LINK"));
-    pGraphics->AttachControl(MakeMomentary(IRECT(kCol1X + 78, 382, kPanelR, 412), [this](IControl*) { FlipLR(); }, "FLIP", btnStyle));
-    pGraphics->AttachControl(new ORMSlider(IRECT(kCol1X, 424, kPanelR, 466), kMix, "MIX", style, EDirection::Horizontal));
+    pGraphics->AttachControl(new ITextControl(IRECT(kCol1X, 242, 1050, 268), "AGITATION",
+      IText(20, COL_BLACK, "Outfit-Bold", EAlign::Near, EVAlign::Middle)));
+    pGraphics->AttachControl(new FlatToggleControl(IRECT(kCol1X + 116, 242, kPanelR, 268), kAgOn, " ", toggleStyle, "OFF", "ON"));
+    pGraphics->AttachControl(new ORMSlider(IRECT(kCol1X, 272, kPanelR, 314), kAgAmount, "AMP", style, EDirection::Horizontal));
+    pGraphics->AttachControl(new ORMSlider(IRECT(kCol1X, 318, kPanelR, 360), kAgRate, "SPEED", style, EDirection::Horizontal));
+
+    pGraphics->AttachControl(MakeMomentary(IRECT(kCol1X, 364, kCol1X + 78, 394), [this](IControl*) { CopyLtoR(); }, "L->R", btnStyle));
+    pGraphics->AttachControl(MakeMomentary(IRECT(kCol1X + 78, 364, kPanelR, 394), [this](IControl*) { CopyRtoL(); }, "R->L", btnStyle));
+    pGraphics->AttachControl(new FlatToggleControl(IRECT(kCol1X, 394, kCol1X + 78, 424), kLink, " ", toggleStyle, "LINK", "LINK"));
+    pGraphics->AttachControl(MakeMomentary(IRECT(kCol1X + 78, 394, kPanelR, 424), [this](IControl*) { FlipLR(); }, "FLIP", btnStyle));
+    pGraphics->AttachControl(new ORMSlider(IRECT(kCol1X, 428, kPanelR, 470), kMix, "MIX", style, EDirection::Horizontal));
 
     pGraphics->AttachControl(MakeMomentary(IRECT(kCol1X, 474, kCol1X + 78, 504), [this](IControl*) { Undo(); }, "UNDO", btnStyle));
     pGraphics->AttachControl(MakeMomentary(IRECT(kCol1X + 78, 474, kPanelR, 504), [this](IControl*) { Redo(); }, "REDO", btnStyle));
@@ -562,13 +600,13 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
       pGraphics->AttachControl(btn);
     }
 
-    mMorphSlider = new PresetMorphSlider(IRECT(31.5f, 600, 656.5f, 624),
+    mFadeSlider = new PresetFadeSlider(IRECT(31.5f, 600, 656.5f, 624),
       [this](IControl* pCtrl) {
         MaybePushGestureUndo();
-        mMorphPos = pCtrl->GetValue(0) * (kNumQuick - 1.0);
-        OnMorphDrag(pCtrl->GetValue(0));
+        mFadePos = pCtrl->GetValue(0) * (kNumQuick - 1.0);
+        OnFadeDrag(pCtrl->GetValue(0));
       }, btnStyle);
-    pGraphics->AttachControl(mMorphSlider);
+    pGraphics->AttachControl(mFadeSlider);
 
     pGraphics->AttachControl(new ITextControl(IRECT(kCol1X, 552, kCol1X + 120, 586), "ORM",
       IText(32, COL_BLACK, "Outfit-Bold", EAlign::Near, EVAlign::Bottom)));
@@ -632,6 +670,8 @@ void ORMBandPass::OnParamChangeUI(int paramIdx, EParamSource source)
   PublishParamsToCore();
   if (source == EParamSource::kUI)
   {
+    if (mFading && !mInFadeApply)
+      mFading = false;
     MaybePushGestureUndo();
     MirrorLinkedParams(paramIdx);
   }
@@ -683,6 +723,7 @@ void ORMBandPass::RefreshAfterEdit()
 
 void ORMBandPass::EditCorner(int kFreq, int kBw, int cornerId, double value)
 {
+  mFading = false;
   PushUndo();
   const IParam* pf = GetParam(kFreq);
   const double center = pf->FromNormalized(GetParam(kFreq)->GetNormalized());
@@ -702,6 +743,7 @@ void ORMBandPass::EditCorner(int kFreq, int kBw, int cornerId, double value)
 
 void ORMBandPass::EditBand(int kFreq, int kBw, double lowNorm, double highNorm)
 {
+  mFading = false;
   const IParam* pf = GetParam(kFreq);
   const double lowHz = pf->FromNormalized(lowNorm);
   const double highHz = pf->FromNormalized(highNorm);
@@ -801,6 +843,21 @@ void ORMBandPass::OnIdle()
     mStableSnapshot = Snapshot();
     mGesturePending = false;
   }
+  if (mFading)
+  {
+    const double t = (now - mFadeStartTime) / std::max(mFadeTime, 0.001);
+    if (t >= 1.0)
+    {
+      mFading = false;
+      ApplySnapshot(mFadeTo);
+    }
+    else
+    {
+      mInFadeApply = true;
+      ApplySnapshot(MixSnapshots(mFadeFrom, mFadeTo, t));
+      mInFadeApply = false;
+    }
+  }
 }
 
 void ORMBandPass::MarkStateStable()
@@ -812,6 +869,7 @@ void ORMBandPass::MarkStateStable()
 void ORMBandPass::Undo()
 {
   if (mUndoStack.empty()) return;
+  mFading = false;
   mRedoStack.push_back(Snapshot());
   const ParamSnapshot s = mUndoStack.back();
   mUndoStack.pop_back();
@@ -821,6 +879,7 @@ void ORMBandPass::Undo()
 void ORMBandPass::Redo()
 {
   if (mRedoStack.empty()) return;
+  mFading = false;
   mUndoStack.push_back(Snapshot());
   const ParamSnapshot s = mRedoStack.back();
   mRedoStack.pop_back();
@@ -838,7 +897,7 @@ void ORMBandPass::LoadSlot(int idx)
   if (idx < 0 || idx >= kNumPresets) return;
   PushUndo();
   mCurrentPreset = idx;
-  ApplySnapshot(mPresets[idx]);
+  StartFade(mPresets[idx]);
 }
 
 void ORMBandPass::RestoreDefault(int idx)
@@ -847,6 +906,7 @@ void ORMBandPass::RestoreDefault(int idx)
   mPresets[idx] = mDefaultSnapshot;
   if (idx == mCurrentPreset)
   {
+    mFading = false;
     PushUndo();
     ApplySnapshot(mDefaultSnapshot);
   }
@@ -914,7 +974,7 @@ void ORMBandPass::WritePresetFileTo(const std::string& path, std::string& err)
   const ParamSnapshot cur = Snapshot();
   data.currentValues.assign(cur.begin(), cur.end());
   data.currentPreset = mCurrentPreset;
-  data.morphPos = mMorphPos;
+  data.fadePos = mFadePos;
 
   if (WritePresetFile(path, data, err))
     err.clear();
@@ -931,6 +991,7 @@ void ORMBandPass::ReadPresetFileFrom(const std::string& path, std::string& err)
   if ((int) data.currentValues.size() != kNumParams) { err = "Current values count mismatch (expected 11)"; return; }
 
   PushUndo();
+  mFading = false;
 
   for (int i = 0; i < kNumPresets; ++i)
     std::copy(data.presets[i].begin(), data.presets[i].end(), mPresets[i].begin());
@@ -940,11 +1001,11 @@ void ORMBandPass::ReadPresetFileFrom(const std::string& path, std::string& err)
   std::copy(data.currentValues.begin(), data.currentValues.end(), cur.begin());
   ApplySnapshot(cur);
 
-  mMorphPos = std::clamp(data.morphPos, 0.0, (double) (kNumQuick - 1));
-  if (mMorphSlider)
+  mFadePos = std::clamp(data.fadePos, 0.0, (double) (kNumQuick - 1));
+  if (mFadeSlider)
   {
-    mMorphSlider->SetValue((float) (mMorphPos / (kNumQuick - 1.0)));
-    mMorphSlider->SetDirty(true);
+    mFadeSlider->SetValue((float) (mFadePos / (kNumQuick - 1.0)));
+    mFadeSlider->SetDirty(true);
   }
 
   for (int i = 0; i < kNumPresets; ++i)
@@ -996,6 +1057,7 @@ void ORMBandPass::OnDragDrop(int src, float x, float y)
 
 void ORMBandPass::CopyLtoR()
 {
+  mFading = false;
   PushUndo();
   SetParamFromEditor(kFreqR, GetParam(kFreqL)->Value());
   SetParamFromEditor(kBwR,   GetParam(kBwL)->Value());
@@ -1005,6 +1067,7 @@ void ORMBandPass::CopyLtoR()
 
 void ORMBandPass::CopyRtoL()
 {
+  mFading = false;
   PushUndo();
   SetParamFromEditor(kFreqL, GetParam(kFreqR)->Value());
   SetParamFromEditor(kBwL,   GetParam(kBwR)->Value());
@@ -1014,6 +1077,7 @@ void ORMBandPass::CopyRtoL()
 
 void ORMBandPass::FlipLR()
 {
+  mFading = false;
   PushUndo();
   const double fL = GetParam(kFreqL)->Value(), bL = GetParam(kBwL)->Value(), gL = GetParam(kGainL)->Value();
   SetParamFromEditor(kFreqL, GetParam(kFreqR)->Value());
@@ -1050,25 +1114,42 @@ void ORMBandPass::MirrorLinkedParams(int paramIdx)
 #endif
 }
 
+ParamSnapshot ORMBandPass::MixSnapshots(const ParamSnapshot& a, const ParamSnapshot& b, double t) const
+{
+  ParamSnapshot out;
+  for (int i = 0; i < kNumParams; ++i)
+  {
+    const IParam* p = GetParam(i);
+    const double va = p->FromNormalized(p->ToNormalized(a[i]));
+    const double vb = p->FromNormalized(p->ToNormalized(b[i]));
+    out[i] = va + (vb - va) * t;
+  }
+  return out;
+}
+
 ParamSnapshot ORMBandPass::InterpolatePresets(double pos)
 {
   const int i0 = std::clamp(static_cast<int>(std::floor(pos)), 0, kNumQuick - 1);
   const int i1 = std::min(i0 + 1, kNumQuick - 1);
   const double t = std::clamp(pos - i0, 0.0, 1.0);
-
-  ParamSnapshot out;
-  for (int i = 0; i < kNumParams; ++i)
-  {
-    const IParam* p = GetParam(i);
-    const int n0 = mSlotNumber[i0], n1 = mSlotNumber[i1];
-    const double a = p->FromNormalized(p->ToNormalized(mPresets[n0][i]));
-    const double b = p->FromNormalized(p->ToNormalized(mPresets[n1][i]));
-    out[i] = a + (b - a) * t;
-  }
-  return out;
+  return MixSnapshots(mPresets[mSlotNumber[i0]], mPresets[mSlotNumber[i1]], t);
 }
 
-void ORMBandPass::OnMorphDrag(double normalizedPos)
+void ORMBandPass::OnFadeDrag(double normalizedPos)
 {
+  mFading = false;
   ApplySnapshot(InterpolatePresets(normalizedPos * (kNumQuick - 1)));
+}
+
+void ORMBandPass::StartFade(const ParamSnapshot& to)
+{
+  if (mFadeTime <= 0.001 || !GetUI())
+  {
+    ApplySnapshot(to);
+    return;
+  }
+  mFadeFrom = Snapshot();
+  mFadeTo = to;
+  mFadeStartTime = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+  mFading = true;
 }

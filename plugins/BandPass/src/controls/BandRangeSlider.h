@@ -170,17 +170,18 @@ private:
     WDL_String value;
     IRECT measured;
     GetCutValue(kCornerLow, value, true);
-    g.MeasureText(t, "LOWCUT ", measured);
+    g.MeasureText(t, "LOWCUT", measured);
     const float lowPrefixW = measured.W();
     g.MeasureText(t, value.Get(), measured);
-    mCutValueRect[0] = IRECT(hdr.L + lowPrefixW, hdr.T, hdr.L + lowPrefixW + measured.W(), hdr.B);
-    g.DrawText(t, "LOWCUT ", hdr);
+    mCutValueRect[0] = IRECT(hdr.L + lowPrefixW + LABEL_VALUE_GAP, hdr.T,
+                             hdr.L + lowPrefixW + LABEL_VALUE_GAP + measured.W(), hdr.B);
+    g.DrawText(t, "LOWCUT", hdr);
     g.DrawText(t, value.Get(), mCutValueRect[0]);
 
     GetCutValue(kCornerHigh, value, true);
     g.MeasureText(tf, value.Get(), measured);
     mCutValueRect[1] = IRECT(hdr.R - measured.W(), hdr.T, hdr.R, hdr.B);
-    g.DrawText(tf, "HIGHCUT ", IRECT(hdr.L, hdr.T, mCutValueRect[1].L, hdr.B));
+    g.DrawText(tf, "HIGHCUT", IRECT(hdr.L, hdr.T, mCutValueRect[1].L - LABEL_VALUE_GAP, hdr.B));
     g.DrawText(tf, value.Get(), mCutValueRect[1]);
   }
 

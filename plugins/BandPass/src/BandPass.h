@@ -64,8 +64,14 @@ private:
   std::array<int, kNumPresets> mSlotNumber;
   ParamSnapshot mDefaultSnapshot {};
   int mCurrentPreset = 0;
-  double mMorphPos = 0.0;
-  IVSliderControl* mMorphSlider = nullptr;
+  double mFadePos = 0.0;
+  IVSliderControl* mFadeSlider = nullptr;
+  double mFadeTime = 0.0;
+  bool mFading = false;
+  bool mInFadeApply = false;
+  double mFadeStartTime = 0.0;
+  ParamSnapshot mFadeFrom {};
+  ParamSnapshot mFadeTo {};
   PresetSlotControl* mSlotButtons[kNumPresets] = {};
   int mDragSourceSlot = -1;
   int mDragTargetSlot = -1;
@@ -115,5 +121,7 @@ private:
   void MirrorLinkedParams(int paramIdx);
 
   ParamSnapshot InterpolatePresets(double pos);
-  void OnMorphDrag(double normalizedPos);
+  ParamSnapshot MixSnapshots(const ParamSnapshot& a, const ParamSnapshot& b, double t) const;
+  void OnFadeDrag(double normalizedPos);
+  void StartFade(const ParamSnapshot& to);
 };
