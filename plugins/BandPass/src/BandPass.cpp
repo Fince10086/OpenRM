@@ -19,8 +19,8 @@ static IVStyle MakeORMStyle()
 {
   IVColorSpec colors = { COL_100(), COL_100(), COL_900(), COL_900(),
                          COL_500(), COL_300(), COL_300(), COL_900(), COL_900() };
-  const IText labelText(20, COL_700(), "Outfit", EAlign::Center, EVAlign::Bottom);
-  const IText valueText(20, COL_900(), "Outfit-SemiBold", EAlign::Center, EVAlign::Top);
+  const IText labelText(20, COL_700(), FontRegular(), EAlign::Center, EVAlign::Bottom);
+  const IText valueText(20, COL_900(), FontSemiBold(), EAlign::Center, EVAlign::Top);
   return IVStyle(true, true, colors, labelText, valueText,
                  true, true, false, false, 0.2f, 1.5f, 0.f, 1.f, 0.f);
 }
@@ -29,8 +29,8 @@ static IVStyle MakeButtonStyle()
 {
   IVColorSpec colors = { COL_100(), COL_100(), COL_900(), COL_900(),
                          COL_500(), COL_300(), COL_300(), COL_900(), COL_900() };
-  const IText labelText(20, COL_900(), "Outfit-SemiBold", EAlign::Center, EVAlign::Middle);
-  const IText valueText(20, COL_900(), "Outfit-SemiBold", EAlign::Center, EVAlign::Middle);
+  const IText labelText(20, COL_900(), FontSemiBold(), EAlign::Center, EVAlign::Middle);
+  const IText valueText(20, COL_900(), FontSemiBold(), EAlign::Center, EVAlign::Middle);
   return IVStyle(true, true, colors, labelText, valueText, true, true, false, false,
                  0.f, 2.f, 0.f, 1.f, 0.f);
 }
@@ -77,6 +77,12 @@ public:
   PresetFadeSlider(const IRECT& bounds, IActionFunction aF, const IVStyle& style)
   : IVSliderControl(bounds, aF, "", style, false, EDirection::Horizontal)
   {
+  }
+
+  void Draw(IGraphics& g) override
+  {
+    g.FillRect(COL_100(), mRECT);
+    DrawWidget(g);
   }
 
   void DrawTrack(IGraphics& g, const IRECT& filledArea) override
@@ -153,7 +159,10 @@ public:
 
   void Draw(IGraphics& g) override
   {
-    IVSliderControl::Draw(g);
+    // Live background (see FilterNodePad::Draw): the base-class kBG color is
+    // captured at construction, so paint it ourselves for real-time themes.
+    g.FillRect(COL_100(), mRECT);
+    DrawWidget(g);
     DrawHeader(g, mDirection == EDirection::Vertical ? -90.f : 0.f);
   }
 
@@ -355,15 +364,24 @@ public:
 class SectionTitleControl : public ITextControl
 {
 public:
-  SectionTitleControl(const IRECT& bounds, const char* str, const IText& text)
-  : ITextControl(bounds, str, text) {}
+  // colorStep: 0 = COL_900 (primary), 1 = COL_500 (muted).
+  // fontStep: 0 = regular, 1 = semibold, 2 = bold. Both are resolved live in
+  // Draw() so language switches (Outfit <-> Mixed) and theme changes apply
+  // without rebuilding the UI - the base class stores a captured IText copy.
+  SectionTitleControl(const IRECT& bounds, const char* str, const IText& text, int colorStep = 0, int fontStep = 2)
+  : ITextControl(bounds, str, text), mColorStep(colorStep), mFontStep(fontStep) {}
 
   void Draw(IGraphics& g) override
   {
     IText t = mText;
-    strcpy(t.mFont, FontBold());
+    t.mFGColor = mColorStep == 0 ? COL_900() : COL_500();
+    strcpy(t.mFont, mFontStep == 0 ? FontRegular() : mFontStep == 1 ? FontSemiBold() : FontBold());
     g.DrawText(t, mStr.Get(), mRECT, &mBlend);
   }
+
+private:
+  int mColorStep = 0;
+  int mFontStep = 2;
 };
 
 class SettingsMenuButton : public IControl
@@ -409,10 +427,13 @@ private:
   std::function<void()> mOnToggle;
 };
 
-// In-app settings "second window": a centered modal panel in the same flat
-// style as the rest of the UI. Replaces the old native popup menu. Contains
-// a LANGUAGE group (title + 中文 / English buttons) and a THEME group
-// (dark / light buttons). Clicking outside the card closes the panel.
+// In-app settings "second window": a centered modal panel styled like the
+// right-hand control column of the main UI (no rounded corners, flat buttons,
+// left-aligned uppercase titles, ORMSlider-style stepped sliders). Replaces
+// the old native popup menu. Contains LANGUAGE (title + 中文 / English),
+// THEME (dark / light), HUE (15..360 step 15) and SATURATION (0/15/30/50)
+// controls. All edits repaint live via RefreshThemeColors(), never rebuild
+// the UI, so the panel stays open for preview. Clicking outside closes it.
 class SettingsPanelControl : public IControl
 {
 public:
@@ -420,62 +441,72 @@ public:
   {
     std::function<void(int lang)> onLanguage;
     std::function<void(int themeMode)> onTheme;
+    std::function<void(int hue)> onHue;
+    std::function<void(int satMax)> onSat;
   };
 
   SettingsPanelControl(const IRECT& bounds, Hooks hooks)
   : IControl(bounds)
   , mHooks(std::move(hooks))
   {
-    // Card geometry (centered, fixed size).
     mCard = IRECT(bounds.MW() - kCardW * 0.5f, bounds.MH() - kCardH * 0.5f,
                   bounds.MW() + kCardW * 0.5f, bounds.MH() + kCardH * 0.5f);
-    const float pad = 20.f;
-    const float btnY1 = mCard.T + 74.f;
-    const float btnY2 = mCard.T + 132.f;
-    const float bw = (kCardW - 2.f * pad - kBtnGap) * 0.5f;
-    mLangBtns[0] = IRECT(mCard.L + pad, btnY1, mCard.L + pad + bw, btnY1 + kBtnH);
-    mLangBtns[1] = IRECT(mCard.L + pad + bw + kBtnGap, btnY1, mCard.L + pad + 2.f * bw + kBtnGap, btnY1 + kBtnH);
-    mThemeBtns[0] = IRECT(mCard.L + pad, btnY2, mCard.L + pad + bw, btnY2 + kBtnH);
-    mThemeBtns[1] = IRECT(mCard.L + pad + bw + kBtnGap, btnY2, mCard.L + pad + 2.f * bw + kBtnGap, btnY2 + kBtnH);
+    const float bw = (kCardW - 2.f * kPad - kBtnGap) * 0.5f;
+    mLangBtns[0]  = IRECT(mCard.L + kPad, mCard.T + kLangBtnY, mCard.L + kPad + bw, mCard.T + kLangBtnY + kBtnH);
+    mLangBtns[1]  = IRECT(mCard.L + kPad + bw + kBtnGap, mCard.T + kLangBtnY, mCard.L + kPad + 2.f * bw + kBtnGap, mCard.T + kLangBtnY + kBtnH);
+    mThemeBtns[0] = IRECT(mCard.L + kPad, mCard.T + kThemeBtnY, mCard.L + kPad + bw, mCard.T + kThemeBtnY + kBtnH);
+    mThemeBtns[1] = IRECT(mCard.L + kPad + bw + kBtnGap, mCard.T + kThemeBtnY, mCard.L + kPad + 2.f * bw + kBtnGap, mCard.T + kThemeBtnY + kBtnH);
+    mHueSlider  = IRECT(mCard.L + kPad, mCard.T + kHueY, mCard.L + kPad + kSliderW, mCard.T + kHueY + kSliderH);
+    mSatSlider  = IRECT(mCard.L + kPad, mCard.T + kSatY, mCard.L + kPad + kSliderW, mCard.T + kSatY + kSliderH);
+    mHueValue   = IRECT(mCard.L + kPad + kSliderW + kValGap, mCard.T + kHueY, mCard.R - kPad, mCard.T + kHueY + kSliderH);
+    mSatValue   = IRECT(mCard.L + kPad + kSliderW + kValGap, mCard.T + kSatY, mCard.R - kPad, mCard.T + kSatY + kSliderH);
     mHover = kHoverNone;
   }
 
   void Draw(IGraphics& g) override
   {
-    // Dim the rest of the UI behind the modal card.
-    g.FillRect(IColor(70, 26, 25, 22), mRECT);
+    g.FillRect(IColor(70, 26, 25, 22), mRECT); // dim backdrop
 
-    const float cr = 12.f;
-    g.FillRoundRect(COL_100(), mCard, cr);
-    g.DrawRoundRect(COL_300(), mCard, cr, &mBlend, 1.f);
+    g.FillRect(COL_100(), mCard);
+    g.DrawRect(COL_300(), mCard, &mBlend, 1.f);
 
     const int lang = orm::UILang();
     const int theme = ThemeMode();
-    const float cx = mCard.MW();
+    const float L = mCard.L + kPad;
 
-    // Title.
-    g.DrawText(IText(22, COL_900(), FontBold(), EAlign::Center, EVAlign::Middle),
-               orm::Tr(orm::kTxtSettings, lang), IRECT(mCard.L, mCard.T + 10.f, mCard.R, mCard.T + 42.f));
+    // SETTINGS title: double size, left aligned, uppercase.
+    g.DrawText(IText(kTitleSize * 2.f, COL_900(), FontBold(), EAlign::Near, EVAlign::Middle),
+               orm::Tr(orm::kTxtSettings, lang), IRECT(L, mCard.T + kTitleY, mCard.R - kPad, mCard.T + kTitleY + kTitleSize * 2.f + 6.f));
+    g.DrawRect(COL_300(), IRECT(L, mCard.T + kRuleY, mCard.R - kPad, mCard.T + kRuleY + 1.f), &mBlend, 1.f);
 
-    // LANGUAGE group label.
-    g.DrawText(IText(14, COL_700(), FontSemiBold(), EAlign::Center, EVAlign::Middle),
-               orm::Tr(orm::kTxtLanguage, lang), IRECT(mCard.L, mCard.T + 44.f, mCard.R, mCard.T + 68.f));
+    // Group titles: same size as the main panel's section titles, left aligned.
+    g.DrawText(IText(kTitleSize, COL_900(), FontBold(), EAlign::Near, EVAlign::Middle),
+               orm::Tr(orm::kTxtLanguage, lang), IRECT(L, mCard.T + kLangTitleY, mCard.R - kPad, mCard.T + kLangTitleY + kTitleSize));
+    g.DrawText(IText(kTitleSize, COL_900(), FontBold(), EAlign::Near, EVAlign::Middle),
+               orm::Tr(orm::kTxtTheme, lang), IRECT(L, mCard.T + kThemeTitleY, mCard.R - kPad, mCard.T + kThemeTitleY + kTitleSize));
+    g.DrawText(IText(kTitleSize, COL_900(), FontBold(), EAlign::Near, EVAlign::Middle),
+               orm::Tr(orm::kTxtHue, lang), IRECT(L, mCard.T + kHueTitleY, mCard.R - kPad, mCard.T + kHueTitleY + kTitleSize));
+    g.DrawText(IText(kTitleSize, COL_900(), FontBold(), EAlign::Near, EVAlign::Middle),
+               orm::Tr(orm::kTxtSaturation, lang), IRECT(L, mCard.T + kSatTitleY, mCard.R - kPad, mCard.T + kSatTitleY + kTitleSize));
 
-    DrawButton(g, mLangBtns[0], "中文", lang == orm::kLangZH, mHover == kHoverLangZh);
-    DrawButton(g, mLangBtns[1], "English", lang == orm::kLangEN, mHover == kHoverLangEn);
-
-    // THEME group: two buttons (dark / light), no label per spec.
-    DrawButton(g, mThemeBtns[0], orm::Tr(orm::kTxtDark, lang),  theme == 1, mHover == kHoverThemeDark);
+    // Language names render in their own script: 中文 always uses the CJK
+    // Mixed font (Outfit has no Chinese glyphs), English stays latin.
+    DrawButton(g, mLangBtns[0],  orm::Tr(orm::kTxtChinese, lang), lang == orm::kLangZH, mHover == kHoverLangZh, FontCJKSemiBold());
+    DrawButton(g, mLangBtns[1],  "English", lang == orm::kLangEN, mHover == kHoverLangEn, "Outfit-SemiBold");
+    DrawButton(g, mThemeBtns[0], orm::Tr(orm::kTxtDark,  lang), theme == 1, mHover == kHoverThemeDark);
     DrawButton(g, mThemeBtns[1], orm::Tr(orm::kTxtLight, lang), theme == 0, mHover == kHoverThemeLight);
+
+    DrawSlider(g, mHueSlider, HueNorm());
+    DrawSlider(g, mSatSlider, SatNorm());
+    DrawValue(g, mHueValue, HueLabel(lang));
+    DrawValue(g, mSatValue, SatLabel(lang));
   }
 
   void OnMouseDown(float x, float y, const IMouseMod& mod) override
   {
-    // Clicking outside the card closes the panel.
     if (!mCard.Contains(x, y))
     {
-      if (mHooks.onLanguage) {} // no-op guard
-      SetHiddenBySelf(true);
+      SetVisible(false);
       return;
     }
     for (int i = 0; i < 2; ++i)
@@ -491,6 +522,18 @@ public:
         return;
       }
     }
+    if (mHueSlider.Contains(x, y)) { mDrag = kDragHue; DragTo(x, y); return; }
+    if (mSatSlider.Contains(x, y)) { mDrag = kDragSat; DragTo(x, y); return; }
+  }
+
+  void OnMouseDrag(float x, float y, float dX, float dY, const IMouseMod& mod) override
+  {
+    if (mDrag != kDragNone) DragTo(x, y);
+  }
+
+  void OnMouseUp(float x, float y, const IMouseMod& mod) override
+  {
+    mDrag = kDragNone;
   }
 
   void OnMouseOver(float x, float y, const IMouseMod& mod) override
@@ -514,8 +557,36 @@ public:
 
 private:
   enum EHover { kHoverNone, kHoverLangZh, kHoverLangEn, kHoverThemeDark, kHoverThemeLight };
+  enum EDrag  { kDragNone, kDragHue, kDragSat };
 
-  void SetHiddenBySelf(bool hide) { Hide(hide); }
+  // Normalized handle positions, read from live theme state. Saturation maps
+  // by step index (none/low/med/high are equally spaced, not linear in %).
+  float HueNorm() const { const int h = ThemeHue(); return (h - kHueMin) / (float) (kHueMax - kHueMin); }
+  float SatNorm() const
+  {
+    const int s = ThemeSatMax();
+    int idx = 0;
+    for (int i = 0; i < kNumSat; ++i) if (kSatVals[i] == s) { idx = i; break; }
+    return idx / (float) (kNumSat - 1);
+  }
+
+  void DragTo(float x, float y)
+  {
+    const IRECT* s = (mDrag == kDragHue) ? &mHueSlider : &mSatSlider;
+    const float n = std::clamp((x - s->L) / s->W(), 0.f, 1.f);
+    if (mDrag == kDragHue)
+    {
+      const int hue = kHueMin + (int) std::lround(n * (kHueMax - kHueMin) / kHueStep) * kHueStep;
+      if (hue != ThemeHue()) { ThemeHue() = hue; if (mHooks.onHue) mHooks.onHue(hue); }
+    }
+    else
+    {
+      const int idx = (int) std::lround(n * (kNumSat - 1));
+      const int sat = kSatVals[idx];
+      if (sat != ThemeSatMax()) { ThemeSatMax() = sat; if (mHooks.onSat) mHooks.onSat(sat); }
+    }
+    SetDirty(false);
+  }
 
   EHover HitHover(float x, float y) const
   {
@@ -526,26 +597,86 @@ private:
     return kHoverNone;
   }
 
-  void DrawButton(IGraphics& g, const IRECT& b, const char* label, bool active, bool hover)
+  void DrawButton(IGraphics& g, const IRECT& b, const char* label, bool active, bool hover,
+                  const char* font = nullptr)
   {
     const IColor fill = active ? COL_900()
                        : hover   ? COL_500()
                                  : COL_300();
-    g.FillRoundRect(fill, b, 8.f);
+    g.FillRect(fill, b);
     const IColor fg = active ? COL_100() : COL_900();
-    g.DrawText(IText(16, fg, FontSemiBold(), EAlign::Center, EVAlign::Middle), label, b);
+    g.DrawText(IText(16, fg, font ? font : FontSemiBold(), EAlign::Center, EVAlign::Middle), label, b);
   }
 
-  static constexpr float kCardW = 300.f;
-  static constexpr float kCardH = 180.f;
+  // ORMSlider-style track: COL_300 rail, COL_500 fill, ringed handle. No
+  // rounded corners (matches the panel's flat look). Position is stepped.
+  void DrawSlider(IGraphics& g, const IRECT& s, float norm)
+  {
+    const float y = s.MH();
+    const float x = s.L + norm * s.W();
+    g.FillRect(COL_300(), IRECT(s.L, y - 2.f, s.R, y + 2.f));
+    g.FillRect(COL_500(), IRECT(s.L, y - 2.f, x, y + 2.f));
+    g.FillCircle(COL_100(), x, y, HANDLE_R + HANDLE_RING);
+    g.FillCircle(COL_900(), x, y, HANDLE_R);
+  }
+
+  void DrawValue(IGraphics& g, const IRECT& v, const char* label)
+  {
+    g.DrawText(IText(14, COL_700(), FontSemiBold(), EAlign::Far, EVAlign::Middle), label, v);
+  }
+
+  const char* HueLabel(int lang) const
+  {
+    static char buf[16];
+    std::snprintf(buf, sizeof(buf), "%d\xC2\xB0", ThemeHue());
+    (void) lang;
+    return buf;
+  }
+
+  const char* SatLabel(int lang) const
+  {
+    static const int kIds[kNumSat] = { orm::kTxtSatNone, orm::kTxtSatLow, orm::kTxtSatMed, orm::kTxtSatHigh };
+    const int idx = std::clamp((ThemeSatMax() - kSatMin) / kSatStep, 0, kNumSat - 1);
+    return orm::Tr(kIds[idx], lang);
+  }
+
+  // Card layout (fixed, centered).
+  static constexpr float kCardW = 400.f;
+  static constexpr float kCardH = 352.f;
+  static constexpr float kPad = 24.f;
   static constexpr float kBtnH = 34.f;
   static constexpr float kBtnGap = 12.f;
+  static constexpr float kSliderW = 250.f;
+  static constexpr float kSliderH = 30.f;
+  static constexpr float kValGap = 12.f;
+  static constexpr float kTitleSize = 20.f;
+  static constexpr float kTitleY = 16.f;
+  static constexpr float kRuleY = 62.f;
+  static constexpr float kLangTitleY = 74.f;
+  static constexpr float kLangBtnY = 102.f;
+  static constexpr float kThemeTitleY = 152.f;
+  static constexpr float kThemeBtnY = 180.f;
+  static constexpr float kHueTitleY = 230.f;
+  static constexpr float kHueY = 258.f;
+  static constexpr float kSatTitleY = 300.f;
+  static constexpr float kSatY = 328.f;
+
+  static constexpr int kHueMin = 15;
+  static constexpr int kHueMax = 360;
+  static constexpr int kHueStep = 15;
+  static constexpr int kSatMin = 0;
+  static constexpr int kSatMax = 50;
+  static constexpr int kSatStep = 1;
+  static constexpr int kNumSat = 4;
+  static constexpr int kSatVals[kNumSat] = { 0, 15, 30, 50 };
 
   Hooks mHooks;
   IRECT mCard;
   IRECT mLangBtns[2];
   IRECT mThemeBtns[2];
+  IRECT mHueSlider, mSatSlider, mHueValue, mSatValue;
   EHover mHover = kHoverNone;
+  EDrag mDrag = kDragNone;
 };
 
 ORMBandPass::ORMBandPass(const InstanceInfo& info)
@@ -757,7 +888,7 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
     bindTip(gainR, orm::kTxtTipGain);
 
     SectionTitleControl* presetsTitle = new SectionTitleControl(IRECT(kCol1X, 38, 1050, 60), "PRESETS",
-      IText(20, COL_900(), "Outfit-Bold", EAlign::Near, EVAlign::Middle));
+      IText(20, COL_900(), FontBold(), EAlign::Near, EVAlign::Middle));
     pGraphics->AttachControl(presetsTitle);
     presetsTitle->SetTargetRECT(IRECT(kCol1X, 38, kCol1X + 130, 60));
     bindText(orm::kTxtPresets, [presetsTitle](const char* s) { presetsTitle->SetStr(s); presetsTitle->SetDirty(false); });
@@ -832,7 +963,7 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
     bindTip(morphSlider, orm::kTxtTipMorph);
 
     SectionTitleControl* randomTitle = new SectionTitleControl(IRECT(kCol1X, 242, 1050, 268), "RANDOM",
-      IText(20, COL_900(), "Outfit-Bold", EAlign::Near, EVAlign::Middle));
+      IText(20, COL_900(), FontBold(), EAlign::Near, EVAlign::Middle));
     pGraphics->AttachControl(randomTitle);
     randomTitle->SetTargetRECT(IRECT(kCol1X, 242, kCol1X + 130, 268));
     bindText(orm::kTxtRandom, [randomTitle](const char* s) { randomTitle->SetStr(s); randomTitle->SetDirty(false); });
@@ -902,8 +1033,8 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
     pGraphics->AttachControl(mFadeSlider);
     bindTip(mFadeSlider, orm::kTxtTipFade);
 
-    IText ormText(32, COL_900(), "Outfit-Bold", EAlign::Near, EVAlign::Bottom);
-    pGraphics->AttachControl(new ITextControl(IRECT(kCol1X, 552, kCol1X + 120, 586), "ORM", ormText));
+    IText ormText(32, COL_900(), FontBold(), EAlign::Near, EVAlign::Bottom);
+    pGraphics->AttachControl(new SectionTitleControl(IRECT(kCol1X, 552, kCol1X + 120, 586), "ORM", ormText, 0));
     // Align the gear and version to the actual ink box of "ORM" so the gear
     // bottom sits on the baseline rather than on the descender line.
     IRECT ormInk(kCol1X, 552, kCol1X + 120, 586);
@@ -912,13 +1043,14 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
     const float gearR = gearL + (ormInk.B - ormInk.T);
     pGraphics->AttachControl(new SettingsMenuButton(IRECT(gearL, ormInk.T, gearR, ormInk.B),
       [this]() { ToggleSettingsPanel(); }));
-    pGraphics->AttachControl(new ITextControl(IRECT(kCol1X, 584, 1060, 618), "BandPass",
-      IText(32, COL_900(), "Outfit-Bold", EAlign::Near, EVAlign::Middle)));
-    pGraphics->AttachControl(new ITextControl(IRECT(gearR + 8.f, 549, 1060, 583), "v" PLUG_VERSION_STR,
-      IText(20, COL_500(), "Outfit", EAlign::Near, EVAlign::Bottom)));
+    pGraphics->AttachControl(new SectionTitleControl(IRECT(kCol1X, 584, 1060, 618), "BandPass",
+      IText(32, COL_900(), FontBold(), EAlign::Near, EVAlign::Middle), 0));
+    pGraphics->AttachControl(new SectionTitleControl(IRECT(gearR + 8.f, 549, 1060, 583), "v" PLUG_VERSION_STR,
+      IText(20, COL_500(), FontRegular(), EAlign::Near, EVAlign::Bottom), 1, 0));
 
     // In-app settings panel (modal second window). Attached last so it draws
-    // above every control; starts hidden.
+    // above every control; starts hidden. Hue / saturation edits repaint the
+    // whole UI live (RefreshThemeColors), so the panel never needs to close.
     mSettingsPanel = new SettingsPanelControl(IRECT(0.f, 0.f, (float) PLUG_WIDTH, (float) PLUG_HEIGHT),
     {
       [this](int lang) {
@@ -931,6 +1063,14 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
       [this](int themeMode) {
         mThemeMode = themeMode;
         ApplyTheme();
+      },
+      [this](int hue) {
+        ThemeHue() = hue;
+        RefreshThemeColors();
+      },
+      [this](int satMax) {
+        ThemeSatMax() = satMax;
+        RefreshThemeColors();
       },
     });
     mSettingsPanel->SetVisible(false);
@@ -1225,26 +1365,6 @@ void ORMBandPass::MaybePushGestureUndo()
 
 void ORMBandPass::OnIdle()
 {
-  // Deferred theme rebuild: safe here because OnIdle runs outside any
-  // control callback stack (the popup menu that triggered the change has
-  // already been fully unwound by now).
-  if (mThemeDirty)
-  {
-    mThemeDirty = false;
-#if IPLUG_EDITOR
-    if (GetUI())
-    {
-      // IVStyle colors (frame/background) and the panel background are
-      // captured at construction time, so rebuild the whole UI to repaint
-      // with the new theme. mLayoutFunc re-attaches panel background, fonts
-      // and controls, then reapplies language bindings via ApplyLanguage().
-      GetUI()->RemoveAllControls();
-      LayoutUI(GetUI());
-      GetUI()->SetAllControlsDirty();
-    }
-#endif
-  }
-
   // Spectrum FFT + UI transfer happens here (main thread), never on the audio thread.
   mSpectrumL.TransmitData(*this);
   mSpectrumR.TransmitData(*this);
@@ -1614,12 +1734,27 @@ void ORMBandPass::ApplyTooltips()
 void ORMBandPass::ApplyTheme()
 {
   ThemeMode() = mThemeMode;
-  // Do NOT rebuild the UI here: theme changes can be triggered from the
-  // settings panel while it is being clicked, and iPlug2 may still be inside
-  // a mouse callback for that control. RemoveAllControls() would free the
-  // panel (and the popup menu machinery) mid-event, crashing on return.
-  // Defer the rebuild to the next OnIdle tick instead.
-  mThemeDirty = true;
+  RefreshThemeColors();
+}
+
+// Repaint everything with the current theme state. Colors are resolved live
+// in every Draw() (see Theme.h), so no UI rebuild is needed - the settings
+// panel stays open for real-time preview while hue / saturation / mode change.
+void ORMBandPass::RefreshThemeColors()
+{
+#if IPLUG_EDITOR
+  if (GetUI())
+  {
+    // The panel background is an IPanelControl with a captured pattern -
+    // update it live so the backdrop follows the theme too.
+    if (IControl* pBG = GetUI()->GetBackgroundControl())
+    {
+      if (IPanelControl* pPanel = dynamic_cast<IPanelControl*>(pBG))
+        pPanel->SetPattern(COL_100());
+    }
+    GetUI()->SetAllControlsDirty();
+  }
+#endif
 }
 
 void ORMBandPass::ToggleSettingsPanel()

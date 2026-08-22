@@ -98,7 +98,11 @@ public:
 
   void Draw(IGraphics& g) override
   {
-    IVXYPadControl::Draw(g);
+    // Background is drawn live (COL_100()) instead of via the base class,
+    // whose kBG color is captured at construction time - this keeps hue /
+    // saturation / theme changes real-time without rebuilding the UI.
+    g.FillRect(COL_100(), mRECT);
+    DrawWidget(g);
     DrawCorner(g, kCornerCenter);
     DrawCorner(g, kCornerBw);
     DrawSlope(g);

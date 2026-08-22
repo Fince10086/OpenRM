@@ -120,6 +120,7 @@ public:
     g.FillRect(fill, b.GetPadded(-BLOCK_GAP));
     IText t = mStyle.valueText;
     t.mFGColor = pressed ? COL_100() : COL_900();
+    strcpy(t.mFont, FontSemiBold()); // resolve live: Outfit (EN) / Mixed (ZH)
     g.DrawText(t, mLabelStr.Get(), b);
     if (mDragging)
     {

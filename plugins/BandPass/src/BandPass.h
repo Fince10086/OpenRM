@@ -118,7 +118,6 @@ private:
   bool mGesturePending = false;
 
   int mThemeMode = 0;
-  bool mThemeDirty = false; // deferred UI rebuild flag (see ApplyTheme)
   SettingsPanelControl* mSettingsPanel = nullptr;
   std::vector<std::pair<int, std::function<void(const char*)>>> mTextBindings;
   std::vector<std::pair<IControl*, int>> mTooltipBindings;
@@ -170,5 +169,6 @@ private:
   void ApplyLanguage();
   void ApplyTooltips();
   void ApplyTheme();
+  void RefreshThemeColors();
   void ToggleSettingsPanel();
 };
