@@ -1,8 +1,8 @@
 #pragma once
 
 #include "IPlug_include_in_plug_hdr.h"
-#include "ISender.h"
 #include "dsp/BandPassCore.h"
+#include "dsp/SpectrumSTFT.h"
 #include "Strings.h"
 #include "IGraphicsPopupMenu.h"
 
@@ -75,8 +75,18 @@ private:
   orm::BandPassCore mCore;
   orm::ParamMailbox<orm::BandPassCore::Params> mParamMailbox;
 
-  ISpectrumSender<2> mSpectrumL; // ch0 = L dry input, ch1 = L processed output
-  ISpectrumSender<2> mSpectrumR; // ch0 = R dry input, ch1 = R processed output
+  SpectrumSTFT<2> mSpectrumL; // ch0 = L dry input, ch1 = L band-pass wet output
+  SpectrumSTFT<2> mSpectrumR; // ch0 = R dry input, ch1 = R band-pass wet output
+
+  // Pre-process snapshot of the dry input, so the "original" spectrum stays valid
+  // even when the host processes in-place (inputs == outputs).
+  static constexpr int kMaxSpecBlock = 16384;
+  std::array<sample, kMaxSpecBlock> mSpecInL {};
+  std::array<sample, kMaxSpecBlock> mSpecInR {};
+  // Band-pass wet signal (filtered x gain, before the mix crossfade), fed to the
+  // spectrum "processed" line so it shows the filter output regardless of MIX.
+  std::array<sample, kMaxSpecBlock> mWetL {};
+  std::array<sample, kMaxSpecBlock> mWetR {};
 
   FilterNodePad*  mPadL = nullptr;
   FilterNodePad*  mPadR = nullptr;
@@ -115,6 +125,7 @@ private:
 
   orm::BandPassCore::Params CollectParams() const;
   void PublishParamsToCore();
+  void SendSpectrumConfig();
 
   void SetParamFromEditor(int idx, double value);
   void RefreshAfterEdit();

@@ -54,8 +54,32 @@ public:
       stream.Get(&d, 0);
       const int nBins = std::min((int) d.vals[0].size(), std::max(mNumBins, 0));
       if (nBins <= 0) return;
-      mSpectrumIn.assign(d.vals[0].begin(), d.vals[0].begin() + nBins);
-      mSpectrumOut.assign(d.vals[1].begin(), d.vals[1].begin() + nBins);
+
+      // Time smoothing: attack is fast, release is slow, so fast transients stay
+      // visible while steady-state (and noise) doesn't flicker. Coeffs are
+      // one-pole exp(-updatePeriod / tau); updatePeriod = hop = FFT/overlap (4x).
+      const double updatePeriod = (double) nBins * 2.0 / 4.0 / std::max(mSampleRate, 1.0);
+      mAttackCoeff  = (float) std::exp(-updatePeriod / 0.003);
+      mReleaseCoeff = (float) std::exp(-updatePeriod / 0.08);
+
+      if (mSpectrumIn.size() != (size_t) nBins)
+      {
+        mSpectrumIn.assign(nBins, 0.f);
+        mSpectrumOut.assign(nBins, 0.f);
+      }
+      const float a = mAttackCoeff, r = mReleaseCoeff;
+      for (int i = 0; i < nBins; ++i)
+      {
+        const float raw = d.vals[0][i], prev = mSpectrumIn[i];
+        const float coef = (raw > prev) ? a : r;
+        mSpectrumIn[i] = coef * prev + (1.f - coef) * raw;
+      }
+      for (int i = 0; i < nBins; ++i)
+      {
+        const float raw = d.vals[1][i], prev = mSpectrumOut[i];
+        const float coef = (raw > prev) ? a : r;
+        mSpectrumOut[i] = coef * prev + (1.f - coef) * raw;
+      }
       SetDirty(false);
     }
     else if (msgTag == kMsgTagSampleRate)
@@ -203,7 +227,9 @@ public:
   // Overlays the received spectra onto the plot area. The pad's X axis is the
   // (log) frequency of param 0, so the same mapping used by DrawTrack places the
   // FFT bins on screen. Y maps amplitude -90..0 dBFS over the plot height.
-  // ch0 (dry input) is drawn as a thin line, ch1 (processed output) as a thick one.
+  // ch0 (dry input) is drawn as a thin light-grey line, ch1 (band-pass wet output)
+  // as a slightly thicker dark-grey line. Points are joined with a Catmull-Rom to
+  // Bezier interpolation (tension 0.6) to remove the jagged polyline look.
   void DrawSpectrum(IGraphics& g)
   {
     const IRECT tb = PlotRect();
@@ -213,26 +239,75 @@ public:
     const IParam* pf = GetParam(0);
     const double binHz = mSampleRate / std::max((double) mNumBins * 2.0, 1.0);
 
+    struct Pt { float x, y; };
+
     auto drawLine = [&](const std::vector<float>& spec, const IColor& col, float width)
     {
-      g.PathClear();
-      bool started = false;
-      for (int i = 0; i < mNumBins && i < (int) spec.size(); ++i)
+      // Logarithmic band aggregation: fold the linear FFT bins into a fixed
+      // number of log-spaced bands (max per band keeps peaks), which removes
+      // high-frequency raggedness and cuts the drawn point count ~8x.
+      std::vector<Pt> pts;
+      pts.reserve(kSpectrumBands);
       {
-        const double f = (double) i * binHz;
-        if (f < 20.0 || f > 20000.0) continue;
-        const float x = tb.L + (float) pf->ToNormalized(f) * tb.W();
-        const float amp = spec[i];
-        const float db = (amp > 1e-6f) ? std::clamp(20.f * std::log10(amp), -90.f, 0.f) : -90.f;
-        const float y = tb.B - (db + 90.f) / 90.f * tb.H();
-        if (!started) { g.PathMoveTo(x, y); started = true; }
-        else          { g.PathLineTo(x, y); }
+        const double logLo = std::log2(kSpecFreqLo);
+        const double logHi = std::log2(kSpecFreqHi);
+        const double logBand = (logHi - logLo) / kSpectrumBands;
+        std::vector<float> bandMax(kSpectrumBands, 0.f);
+        std::vector<char>  bandUsed(kSpectrumBands, 0);
+        for (int i = 0; i < mNumBins && i < (int) spec.size(); ++i)
+        {
+          const double f = (double) i * binHz;
+          if (f < kSpecFreqLo || f > kSpecFreqHi) continue;
+          const int b = (int) ((std::log2(f) - logLo) / logBand);
+          if (b < 0 || b >= kSpectrumBands) continue;
+          const float amp = spec[i];
+          if (amp > bandMax[b]) bandMax[b] = amp;
+          bandUsed[b] = 1;
+        }
+        for (int b = 0; b < kSpectrumBands; ++b)
+        {
+          if (!bandUsed[b]) continue;
+          const double fCenter = kSpecFreqLo * std::exp2(logBand * (b + 0.5));
+          const float x = tb.L + (float) pf->ToNormalized(fCenter) * tb.W();
+          const float amp = bandMax[b];
+          const float db = (amp > 1e-6f) ? std::clamp(20.f * std::log10(amp), kSpectrumBottomDb, 0.f)
+                                         : kSpectrumBottomDb;
+          const float y = tb.B - (db - kSpectrumBottomDb) / (0.f - kSpectrumBottomDb) * tb.H();
+          pts.push_back({ x, y });
+        }
+      }
+      if (pts.size() < 2) return;
+
+      g.PathClear();
+      g.PathMoveTo(pts[0].x, pts[0].y);
+      if (pts.size() > 3)
+      {
+        // Catmull-Rom to cubic Bezier, tension s in [0,1] (0 = straight lines)
+        const float s = 0.6f;
+        const int n = (int) pts.size();
+        for (int i = 0; i < n - 1; ++i)
+        {
+          const Pt& p0 = pts[std::max(i - 1, 0)];
+          const Pt& p1 = pts[i];
+          const Pt& p2 = pts[i + 1];
+          const Pt& p3 = pts[std::min(i + 2, n - 1)];
+          const float c1x = p1.x + (p2.x - p0.x) * (s / 6.f);
+          const float c1y = p1.y + (p2.y - p0.y) * (s / 6.f);
+          const float c2x = p2.x - (p3.x - p1.x) * (s / 6.f);
+          const float c2y = p2.y - (p3.y - p1.y) * (s / 6.f);
+          g.PathCubicBezierTo(c1x, c1y, c2x, c2y, p2.x, p2.y);
+        }
+      }
+      else
+      {
+        for (int i = 1; i < (int) pts.size(); ++i)
+          g.PathLineTo(pts[i].x, pts[i].y);
       }
       g.PathStroke(IPattern(col), width);
     };
 
-    drawLine(mSpectrumIn,  COL_DIM,    1.f); // dry input
-    drawLine(mSpectrumOut, COL_ACCENT, 2.f); // processed output
+    drawLine(mSpectrumIn,  COL_FAINT,  1.f);   // dry input (light grey)
+    drawLine(mSpectrumOut, COL_ACCENT, 1.5f);  // band-pass wet output (dark grey)
   }
 
 private:
@@ -385,6 +460,16 @@ private:
   static constexpr float kSideH    = 0.f;
   static constexpr float kTopPad   = 30.f;
 
+  // Bottom of the spectrum dB scale (top is 0 dBFS).
+  static constexpr float kSpectrumBottomDb = -85.f;
+
+  // Logarithmic band aggregation: the linear FFT bins are folded into this many
+  // log-spaced display bands (max per band keeps peaks), removing high-frequency
+  // raggedness and cutting the drawn point count ~8x.
+  static constexpr int   kSpectrumBands = 256;
+  static constexpr float kSpecFreqLo    = 20.f;
+  static constexpr float kSpecFreqHi    = 20000.f;
+
   Hooks mHooks;
   WDL_String mSideLabel;
   WDL_String mCenterPrefix { "CENTER" };
@@ -396,10 +481,18 @@ private:
   int   mEditingCorner = -1;
   int   mSlopeIndex = kSlopeDefaultIdx;
 
-  std::vector<float> mSpectrumIn;   // ch0: dry input spectrum (magnitudes)
-  std::vector<float> mSpectrumOut;  // ch1: processed output spectrum (magnitudes)
-  int    mNumBins = 0;              // FFT size / 2, set via kMsgTagFFTSize
-  double mSampleRate = 44100.0;     // set via kMsgTagSampleRate
+  std::vector<float> mSpectrumIn;   // ch0: dry input spectrum, time-smoothed magnitudes
+  std::vector<float> mSpectrumOut;  // ch1: band-pass wet output spectrum, time-smoothed
+  // One-pole time-smoothing coefficients (attack fast / release slow), recomputed
+  // from the sample rate and FFT size on every received packet.
+  float mAttackCoeff  = 0.2f;
+  float mReleaseCoeff = 0.9f;
+  // Defaults match the sender (ISpectrumSender<2> with kSpectrumFFTSize=4096) so the
+  // spectrum renders even if the config messages arrive before this control attaches.
+  // OnIdle re-sends the real sample rate / FFT size every frame, so these converge
+  // to the exact values shortly after the UI opens.
+  int    mNumBins = 2048;           // FFT size / 2
+  double mSampleRate = 48000.0;     // Hz
 };
 
 END_IGRAPHICS_NAMESPACE

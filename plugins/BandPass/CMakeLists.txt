@@ -67,6 +67,7 @@ iplug_add_plugin(${PROJECT_NAME}
     src/Theme.h
     src/Strings.h
     src/dsp/BandPassCore.h
+    src/dsp/SpectrumSTFT.h
     src/controls/FilterNodePad.h
     src/controls/BandRangeSlider.h
     src/controls/PresetSlotControl.h

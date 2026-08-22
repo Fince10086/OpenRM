@@ -236,7 +236,8 @@ public:
     }
 
     void process(const float* const inL, const float* const inR,
-                 float* const outL, float* const outR, int n) noexcept
+                 float* const outL, float* const outR, int n,
+                 float* wetOutL = nullptr, float* wetOutR = nullptr) noexcept
     {
         const float gL = mParams.gainL, gR = mParams.gainR;
         const float mixAngle = mParams.mix * 0.5f * static_cast<float>(M_PI);
@@ -266,13 +267,16 @@ public:
             }
             wetL = mChainL.process(xl) * gL;
             wetR = mChainR.process(xr) * gR;
+            if (wetOutL) wetOutL[i] = wetL;
+            if (wetOutR) wetOutR[i] = wetR;
 
             outL[i] = xl * dryGain + wetL * wetGain;
             outR[i] = xr * dryGain + wetR * wetGain;
         }
     }
 
-    void process(const float* const in, float* const out, int n) noexcept
+    void process(const float* const in, float* const out, int n,
+                 float* wetOut = nullptr) noexcept
     {
         const float g = mParams.gainL;
         const float mixAngle = mParams.mix * 0.5f * static_cast<float>(M_PI);
@@ -294,6 +298,7 @@ public:
                 mChainL.setFreqs(f / mHalfBwL, f * mHalfBwL);
             }
             const float wet = mChainL.process(in[i]) * g;
+            if (wetOut) wetOut[i] = wet;
             out[i] = in[i] * dryGain + wet * wetGain;
         }
     }

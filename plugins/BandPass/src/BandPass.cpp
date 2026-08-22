@@ -798,30 +798,46 @@ void ORMBandPass::ProcessBlock(sample** inputs, sample** outputs, int nFrames)
   const int nOuts = NOutChansConnected();
   const int nIns = NInChansConnected();
 
+  // Snapshot the dry input BEFORE processing: some hosts run the plug-in
+  // in-place (inputs == outputs), so reading inputs[] after process() would
+  // give us the processed signal instead of the original.
+  const int nSpec = std::min(nFrames, kMaxSpecBlock);
+  if (nIns >= 2)
+  {
+    std::memcpy(mSpecInL.data(), inputs[0], nSpec * sizeof(sample));
+    std::memcpy(mSpecInR.data(), inputs[1], nSpec * sizeof(sample));
+  }
+  else
+  {
+    std::memcpy(mSpecInL.data(), inputs[0], nSpec * sizeof(sample));
+  }
+
   if (nOuts >= 2 && nIns >= 2)
   {
-    mCore.process(inputs[0], inputs[1], outputs[0], outputs[1], nFrames);
+    mCore.process(inputs[0], inputs[1], outputs[0], outputs[1], nFrames, mWetL.data(), mWetR.data());
     for (int c = 2; c < nOuts; ++c)
       std::memcpy(outputs[c], inputs[c], nFrames * sizeof(sample));
   }
   else
   {
-    mCore.process(inputs[0], outputs[0], nFrames);
+    mCore.process(inputs[0], outputs[0], nFrames, mWetL.data());
     for (int c = 1; c < nOuts; ++c)
       std::memcpy(outputs[c], outputs[0], nFrames * sizeof(sample));
   }
 
-  // Feed the pad spectra: ch0 = dry input, ch1 = processed output.
+  // Feed the pad spectra: ch0 = dry input (pre-process snapshot), ch1 = the
+  // band-pass wet signal (filtered x gain, before the mix crossfade), so the
+  // "processed" line always shows what the filter itself renders regardless of MIX.
   if (nIns >= 2)
   {
-    sample* specL[2] = { inputs[0], outputs[0] };
-    sample* specR[2] = { inputs[1], outputs[1] };
+    sample* specL[2] = { mSpecInL.data(), mWetL.data() };
+    sample* specR[2] = { mSpecInR.data(), mWetR.data() };
     mSpectrumL.ProcessBlock(specL, nFrames, kCtrlTagPadL, 2);
     mSpectrumR.ProcessBlock(specR, nFrames, kCtrlTagPadR, 2);
   }
   else
   {
-    sample* specM[2] = { inputs[0], outputs[0] };
+    sample* specM[2] = { mSpecInL.data(), mWetL.data() };
     mSpectrumL.ProcessBlock(specM, nFrames, kCtrlTagPadL, 2);
   }
 }
@@ -835,6 +851,15 @@ void ORMBandPass::OnReset()
   mSpectrumL.SetFFTSizeAndOverlap(kSpectrumFFTSize, kSpectrumOverlap);
   mSpectrumR.SetFFTSizeAndOverlap(kSpectrumFFTSize, kSpectrumOverlap);
 
+  SendSpectrumConfig();
+}
+
+void ORMBandPass::SendSpectrumConfig()
+{
+  // Sample rate / FFT size messages for the pads. Idempotent; re-sent from
+  // OnIdle every frame so a pad that attaches after OnReset (the common case:
+  // host instantiates the plugin, DSP init runs before the editor controls
+  // exist) still converges to the correct values.
   const double sr = GetSampleRate();
   const int fftSize = kSpectrumFFTSize;
   SendControlMsgFromDelegate(kCtrlTagPadL, FilterNodePad::kMsgTagSampleRate, sizeof(double), &sr);
@@ -1045,6 +1070,10 @@ void ORMBandPass::OnIdle()
   // Spectrum FFT + UI transfer happens here (main thread), never on the audio thread.
   mSpectrumL.TransmitData(*this);
   mSpectrumR.TransmitData(*this);
+
+  // Re-send sample rate / FFT size every frame: if the pads attached after the
+  // last OnReset (first UI open), they converge within one frame.
+  SendSpectrumConfig();
 
   using namespace std::chrono;
   const double now = duration<double>(steady_clock::now().time_since_epoch()).count();
