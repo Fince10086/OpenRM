@@ -20,8 +20,8 @@ static IVStyle MakeORMStyle()
 {
   IVColorSpec colors = { COL_100(), COL_100(), COL_900(), COL_900(),
                          COL_500(), COL_300(), COL_300(), COL_900(), COL_900() };
-  const IText labelText(20, COL_700(), FontRegular(), EAlign::Center, EVAlign::Bottom);
-  const IText valueText(20, COL_900(), FontSemiBold(), EAlign::Center, EVAlign::Top);
+  const IText labelText(20, COL_700(), kFontRegular, EAlign::Center, EVAlign::Bottom);
+  const IText valueText(20, COL_900(), kFontSemiBold, EAlign::Center, EVAlign::Top);
   return IVStyle(true, true, colors, labelText, valueText,
                  true, true, false, false, 0.2f, 1.5f, 0.f, 1.f, 0.f);
 }
@@ -30,8 +30,8 @@ static IVStyle MakeButtonStyle()
 {
   IVColorSpec colors = { COL_100(), COL_100(), COL_900(), COL_900(),
                          COL_500(), COL_300(), COL_300(), COL_900(), COL_900() };
-  const IText labelText(20, COL_900(), FontSemiBold(), EAlign::Center, EVAlign::Middle);
-  const IText valueText(20, COL_900(), FontSemiBold(), EAlign::Center, EVAlign::Middle);
+  const IText labelText(20, COL_900(), kFontSemiBold, EAlign::Center, EVAlign::Middle);
+  const IText valueText(20, COL_900(), kFontSemiBold, EAlign::Center, EVAlign::Middle);
   return IVStyle(true, true, colors, labelText, valueText, true, true, false, false,
                  0.f, 2.f, 0.f, 1.f, 0.f);
 }
@@ -44,9 +44,9 @@ public:
 
   void Draw(IGraphics& g) override
   {
-    const IColor col = mDragging        ? COL_700()  // dragging
-                     : GetMouseIsOver() ? COL_900()  // hover
-                                        : COL_500(); // rest
+    const IColor col = mDragging        ? COL_700()
+                     : GetMouseIsOver() ? COL_900()
+                                        : COL_500();
     g.FillTriangle(col, mRECT.L, mRECT.B, mRECT.R, mRECT.T, mRECT.R, mRECT.B);
   }
 
@@ -82,7 +82,7 @@ public:
     g.FillRect(fill, b.GetPadded(-BLOCK_GAP));
     IText t = mStyle.valueText;
     t.mFGColor = pressed ? COL_100() : COL_900();
-    strcpy(t.mFont, FontSemiBold());
+    strcpy(t.mFont, kFontSemiBold);
     g.DrawText(t, mLabelStr.Get(), b);
   }
 };
@@ -276,17 +276,17 @@ protected:
     if (rot == 0.f)
     {
       const IRECT hdr(mRECT.L, mRECT.T, mRECT.R, mRECT.T + kHeaderH);
-      g.DrawText(IText(20, COL_900(), FontSemiBold(), EAlign::Near, EVAlign::Middle),
+      g.DrawText(IText(20, COL_900(), kFontSemiBold, EAlign::Near, EVAlign::Middle),
                  mHeaderLabel.Get(), IRECT(hdr.L, hdr.T, hdr.MW(), hdr.B));
-      g.DrawText(IText(20, COL_700(), FontRegular(), EAlign::Far, EVAlign::Middle),
+      g.DrawText(IText(20, COL_700(), kFontRegular, EAlign::Far, EVAlign::Middle),
                  ds.Get(), IRECT(hdr.MW(), hdr.T, hdr.R, hdr.B));
     }
     else
     {
       const IRECT hdr(mRECT.L, mRECT.T, mRECT.L + kHeaderW, mRECT.B);
-      g.DrawText(IText(20, COL_900(), FontSemiBold(), EAlign::Near, EVAlign::Bottom, rot),
+      g.DrawText(IText(20, COL_900(), kFontSemiBold, EAlign::Near, EVAlign::Bottom, rot),
                  mHeaderLabel.Get(), hdr);
-      g.DrawText(IText(20, COL_700(), FontRegular(), EAlign::Far, EVAlign::Top, rot),
+      g.DrawText(IText(20, COL_700(), kFontRegular, EAlign::Far, EVAlign::Top, rot),
                  ds.Get(), hdr);
     }
   }
@@ -311,14 +311,11 @@ protected:
     return IRECT(mRECT.R - kTextW - kTextGap, mRECT.T, mRECT.R - kTextGap, mRECT.B);
   }
 
-  // Top of the visible (extended) track = pad plot top.
   float TrackVisTop() const { return mRECT.T + kPlotTopInset; }
 
   void OnResize() override
   {
     mWidgetBounds = mRECT.GetReducedFromRight(kTextW + kTextGap);
-    // Shrink the handle-travel range so that after the +/-handleSize render
-    // extension the visible track ends align with the pad plot top / bottom.
     mTrackBounds  = mWidgetBounds.GetReducedFromTop(kPlotTopInset + mHandleSize)
                                  .GetReducedFromBottom(mHandleSize)
                                  .GetMidHPadded(mTrackSize);
@@ -339,9 +336,9 @@ protected:
     FormatValue(ds);
 
     const IRECT hdr = TextRect();
-    g.DrawText(IText(20, COL_700(), FontRegular(), EAlign::Center, EVAlign::Top, 90.f),
+    g.DrawText(IText(20, COL_700(), kFontRegular, EAlign::Center, EVAlign::Top, 90.f),
                ds.Get(), IRECT(hdr.L, TrackVisTop(), hdr.R, hdr.B));
-    g.DrawText(IText(20, COL_900(), FontSemiBold(), EAlign::Center, EVAlign::Bottom, 90.f),
+    g.DrawText(IText(20, COL_900(), kFontSemiBold, EAlign::Center, EVAlign::Bottom, 90.f),
                mHeaderLabel.Get(), hdr);
   }
 };
@@ -364,7 +361,7 @@ public:
     const bool on = GetValue() > 0.5;
     IText t = mStyle.valueText;
     t.mFGColor = on ? COL_100() : COL_900();
-    strcpy(t.mFont, FontSemiBold());
+    strcpy(t.mFont, kFontSemiBold);
     g.DrawText(t, on ? mOnText.Get() : mOffText.Get(), mWidgetBounds, &mBlend);
   }
 };
@@ -395,7 +392,7 @@ public:
   {
     IText t = mText;
     t.mFGColor = mColorStep == 0 ? COL_900() : COL_500();
-    strcpy(t.mFont, mFontStep == 0 ? FontRegular() : mFontStep == 1 ? FontSemiBold() : FontBold());
+    strcpy(t.mFont, mFontStep == 0 ? kFontRegular : mFontStep == 1 ? kFontSemiBold : kFontBold);
     g.DrawText(t, mStr.Get(), mRECT, &mBlend);
   }
 
@@ -489,13 +486,13 @@ public:
     const int theme = ThemeMode();
     const float L = mCard.L + kPad;
 
-    g.DrawText(IText(kTitleSize, COL_900(), FontBold(), EAlign::Near, EVAlign::Middle),
+    g.DrawText(IText(kTitleSize, COL_900(), kFontBold, EAlign::Near, EVAlign::Middle),
                orm::Tr(orm::kTxtLanguage, lang), IRECT(L, mCard.T + kLangTitleY, mCard.R - kPad, mCard.T + kLangTitleY + kTitleSize));
-    g.DrawText(IText(kTitleSize, COL_900(), FontBold(), EAlign::Near, EVAlign::Middle),
+    g.DrawText(IText(kTitleSize, COL_900(), kFontBold, EAlign::Near, EVAlign::Middle),
                orm::Tr(orm::kTxtTheme, lang), IRECT(L, mCard.T + kThemeTitleY, mCard.R - kPad, mCard.T + kThemeTitleY + kTitleSize));
 
-    DrawButton(g, mLangBtns[0],  orm::Tr(orm::kTxtChinese, lang), lang == orm::kLangZH, mHover == kHoverLangZh, FontCJKSemiBold());
-    DrawButton(g, mLangBtns[1],  "ENGLISH", lang == orm::kLangEN, mHover == kHoverLangEn, "Outfit-SemiBold");
+    DrawButton(g, mLangBtns[0],  orm::Tr(orm::kTxtChinese, lang), lang == orm::kLangZH, mHover == kHoverLangZh, kFontSemiBold);
+    DrawButton(g, mLangBtns[1],  "ENGLISH", lang == orm::kLangEN, mHover == kHoverLangEn, kFontSemiBold);
     DrawButton(g, mThemeBtns[0], orm::Tr(orm::kTxtDark,  lang), theme == 1, mHover == kHoverThemeDark);
     DrawButton(g, mThemeBtns[1], orm::Tr(orm::kTxtLight, lang), theme == 0, mHover == kHoverThemeLight);
 
@@ -606,14 +603,14 @@ private:
                                  : COL_300();
     g.FillRect(fill, b);
     const IColor fg = active ? COL_100() : COL_900();
-    g.DrawText(IText(16, fg, font ? font : FontSemiBold(), EAlign::Center, EVAlign::Middle), label, b);
+    g.DrawText(IText(16, fg, font ? font : kFontSemiBold, EAlign::Center, EVAlign::Middle), label, b);
   }
 
   void DrawSliderHeader(IGraphics& g, const IRECT& hdr, const char* title, const char* value)
   {
-    g.DrawText(IText(kHeaderFontSize, COL_900(), FontSemiBold(), EAlign::Near, EVAlign::Middle),
+    g.DrawText(IText(kHeaderFontSize, COL_900(), kFontSemiBold, EAlign::Near, EVAlign::Middle),
                title, IRECT(hdr.L, hdr.T, hdr.MW(), hdr.B));
-    g.DrawText(IText(kHeaderFontSize, COL_700(), FontRegular(), EAlign::Far, EVAlign::Middle),
+    g.DrawText(IText(kHeaderFontSize, COL_700(), kFontRegular, EAlign::Far, EVAlign::Middle),
                value, IRECT(hdr.MW(), hdr.T, hdr.R, hdr.B));
   }
 
@@ -805,12 +802,9 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
   {
     pGraphics->AttachCornerResizer(new ThemeCornerResizer(pGraphics->GetBounds()), EUIResizerMode::Scale, false);
     pGraphics->AttachPanelBackground(COL_100());
-    pGraphics->LoadFont("Outfit", OUTFIT_FN);
-    pGraphics->LoadFont("Outfit-SemiBold", OUTFIT_SB_FN);
-    pGraphics->LoadFont("Outfit-Bold", OUTFIT_BD_FN);
-    pGraphics->LoadFont("Mixed", MIXED_FN);
-    pGraphics->LoadFont("Mixed-SemiBold", MIXED_SB_FN);
-    pGraphics->LoadFont("Mixed-Bold", MIXED_BD_FN);
+    pGraphics->LoadFont(kFontRegular, MIXED_FN);
+    pGraphics->LoadFont(kFontSemiBold, MIXED_SB_FN);
+    pGraphics->LoadFont(kFontBold, MIXED_BD_FN);
 
     const IVStyle style   = MakeORMStyle();
     const IVStyle btnStyle= MakeButtonStyle();
@@ -886,7 +880,7 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
     bindTip(gainR, orm::kTxtTipGain);
 
     SectionTitleControl* presetsTitle = new SectionTitleControl(IRECT(kCol1X, 30, 1050, 52), "PRESETS",
-      IText(20, COL_900(), FontBold(), EAlign::Near, EVAlign::Middle));
+      IText(20, COL_900(), kFontBold, EAlign::Near, EVAlign::Middle));
     pGraphics->AttachControl(presetsTitle);
     presetsTitle->SetTargetRECT(IRECT(kCol1X, 30, kCol1X + 130, 52));
     bindText(orm::kTxtPresets, [presetsTitle](const char* s) { presetsTitle->SetStr(s); presetsTitle->SetDirty(false); });
@@ -961,7 +955,7 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
     bindTip(morphSlider, orm::kTxtTipMorph);
 
     SectionTitleControl* randomTitle = new SectionTitleControl(IRECT(kCol1X, 234, 1050, 260), "RANDOM",
-      IText(20, COL_900(), FontBold(), EAlign::Near, EVAlign::Middle));
+      IText(20, COL_900(), kFontBold, EAlign::Near, EVAlign::Middle));
     pGraphics->AttachControl(randomTitle);
     randomTitle->SetTargetRECT(IRECT(kCol1X, 234, kCol1X + 130, 260));
     bindText(orm::kTxtRandom, [randomTitle](const char* s) { randomTitle->SetStr(s); randomTitle->SetDirty(false); });
@@ -1031,7 +1025,7 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
     pGraphics->AttachControl(mFadeSlider);
     bindTip(mFadeSlider, orm::kTxtTipFade);
 
-    IText ormText(32, COL_900(), FontBold(), EAlign::Near, EVAlign::Bottom);
+    IText ormText(32, COL_900(), kFontBold, EAlign::Near, EVAlign::Bottom);
     pGraphics->AttachControl(new SectionTitleControl(IRECT(kCol1X, 544, kCol1X + 120, 578), "ORM", ormText, 0));
     IRECT ormInk(kCol1X, 544, kCol1X + 120, 578);
     pGraphics->MeasureText(ormText, "ORM", ormInk);
@@ -1040,9 +1034,9 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
     pGraphics->AttachControl(new SettingsMenuButton(IRECT(gearL, ormInk.T, gearR, ormInk.B),
       [this]() { ToggleSettingsPanel(); }));
     pGraphics->AttachControl(new SectionTitleControl(IRECT(kCol1X, 576, 1060, 610), "BandPass",
-      IText(32, COL_900(), FontBold(), EAlign::Near, EVAlign::Middle), 0));
+      IText(32, COL_900(), kFontBold, EAlign::Near, EVAlign::Middle), 0));
     pGraphics->AttachControl(new SectionTitleControl(IRECT(gearR + 8.f, 541, 1060, 575), "v" PLUG_VERSION_STR,
-      IText(20, COL_500(), FontRegular(), EAlign::Near, EVAlign::Bottom), 1, 0));
+      IText(20, COL_500(), kFontRegular, EAlign::Near, EVAlign::Bottom), 1, 0));
 
     mSettingsPanel = new SettingsPanelControl(IRECT(0.f, 0.f, (float) PLUG_WIDTH, (float) PLUG_HEIGHT),
     {

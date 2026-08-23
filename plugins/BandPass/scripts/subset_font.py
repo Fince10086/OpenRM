@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-# 将 OPPO Sans(可变字体) 按插件用到的中文字符子集化并实例化字重,
+# 手动工具: 修改 Strings.h 中的中文后运行一次, 重新生成并提交 Mixed-*.ttf
+# 将 OPPO Sans 按插件用到的中文字符子集化并实例化字重,
 # 再与对应字重的 Outfit 合成 Mixed 字体: ASCII 用 Outfit 字形, 中文用 OPPO 字形
 # 用法: subset_font.py <OPPO源字体> <Outfit目录> <Strings.h> <输出目录>
 import io

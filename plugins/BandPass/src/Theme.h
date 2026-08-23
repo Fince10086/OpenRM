@@ -7,13 +7,9 @@
 
 namespace iplug { namespace igraphics {
 
-inline const char* FontRegular()  { return orm::UILang() == orm::kLangZH ? "Mixed" : "Outfit"; }
-inline const char* FontSemiBold() { return orm::UILang() == orm::kLangZH ? "Mixed-SemiBold" : "Outfit-SemiBold"; }
-inline const char* FontBold()     { return orm::UILang() == orm::kLangZH ? "Mixed-Bold" : "Outfit-Bold"; }
-
-inline const char* FontCJKRegular()  { return "Mixed"; }
-inline const char* FontCJKSemiBold() { return "Mixed-SemiBold"; }
-inline const char* FontCJKBold()     { return "Mixed-Bold"; }
+constexpr const char* kFontRegular  = "Mixed";
+constexpr const char* kFontSemiBold = "Mixed-SemiBold";
+constexpr const char* kFontBold     = "Mixed-Bold";
 
 inline int& ThemeMode()   { static int mode = 0; return mode; }
 inline int& ThemeHue()    { static int hue = 45; return hue; }
@@ -55,10 +51,10 @@ inline IColor COL_100() { const int B = ThemeMode() ? kDarkB[4] : kLightB[4]; re
 inline IColor WarmGray(int v)
 {
   int vv = ThemeMode() ? 255 - v : v;
-  if (ThemeMode()) vv = std::min(255, vv + 16);    // lift dark-mode ramp ~6%
-  const float b = vv / 255.f;                       // brightness 0..1
-  const int B = (int) std::lround(b * 100.f);       // brightness 0..100 for the formula
-  const float s = SatForB(B) / 100.f;               // saturation 0..1
+  if (ThemeMode()) vv = std::min(255, vv + 16);
+  const float b = vv / 255.f;
+  const int B = (int) std::lround(b * 100.f);
+  const float s = SatForB(B) / 100.f;
   return HSBToIColor(ThemeHue(), s, b);
 }
 

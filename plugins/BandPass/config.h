@@ -56,9 +56,6 @@
 #define APP_COPY_AUV3 0
 #define APP_SIGNAL_VECTOR_SIZE 64
 
-#define OUTFIT_FN "Outfit-Regular.ttf"
-#define OUTFIT_SB_FN "Outfit-SemiBold.ttf"
-#define OUTFIT_BD_FN "Outfit-Bold.ttf"
 #define MIXED_FN "Mixed-Regular.ttf"
 #define MIXED_SB_FN "Mixed-SemiBold.ttf"
 #define MIXED_BD_FN "Mixed-Bold.ttf"

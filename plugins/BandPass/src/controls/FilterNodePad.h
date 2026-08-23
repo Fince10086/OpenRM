@@ -122,7 +122,7 @@ public:
       {
         WDL_String init; GetCornerValue(id, init, false);
         EAlign align = (id == kCornerBw) ? EAlign::Far : EAlign::Near;
-        IText t(20, COL_900(), FontSemiBold(), align, EVAlign::Middle);
+        IText t(20, COL_900(), kFontSemiBold, align, EVAlign::Middle);
         mEditingCorner = id;
         GetUI()->CreateTextEntry(*this, t, CornerValueRect(id), init.Get(), kNoValIdx);
         return;
@@ -218,7 +218,7 @@ public:
   {
     if (mSideLabel.GetLength() == 0) return;
     const IRECT r = SideLabelRect();
-    IText t(40, COL_500(), FontBold(), EAlign::Center, EVAlign::Middle, -90.f);
+    IText t(40, COL_500(), kFontBold, EAlign::Center, EVAlign::Middle, -90.f);
     g.DrawText(t, mSideLabel.Get(), r);
   }
 
@@ -343,7 +343,7 @@ private:
     const IRECT r = CornerRect(id);
     const bool far = (id == kCornerBw);
     const EAlign align = far ? EAlign::Far : EAlign::Near;
-    const IText t(20, COL_900(), FontSemiBold(), align, EVAlign::Middle);
+    const IText t(20, COL_900(), kFontSemiBold, align, EVAlign::Middle);
     const char* prefix = far ? mBwPrefix.Get() : mCenterPrefix.Get();
     WDL_String value;
     GetCornerValue(id, value, true);
@@ -380,7 +380,7 @@ private:
   void DrawSlope(IGraphics& g)
   {
     const IRECT r = SlopeRect();
-    const IText t(20, COL_900(), FontSemiBold(), EAlign::Center, EVAlign::Middle);
+    const IText t(20, COL_900(), kFontSemiBold, EAlign::Center, EVAlign::Middle);
 
     WDL_String value; GetSlopeValue(value);
     IRECT m1, m2;

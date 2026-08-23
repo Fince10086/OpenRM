@@ -51,7 +51,7 @@ public:
       {
         WDL_String init; GetCutValue(id, init, false);
         const EAlign align = (id == kCornerLow) ? EAlign::Near : EAlign::Far;
-        const IText t(20, COL_900(), FontSemiBold(), align, EVAlign::Middle);
+        const IText t(20, COL_900(), kFontSemiBold, align, EVAlign::Middle);
         mEditingCorner = id;
         GetUI()->CreateTextEntry(*this, t, CutValueRect(id), init.Get(), kNoValIdx);
         return;
@@ -167,8 +167,8 @@ private:
   void DrawHeader(IGraphics& g)
   {
     const IRECT hdr = HeaderRect();
-    const IText t(20, COL_900(), FontSemiBold(), EAlign::Near, EVAlign::Middle);
-    const IText tf(20, COL_900(), FontSemiBold(), EAlign::Far, EVAlign::Middle);
+    const IText t(20, COL_900(), kFontSemiBold, EAlign::Near, EVAlign::Middle);
+    const IText tf(20, COL_900(), kFontSemiBold, EAlign::Far, EVAlign::Middle);
 
     WDL_String value;
     IRECT measured;
