@@ -1,6 +1,9 @@
 cmake_minimum_required(VERSION 3.14)
 project(OpenRM VERSION 0.2.0)
 
+# 右键留给插件自己的菜单（映射色块换色等），不弹宿主参数菜单
+add_compile_definitions(IGRAPHICS_NO_CONTEXT_MENU)
+
 add_subdirectory(plugins/BandPass)
 
 # ---- DSP 核心离线自测 (纯 C++17, 不依赖 iPlug2) ----

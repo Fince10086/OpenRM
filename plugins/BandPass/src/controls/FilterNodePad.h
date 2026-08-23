@@ -125,7 +125,7 @@ public:
   {
     if (mSlopeRect.Contains(x, y))
     {
-      OpenSlopeMenu();
+      if (!mod.R) OpenSlopeMenu();
       return;
     }
     for (int i = 0; i < 2; ++i)
@@ -137,19 +137,41 @@ public:
         return;
       }
     }
-    for (int id : { kCornerCenter, kCornerBw })
+    if (!mod.R)
     {
-      if (CornerValueRect(id).Contains(x, y))
+      for (int id : { kCornerCenter, kCornerBw })
       {
-        WDL_String init; GetCornerValue(id, init, false, false);
-        EAlign align = (id == kCornerBw) ? EAlign::Far : EAlign::Near;
-        IText t(20, COL_900(), kFontSemiBold, align, EVAlign::Middle);
-        mEditingCorner = id;
-        GetUI()->CreateTextEntry(*this, t, CornerValueRect(id), init.Get(), kNoValIdx);
-        return;
+        if (CornerValueRect(id).Contains(x, y))
+        {
+          WDL_String init; GetCornerValue(id, init, false, false);
+          EAlign align = (id == kCornerBw) ? EAlign::Far : EAlign::Near;
+          IText t(20, COL_900(), kFontSemiBold, align, EVAlign::Middle);
+          mEditingCorner = id;
+          GetUI()->CreateTextEntry(*this, t, CornerValueRect(id), init.Get(), kNoValIdx);
+          return;
+        }
       }
+      // Only start pad dragging when the press lands on the gradient plot area;
+      // the corner-text band above it belongs to the texts, not the pad.
+      if (PlotRect().Contains(x, y))
+        IVXYPadControl::OnMouseDown(x, y, mod);
     }
-    IVXYPadControl::OnMouseDown(x, y, mod);
+  }
+
+  void OnMouseDrag(float x, float y, float dX, float dY, const IMouseMod& mod) override
+  {
+    // Map position against the gradient plot area, not the full control rect
+    // (which includes the corner-text band at the top). Ignores stray drags
+    // from presses that never started on the plot.
+    if (!mMouseDown) return;
+    const IRECT tb = PlotRect();
+    x = std::clamp(x, tb.L, tb.R);
+    y = std::clamp(y, tb.T, tb.B);
+    const float xn = (x - tb.L) / tb.W();
+    const float yn = 1.f - ((y - tb.T) / tb.H());
+    SetValue(xn, 0);
+    SetValue(yn, 1);
+    SetDirty(true);
   }
 
   void OnMouseDblClick(float x, float y, const IMouseMod& mod) override {}
@@ -182,9 +204,8 @@ public:
       const double actBw = std::clamp(pb->FromNormalized(GetValue(1)) * std::exp2((double) mAgBwOct * 0.5), 1., 31.);
       const float gx = tb.L + (float) pf->ToNormalized(actF) * tb.W();
       const float gy = tb.B - (float) pb->ToNormalized(actBw) * tb.H();
-      const float r = mHandleRadius * 0.75f;
-      g.FillCircle(COL_100(), gx, gy, r + 1.5f);
-      g.FillCircle(AgColorGhost(mAgMapOn[0] ? mAgMapColor[0] : mAgMapColor[1]), gx, gy, r);
+      g.FillCircle(AgColorGhost(mAgMapOn[0] ? mAgMapColor[0] : mAgMapColor[1]), gx, gy, mHandleRadius);
+      g.FillCircle(COL_100(), gx, gy, mHandleRadius * 0.25f);
     }
     DrawHandle(g, tb, hb);
   }

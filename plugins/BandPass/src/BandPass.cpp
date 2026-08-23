@@ -168,6 +168,7 @@ public:
   };
 
   void SetHeaderSwatchColor(int colorIdx) { mHeaderSwatchColor = colorIdx; SetDirty(false); }
+  void SetHeaderFont(const char* font) { mHeaderFont = font; SetDirty(false); }
   void SetAgMapHooks(const AgHooks& h) { mAgHooks = h; }
   void SetAgMapState(bool on, int colorIdx)
   {
@@ -224,7 +225,9 @@ public:
       else mAgHooks.agToggle();
       return;
     }
-    if (mod.L && !mod.R && !mod.A && ValueRect().Contains(x, y))
+    if (mod.R)
+      return;
+    if (mod.L && !mod.A && ValueRect().Contains(x, y))
     {
       if (GetParam())
         PromptUserInput(ValueRect());
@@ -355,7 +358,7 @@ protected:
                    mAgSwatchRect.GetPadded(-1.f));
         valueR = mAgSwatchRect.L - 6.f;
       }
-      g.DrawText(IText(20, COL_900(), kFontSemiBold, EAlign::Near, EVAlign::Middle),
+      g.DrawText(IText(20, COL_900(), mHeaderFont, EAlign::Near, EVAlign::Middle),
                  mHeaderLabel.Get(), IRECT(labelL, hdr.T, hdr.MW(), hdr.B));
       g.DrawText(IText(20, COL_700(), kFontRegular, EAlign::Far, EVAlign::Middle),
                  ds.Get(), IRECT(hdr.MW(), hdr.T, valueR, hdr.B));
@@ -387,6 +390,7 @@ protected:
   }
 
   WDL_String mHeaderLabel;
+  const char* mHeaderFont = kFontSemiBold;
   std::function<void(WDL_String&)> mValueFormatter;
   int mHeaderSwatchColor = -1;
   bool mAgMapOn = false;
@@ -1089,7 +1093,7 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
     bindTip(mGainSliderR, orm::kTxtTipGain);
 
     SectionTitleControl* presetsTitle = new SectionTitleControl(IRECT(kCol1X, 30, 1050, 52), "PRESETS",
-      IText(20, COL_900(), kFontBold, EAlign::Near, EVAlign::Middle));
+      IText(20, COL_900(), kFontBold, EAlign::Near, EVAlign::Middle), 0, 1);
     pGraphics->AttachControl(presetsTitle);
     presetsTitle->SetTargetRECT(IRECT(kCol1X, 30, kCol1X + 130, 52));
     bindText(orm::kTxtPresets, [presetsTitle](const char* s) { presetsTitle->SetStr(s); presetsTitle->SetDirty(false); });
@@ -1158,18 +1162,19 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
       ds.Set(buf);
     });
     pGraphics->AttachControl(morphSlider);
+    morphSlider->SetHeaderFont(kFontRegular);
     morphSlider->SetValue(std::log(0.25 / 0.01) / std::log(6000.));
     morphSlider->SetDirty(false);
     bindText(orm::kTxtMorph, [morphSlider](const char* s) { morphSlider->SetHeaderLabel(s); });
     bindTip(morphSlider, orm::kTxtTipMorph);
 
     SectionTitleControl* randomTitle = new SectionTitleControl(IRECT(kCol1X, 234, 1050, 260), "RANDOM",
-      IText(20, COL_900(), kFontBold, EAlign::Near, EVAlign::Middle));
+      IText(20, COL_900(), kFontBold, EAlign::Near, EVAlign::Middle), 0, 1);
     pGraphics->AttachControl(randomTitle);
     randomTitle->SetTargetRECT(IRECT(kCol1X, 234, kCol1X + 130, 260));
     bindText(orm::kTxtRandom, [randomTitle](const char* s) { randomTitle->SetStr(s); randomTitle->SetDirty(false); });
     bindTip(randomTitle, orm::kTxtTipRandom);
-    mAgPicker = new AgColorPickerControl(IRECT(kPanelR - AG_SWATCH_BIG, 234, kPanelR, 260),
+    mAgPicker = new AgColorPickerControl(IRECT(kPanelR - AG_SWATCH - 1.f, 240.f, kPanelR - 1.f, 254.f),
                                          [this](int idx) { SetAgSelectedColor(idx); });
     pGraphics->AttachControl(mAgPicker);
     bindTip(mAgPicker, orm::kTxtTipAgPicker);
@@ -1182,6 +1187,7 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
                                           "RANGE", style, EDirection::Horizontal);
         pGraphics->AttachControl(mAgRangeSlider[c]);
         mAgRangeSlider[c]->SetHeaderSwatchColor(c);
+        mAgRangeSlider[c]->SetHeaderFont(kFontRegular);
         mAgRangeSlider[c]->Hide(c != mAgSelColor);
         bindText(orm::kTxtRange, [this, c](const char* s) { mAgRangeSlider[c]->SetHeaderLabel(s); });
         bindTip(mAgRangeSlider[c], orm::kTxtTipRange);
@@ -1189,6 +1195,7 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
                                           "SPEED", style, EDirection::Horizontal);
         pGraphics->AttachControl(mAgSpeedSlider[c]);
         mAgSpeedSlider[c]->SetHeaderSwatchColor(c);
+        mAgSpeedSlider[c]->SetHeaderFont(kFontRegular);
         mAgSpeedSlider[c]->Hide(c != mAgSelColor);
         bindText(orm::kTxtSpeed, [this, c](const char* s) { mAgSpeedSlider[c]->SetHeaderLabel(s); });
         bindTip(mAgSpeedSlider[c], orm::kTxtTipSpeed);

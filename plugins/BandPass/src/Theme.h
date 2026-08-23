@@ -65,8 +65,7 @@ static constexpr float HANDLE_RING = 1.5f;
 static constexpr float LABEL_VALUE_GAP = 12.f;
 
 // RANDOM mapping swatches (fixed functional colors, independent of theme hue)
-constexpr float AG_SWATCH_BIG = 26.f;   // RANDOM color picker
-constexpr float AG_SWATCH = 14.f;       // parameter/title swatches
+constexpr float AG_SWATCH = 14.f;       // all mapping swatches
 constexpr float AG_SWATCH_GAP = 8.f;
 
 constexpr int kNumAgColors = 4;
