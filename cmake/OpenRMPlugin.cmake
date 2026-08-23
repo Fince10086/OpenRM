@@ -17,8 +17,10 @@
 #   )
 #
 # 封装内容:
-#   1. iplug_add_plugin 目标创建
-#   2. APPLE: 字体拷贝 -> ad-hoc 签名 -> 部署到 ~/Library/Audio/Plug-Ins/... (POST_BUILD)
+#   1. iplug_add_plugin 目标创建; FONTS 展开为完整路径走 RESOURCES 参数:
+#      - Windows: 字体嵌入 dll (IGraphics Win 端 LocateResource 优先读嵌入 TTF 资源)
+#      - macOS:   字体进 bundle Contents/Resources (与下方 POST_BUILD 签名/部署互补)
+#   2. APPLE: ad-hoc 签名 -> 部署到 ~/Library/Audio/Plug-Ins/... (POST_BUILD)
 #   3. Extras include 目录 (nlohmann/json 等)
 #
 # 注意: iPlug2.cmake 的 include 与 find_package 必须留在插件 CMakeLists 目录作用域,
@@ -28,8 +30,21 @@
 function(openrm_add_plugin NAME)
   cmake_parse_arguments(_p "" "FONT_DIR" "SOURCES;DEFINES;FORMATS;FONTS" ${ARGN})
 
+  if(NOT _p_FONT_DIR)
+    set(_p_FONT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/resources/fonts")
+  endif()
+
+  # 字体展开为完整路径, 经 RESOURCES 交给 iPlug2:
+  #   Windows: 嵌入 dll 的 TTF 资源 (LocateResource 优先读取, 无需拷贝文件)
+  #   macOS:   进 bundle Contents/Resources
+  set(_font_resources)
+  foreach(_font IN LISTS _p_FONTS)
+    list(APPEND _font_resources "${_p_FONT_DIR}/${_font}")
+  endforeach()
+
   iplug_add_plugin(${NAME}
     SOURCES ${_p_SOURCES}
+    RESOURCES ${_font_resources}
     FORMATS ${_p_FORMATS}
     DEFINES ${_p_DEFINES}
   )
@@ -41,15 +56,12 @@ function(openrm_add_plugin NAME)
     return()
   endif()
 
-  # 注意: 字体故意不通过 iPlug2 的 RESOURCES 参数打包,
-  # 在下方 POST_BUILD 中按“拷字体 -> 签名 -> 部署”顺序手动处理。
+  # 注意: 字体已通过上方 RESOURCES 参数进入 bundle (macOS) / 嵌入二进制 (Windows)。
+  # 这里在 mac 上重建 Resources 目录并重新拷贝字体, 再执行 ad-hoc 签名 -> 部署,
+  # 保证单目标 (--target ...) 构建时签名步骤也生效。
   find_program(IPLUG2_CODESIGN_EXEC codesign)
   if(NOT IPLUG2_CODESIGN_EXEC OR NOT _p_FONTS)
     return()
-  endif()
-
-  if(NOT _p_FONT_DIR)
-    set(_p_FONT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/resources/fonts")
   endif()
 
   if(TARGET ${NAME}-au AND TARGET ${NAME}-vst3)
