@@ -77,19 +77,10 @@ private:
     T mSnapshot {};
 };
 
-// One channel of the band-pass: two independent Butterworth filters in series,
-// a high-pass at LOWCUT followed by a low-pass at HIGHCUT. Each edge has
-// M = 2*(slopeDb/12) poles (12/24/48/96 dB/oct -> 2/4/8/16 poles), realized as
-// M/2 cascaded 2nd-order TPT SVF sections whose Q values come from the
-// Butterworth pole angles: Q_k = 1/(2*cos(theta_k)), theta_k = (2k-1)*pi/(2M).
-// This is a true Butterworth response (unlike an equal-Q cascade): maximally
-// flat passband, -3 dB exactly at the cut, and 6M dB/oct rolloff — one octave
-// past the cut attenuates by the selected slope value, independent of bandwidth.
 class ChannelChain
 {
 public:
-    static constexpr int kMaxSections = 8; // 96 dB/oct per edge = 16 poles = 8 sections
-
+    static constexpr int kMaxSections = 8;
     void prepare(double sr) noexcept
     {
         mSampleRate = sr;
@@ -103,8 +94,6 @@ public:
         for (auto& f : mLp) f.reset();
     }
 
-    // lowHz: LOWCUT (high-pass cutoff), highHz: HIGHCUT (low-pass cutoff),
-    // slopeDb: rolloff in dB/oct (12/24/48/96 -> 1/2/4/8 sections per edge).
     void setParams(double lowHz, double highHz, double slopeDb) noexcept
     {
         const int sections = std::clamp((int) std::lround(slopeDb / 12.0), 1, kMaxSections);
@@ -124,7 +113,6 @@ public:
         }
     }
 
-    // Agitation: per-sample cutoff update, keeping the per-section Q values.
     void setFreqs(double lowHz, double highHz) noexcept
     {
         for (int k = 0; k < mSections; ++k)
@@ -177,8 +165,8 @@ public:
         bool   agOn     = false;
         float  agAmount = 0.1f;
         double agRate   = 1.0;
-        double slopeDbL = 96.0; // L rolloff in dB/oct: 12/24/48/96
-        double slopeDbR = 96.0; // R rolloff in dB/oct: 12/24/48/96
+        double slopeDbL = 96.0;
+        double slopeDbR = 96.0;
     };
 
     BandPassCore() = default;

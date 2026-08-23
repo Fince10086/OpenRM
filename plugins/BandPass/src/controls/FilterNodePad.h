@@ -98,9 +98,6 @@ public:
 
   void Draw(IGraphics& g) override
   {
-    // Background is drawn live (COL_100()) instead of via the base class,
-    // whose kBG color is captured at construction time - this keeps hue /
-    // saturation / theme changes real-time without rebuilding the UI.
     g.FillRect(COL_100(), mRECT);
     DrawWidget(g);
     DrawCorner(g, kCornerCenter);
@@ -131,7 +128,6 @@ public:
     IVXYPadControl::OnMouseDown(x, y, mod);
   }
 
-  // Don't inherit the base-class double-click reset-to-default behavior.
   void OnMouseDblClick(float x, float y, const IMouseMod& mod) override {}
 
   void OnTextEntryCompletion(const char* str, int valIdx) override
@@ -235,9 +231,6 @@ public:
 
     auto drawFill = [&](const std::vector<float>& spec, const IColor& topColor, const IColor& bottomColor)
     {
-      // Logarithmic band aggregation: fold the linear FFT bins into a fixed
-      // number of log-spaced bands (max per band keeps peaks), which removes
-      // high-frequency raggedness and cuts the drawn point count ~8x.
       std::vector<Pt> pts;
       pts.reserve(kSpectrumBands);
       {
@@ -277,7 +270,6 @@ public:
       g.PathMoveTo(pts[0].x, pts[0].y);
       if (pts.size() > 3)
       {
-        // Catmull-Rom to cubic Bezier, tension s in [0,1] (0 = straight lines)
         const float s = 0.6f;
         const int n = (int) pts.size();
         for (int i = 0; i < n - 1; ++i)
@@ -307,8 +299,8 @@ public:
       g.PathFill(fill);
     };
 
-    const IColor cIn  = COL_500(); // dry input
-    const IColor cOut = COL_900(); // band-pass wet output
+    const IColor cIn  = COL_500();
+    const IColor cOut = COL_900();
     drawFill(mSpectrumIn,  IColor(110, cIn.R, cIn.G, cIn.B),    IColor(0, cIn.R, cIn.G, cIn.B));
     drawFill(mSpectrumOut, IColor(170, cOut.R, cOut.G, cOut.B), IColor(0, cOut.R, cOut.G, cOut.B));
   }
@@ -368,8 +360,6 @@ private:
   }
 
   IRECT CornerValueRect(int id) const { return mCornerValueRect[id == kCornerBw]; }
-
-  // ---- SLOPE dropdown (centred between CENTER and BANDWIDTH) ----
 
   IRECT SlopeRect() const
   {
@@ -462,12 +452,8 @@ private:
   static constexpr float kTopPad   = 30.f;
   static constexpr float kSideLabelX = 4.f;
 
-  // Bottom of the spectrum dB scale (top is 0 dBFS).
   static constexpr float kSpectrumBottomDb = -85.f;
 
-  // Logarithmic band aggregation: the linear FFT bins are folded into this many
-  // log-spaced display bands (max per band keeps peaks), removing high-frequency
-  // raggedness and cutting the drawn point count ~8x.
   static constexpr int   kSpectrumBands = 256;
   static constexpr float kSpecFreqLo    = 20.f;
   static constexpr float kSpecFreqHi    = 20000.f;
@@ -483,18 +469,12 @@ private:
   int   mEditingCorner = -1;
   int   mSlopeIndex = kSlopeDefaultIdx;
 
-  std::vector<float> mSpectrumIn;   // ch0: dry input spectrum, time-smoothed magnitudes
-  std::vector<float> mSpectrumOut;  // ch1: band-pass wet output spectrum, time-smoothed
-  // One-pole time-smoothing coefficients (attack fast / release slow), recomputed
-  // from the sample rate and FFT size on every received packet.
+  std::vector<float> mSpectrumIn;
+  std::vector<float> mSpectrumOut;
   float mAttackCoeff  = 0.2f;
   float mReleaseCoeff = 0.9f;
-  // Defaults match the sender (ISpectrumSender<2> with kSpectrumFFTSize=4096) so the
-  // spectrum renders even if the config messages arrive before this control attaches.
-  // OnIdle re-sends the real sample rate / FFT size every frame, so these converge
-  // to the exact values shortly after the UI opens.
-  int    mNumBins = 2048;           // FFT size / 2
-  double mSampleRate = 48000.0;     // Hz
+  int    mNumBins = 2048;
+  double mSampleRate = 48000.0;
 };
 
 END_IGRAPHICS_NAMESPACE

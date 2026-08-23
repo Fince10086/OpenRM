@@ -1,20 +1,5 @@
 #pragma once
 
-// Correct real-time STFT spectrum sender, replacing iPlug2's ISpectrumSender.
-//
-// Why: ISpectrumSender keeps MAX_OVERLAP staggered STFT frames and feeds
-// zero-padded short windows (1024/2048/3072 of 4096 samples) to the FFT on 3 of
-// every 4 updates. Those frames behave like a rectangular window of length
-// N_eff, whose sinc ripple peaks at k*fs/N_eff (~47 Hz at 48 kHz for N_eff=1024)
-// briefly appear at equal levels on every 4th update — the periodic "spikes at
-// 40-ish Hz and multiples" artifact.
-//
-// This implementation does a proper STFT: a sliding history keeps the most
-// recent fftSize *continuous* samples per channel, one FFT per hop
-// (hop = fftSize / overlap), Hann windowed, with the same magnitude
-// normalization (sqrt(2*|X|^2 / (sum(w))^2)) so the pad-side display contract
-// (ISenderData<MAXNC, array<float, MAX_FFT_SIZE>>, kUpdateMessage) is unchanged.
-
 #include "ISender.h"
 
 #include <algorithm>
@@ -63,8 +48,6 @@ public:
   int GetFFTSize() const { return mFFTSize; }
   int GetOverlap() const { return mOverlap; }
 
-  /** Audio thread: collect hop-sized blocks and queue them (real-time safe,
-      no allocation, no FFT here). */
   void ProcessBlock(sample** inputs, int nFrames, int ctrlTag = kNoTag,
                     int nChans = MAXNC, int chanOffset = 0)
   {
@@ -85,15 +68,11 @@ public:
   }
 
 protected:
-  /** Main thread (invoked from Base::TransmitData): STFT + magnitude spectrum. */
   void PrepareDataForUI(Data& d) override
   {
     const int nCh = std::min(d.nChans, MAXNC);
     for (int c = d.chanOffset; c < d.chanOffset + nCh; ++c)
     {
-      // Slide the history: keep the most recent fftSize-hop samples and append
-      // the new hop, so the FFT always sees a continuous fftSize-sample window
-      // (no zero padding, no short rectangular windows).
       std::memmove(mHistory[c].data(), mHistory[c].data() + mHop,
                    (mFFTSize - mHop) * sizeof(float));
       std::memcpy(mHistory[c].data() + mFFTSize - mHop, d.vals[c].data(),

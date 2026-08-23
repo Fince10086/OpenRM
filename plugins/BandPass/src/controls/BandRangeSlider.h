@@ -11,11 +11,6 @@
 BEGIN_IPLUG_NAMESPACE
 BEGIN_IGRAPHICS_NAMESPACE
 
-// Low/high cut range slider for one channel. Driven by the same center /
-// bandwidth params as the XY pad above it. The two cut frequencies are drawn
-// in a header strip above the track, like the labels of the other sliders:
-// low cut on the top-left, high cut on the top-right. Clicking either text
-// opens a text entry.
 class BandRangeSlider : public IControl
 {
 public:
@@ -59,8 +54,6 @@ public:
     }
     SelectHandle(x);
     if (mHooks.gestureBegin) mHooks.gestureBegin();
-    // No OnMouseDrag here: a plain click must only grab the nearest handle,
-    // not snap it to the click position (which would widen the band).
   }
 
   void OnMouseDrag(float x, float y, float dX, float dY, const IMouseMod& mod) override
@@ -91,8 +84,6 @@ public:
       if (hN - lN < kMinGap) { hN = lN + kMinGap; if (hN > 1.f) { hN = 1.f; lN = 1.f - kMinGap; } }
       mHooks.editBand((double) lN, (double) hN);
     }
-    // While dragging this control it is mouse-captured, so SetValueFromDelegate
-    // from UpdatePads() is a no-op; sync our own values from the params instead.
     SyncFromParams();
   }
 
@@ -101,7 +92,6 @@ public:
     mActiveHandle = -1;
   }
 
-  // Don't inherit the base-class double-click reset-to-default behavior.
   void OnMouseDblClick(float x, float y, const IMouseMod& mod) override {}
 
   void OnTextEntryCompletion(const char* str, int valIdx) override
