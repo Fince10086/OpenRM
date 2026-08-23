@@ -1,5 +1,9 @@
 cmake_minimum_required(VERSION 3.14)
-project(OpenRM VERSION 0.2.0)
+
+# 版本单一来源: plugins/BandPass/config.h (PLUG_VERSION_STR)
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/plugins/BandPass/config.h" _orm_version REGEX "PLUG_VERSION_STR \"[0-9.]+\"")
+string(REGEX MATCH "\"([0-9.]+)\"" _orm_version_match "${_orm_version}")
+project(OpenRM VERSION ${CMAKE_MATCH_1})
 
 # 右键留给插件自己的菜单（映射色块换色等），不弹宿主参数菜单
 add_compile_definitions(IGRAPHICS_NO_CONTEXT_MENU)

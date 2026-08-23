@@ -2,135 +2,140 @@
 
 #include "IControls.h"
 #include "ISender.h"
+#include "UiUtils.h"
 #include "../Theme.h"
 
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdio>
-#include <cstdlib>
-#include <cctype>
 
 BEGIN_IPLUG_NAMESPACE
 BEGIN_IGRAPHICS_NAMESPACE
 
-class FilterNodePad : public IVXYPadControl
-{
+class FilterNodePad : public IVXYPadControl {
 public:
-  struct Hooks
-  {
+  struct Hooks {
     std::function<void(int cornerId, double value)> editCorner;
     std::function<void(int slopeDb)> editSlope;
-    std::function<void(int cornerId)> agToggle;
-    std::function<void(int cornerId, int colorIdx)> agSetColor;
+    std::function<void(int cornerId)> randomToggle;
+    std::function<void(int cornerId, int colorIdx)> randomSetColor;
     std::function<void()> togglePass;
   };
 
   using TDataPacket = std::array<float, 4096>;
 
-  enum MsgTags
-  {
+  enum MsgTags {
     kMsgTagSampleRate = 1,
     kMsgTagFFTSize,
   };
 
-  FilterNodePad(const IRECT& bounds, const std::initializer_list<int>& params,
-                const char* label, const IVStyle& style, const Hooks& hooks,
-                float handleRadius = 9.f)
-  : IVXYPadControl(bounds, params,  "", style.WithDrawFrame(false), handleRadius, true, true)
-  , mHooks(hooks)
-  , mSideLabel(label)
-  {
+  FilterNodePad(const IRECT &bounds, const std::initializer_list<int> &params, const char *label, const IVStyle &style,
+                const Hooks &hooks, float handleRadius = 9.f)
+      : IVXYPadControl(bounds, params, "", style.WithDrawFrame(false), handleRadius, true, true), mHooks(hooks),
+        mSideLabel(label) {
     SetTextEntryLength(20);
+    // 预分配频谱绘制缓冲, 避免每帧 Draw 时动态分配
+    mBandMax.assign(kSpectrumBands, 0.f);
+    mBandUsed.assign(kSpectrumBands, 0);
+    mSpecPts.reserve(kSpectrumBands);
   }
 
-  void OnMsgFromDelegate(int msgTag, int dataSize, const void* pData) override
-  {
+  void OnMsgFromDelegate(int msgTag, int dataSize, const void *pData) override {
     IByteStream stream(pData, dataSize);
 
-    if (msgTag == ISender<>::kUpdateMessage)
-    {
+    if (msgTag == ISender<>::kUpdateMessage) {
       ISenderData<2, TDataPacket> d;
       stream.Get(&d, 0);
-      const int nBins = std::min((int) d.vals[0].size(), std::max(mNumBins, 0));
-      if (nBins <= 0) return;
+      const int nBins = std::min((int)d.vals[0].size(), std::max(mNumBins, 0));
+      if (nBins <= 0)
+        return;
 
-      const double updatePeriod = (double) nBins * 2.0 / 4.0 / std::max(mSampleRate, 1.0);
-      mAttackCoeff  = (float) std::exp(-updatePeriod / 0.003);
-      mReleaseCoeff = (float) std::exp(-updatePeriod / 0.08);
+      const double updatePeriod = (double)nBins * 2.0 / 4.0 / std::max(mSampleRate, 1.0);
+      mAttackCoeff = (float)std::exp(-updatePeriod / 0.003);
+      mReleaseCoeff = (float)std::exp(-updatePeriod / 0.08);
 
-      if (mSpectrumIn.size() != (size_t) nBins)
-      {
+      if (mSpectrumIn.size() != (size_t)nBins) {
         mSpectrumIn.assign(nBins, 0.f);
         mSpectrumOut.assign(nBins, 0.f);
       }
       const float a = mAttackCoeff, r = mReleaseCoeff;
-      for (int i = 0; i < nBins; ++i)
-      {
+      for (int i = 0; i < nBins; ++i) {
         const float raw = d.vals[0][i], prev = mSpectrumIn[i];
         const float coef = (raw > prev) ? a : r;
         mSpectrumIn[i] = coef * prev + (1.f - coef) * raw;
       }
-      for (int i = 0; i < nBins; ++i)
-      {
+      for (int i = 0; i < nBins; ++i) {
         const float raw = d.vals[1][i], prev = mSpectrumOut[i];
         const float coef = (raw > prev) ? a : r;
         mSpectrumOut[i] = coef * prev + (1.f - coef) * raw;
       }
       SetDirty(false);
-    }
-    else if (msgTag == kMsgTagSampleRate)
-    {
+    } else if (msgTag == kMsgTagSampleRate) {
       double sr;
       stream.Get(&sr, 0);
       mSampleRate = sr;
-    }
-    else if (msgTag == kMsgTagFFTSize)
-    {
+    } else if (msgTag == kMsgTagFFTSize) {
       int fftSize;
       stream.Get(&fftSize, 0);
       mNumBins = std::max(fftSize / 2, 1);
     }
   }
 
-  void SetSideLabel(const char* s) { mSideLabel.Set(s); SetDirty(false); }
+  void SetSideLabel(const char *s) {
+    mSideLabel.Set(s);
+    SetDirty(false);
+  }
 
-  void SetPass(bool pass) { mPass = pass; SetDirty(false); }
+  void SetPass(bool pass) {
+    mPass = pass;
+    SetDirty(false);
+  }
 
   IRECT PassRejectRect() const { return mPassRejectRect; }
 
-  void SetGhost(bool ghost)
-  {
-    if (mGhost == ghost) return;
+  void SetGhost(bool ghost) {
+    if (mGhost == ghost)
+      return;
     mGhost = ghost;
     SetDirty(false);
   }
-  void SetCenterPrefix(const char* s) { mCenterPrefix.Set(s); SetDirty(false); }
-  void SetBwPrefix(const char* s) { mBwPrefix.Set(s); SetDirty(false); }
-  void SetSlopePrefix(const char* s) { mSlopePrefix.Set(s); SetDirty(false); }
-  void SetSlopeIndex(int idx) { mSlopeIndex = idx; SetDirty(false); }
-  void SetAgMap(bool centerOn, int centerColor, bool bwOn, int bwColor)
-  {
-    mAgMapOn[0] = centerOn;   mAgMapColor[0] = centerColor;
-    mAgMapOn[1] = bwOn;       mAgMapColor[1] = bwColor;
+  void SetCenterPrefix(const char *s) {
+    mCenterPrefix.Set(s);
     SetDirty(false);
   }
-  void SetAgDeltas(float freqOct, float bwOct)
-  {
-    if (std::fabs(freqOct - mAgFreqOct) < 1e-4f && std::fabs(bwOct - mAgBwOct) < 1e-4f) return;
-    mAgFreqOct = freqOct;
-    mAgBwOct = bwOct;
+  void SetBwPrefix(const char *s) {
+    mBwPrefix.Set(s);
+    SetDirty(false);
+  }
+  void SetSlopePrefix(const char *s) {
+    mSlopePrefix.Set(s);
+    SetDirty(false);
+  }
+  void SetSlopeIndex(int idx) {
+    mSlopeIndex = idx;
+    SetDirty(false);
+  }
+  void SetRandomMap(bool centerOn, int centerColor, bool bwOn, int bwColor) {
+    mRandomMapOn[0] = centerOn;
+    mRandomMapColor[0] = centerColor;
+    mRandomMapOn[1] = bwOn;
+    mRandomMapColor[1] = bwColor;
+    SetDirty(false);
+  }
+  void SetRandomDeltas(float freqOct, float bwOct) {
+    if (std::fabs(freqOct - mRandomFreqOct) < 1e-4f && std::fabs(bwOct - mRandomBwOct) < 1e-4f)
+      return;
+    mRandomFreqOct = freqOct;
+    mRandomBwOct = bwOct;
     SetDirty(false);
   }
 
-  void Draw(IGraphics& g) override
-  {
+  void Draw(IGraphics &g) override {
     g.FillRect(COL_100(), mRECT);
-    if (mGhost)
-    {
+    if (mGhost) {
       DrawTrack(g);
-      const IColor base = COL_100();
-      g.FillRect(IColor(150, base.R, base.G, base.B), mRECT);
+      DrawGhostOverlay(g, mRECT);
       return;
     }
     DrawWidget(g);
@@ -141,56 +146,50 @@ public:
     DrawSideLabel(g);
   }
 
-  void OnMouseOver(float x, float y, const IMouseMod& mod) override
-  {
+  void OnMouseOver(float x, float y, const IMouseMod &mod) override {
     const bool over = mPassRejectRect.Contains(x, y);
-    if (over != mPassBtnHover)
-    {
+    if (over != mPassBtnHover) {
       mPassBtnHover = over;
       SetDirty(false);
     }
     IVXYPadControl::OnMouseOver(x, y, mod);
   }
 
-  void OnMouseOut() override
-  {
-    if (mPassBtnHover)
-    {
+  void OnMouseOut() override {
+    if (mPassBtnHover) {
       mPassBtnHover = false;
       SetDirty(false);
     }
     IVXYPadControl::OnMouseOut();
   }
 
-  void OnMouseDown(float x, float y, const IMouseMod& mod) override
-  {
-    if (mGhost) return;
-    if (PassRejectRect().Contains(x, y))
-    {
-      if (!mod.R && mHooks.togglePass) mHooks.togglePass();
+  void OnMouseDown(float x, float y, const IMouseMod &mod) override {
+    if (mGhost)
+      return;
+    if (PassRejectRect().Contains(x, y)) {
+      if (!mod.R && mHooks.togglePass)
+        mHooks.togglePass();
       return;
     }
-    if (mSlopeRect.Contains(x, y))
-    {
-      if (!mod.R) OpenSlopeMenu();
+    if (mSlopeRect.Contains(x, y)) {
+      if (!mod.R)
+        OpenSlopeMenu();
       return;
     }
-    for (int i = 0; i < 2; ++i)
-    {
-      if (mAgSwatchRect[i].Contains(x, y))
-      {
-        if (mod.R) OpenAgColorMenu(i);
-        else if (mHooks.agToggle) mHooks.agToggle(i ? kCornerBw : kCornerCenter);
+    for (int i = 0; i < 2; ++i) {
+      if (mRandomSwatchRect[i].Contains(x, y)) {
+        if (mod.R)
+          OpenRandomColorMenu(i);
+        else if (mHooks.randomToggle)
+          mHooks.randomToggle(i ? kCornerBw : kCornerCenter);
         return;
       }
     }
-    if (!mod.R)
-    {
-      for (int id : { kCornerCenter, kCornerBw })
-      {
-        if (CornerValueRect(id).Contains(x, y))
-        {
-          WDL_String init; GetCornerValue(id, init, false, false);
+    if (!mod.R) {
+      for (int id : {kCornerCenter, kCornerBw}) {
+        if (CornerValueRect(id).Contains(x, y)) {
+          WDL_String init;
+          GetCornerValue(id, init, false, false);
           EAlign align = (id == kCornerBw) ? EAlign::Far : EAlign::Near;
           IText t(20, COL_900(), kFontSemiBold, align, EVAlign::Middle);
           mEditingCorner = id;
@@ -203,9 +202,9 @@ public:
     }
   }
 
-  void OnMouseDrag(float x, float y, float dX, float dY, const IMouseMod& mod) override
-  {
-    if (!mMouseDown) return;
+  void OnMouseDrag(float x, float y, float dX, float dY, const IMouseMod &mod) override {
+    if (!mMouseDown)
+      return;
     const IRECT tb = PlotRect();
     x = std::clamp(x, tb.L, tb.R);
     y = std::clamp(y, tb.T, tb.B);
@@ -216,187 +215,191 @@ public:
     SetDirty(true);
   }
 
-  void OnMouseDblClick(float x, float y, const IMouseMod& mod) override {}
+  void OnMouseDblClick(float x, float y, const IMouseMod &mod) override {}
 
-  void OnTextEntryCompletion(const char* str, int valIdx) override
-  {
+  void OnTextEntryCompletion(const char *str, int valIdx) override {
     const int id = mEditingCorner;
     mEditingCorner = -1;
-    if (id < 0) return;
+    if (id < 0)
+      return;
     double v;
-    if (id == kCornerBw) { char* end = nullptr; v = std::strtod(str, &end); if (end == str) return; }
-    else if (!ParseFreq(str, v)) return;
-    if (mHooks.editCorner) mHooks.editCorner(id, v);
+    if (id == kCornerBw) {
+      char *end = nullptr;
+      v = std::strtod(str, &end);
+      if (end == str)
+        return;
+    } else if (!ParseFreq(str, v))
+      return;
+    if (mHooks.editCorner)
+      mHooks.editCorner(id, v);
   }
 
-  void DrawWidget(IGraphics& g) override
-  {
+  void DrawWidget(IGraphics &g) override {
     DrawTrack(g);
     DrawSpectrum(g);
     const IRECT tb = PlotRect();
-    const float xpos = (float) GetValue(0) * tb.W();
-    const float ypos = (float) GetValue(1) * tb.H();
-    const IRECT hb(tb.L + xpos - mHandleRadius, tb.B - ypos - mHandleRadius,
-                   tb.L + xpos + mHandleRadius, tb.B - ypos + mHandleRadius);
-    if (mAgMapOn[0] || mAgMapOn[1])
-    {
-      const IParam* pf = GetParam(0);
-      const IParam* pb = GetParam(1);
-      const double actF = std::clamp(pf->FromNormalized(GetValue(0)) * std::exp2((double) mAgFreqOct), 20., 20000.);
-      const double actBw = std::clamp(pb->FromNormalized(GetValue(1)) * std::exp2((double) mAgBwOct * 0.5), 1., 31.);
-      const float gx = tb.L + (float) pf->ToNormalized(actF) * tb.W();
-      const float gy = tb.B - (float) pb->ToNormalized(actBw) * tb.H();
-      if (mAgMapOn[0] && mAgMapOn[1])
-      {
-        g.FillCircle(AgColorGhost(mAgMapColor[1]), gx, gy, mHandleRadius);
-        g.FillCircle(AgColor(mAgMapColor[0]), gx, gy, mHandleRadius * 0.6f);
+    const float xpos = (float)GetValue(0) * tb.W();
+    const float ypos = (float)GetValue(1) * tb.H();
+    const IRECT hb(tb.L + xpos - mHandleRadius, tb.B - ypos - mHandleRadius, tb.L + xpos + mHandleRadius,
+                   tb.B - ypos + mHandleRadius);
+    if (mRandomMapOn[0] || mRandomMapOn[1]) {
+      const IParam *pf = GetParam(0);
+      const IParam *pb = GetParam(1);
+      const double actF = std::clamp(pf->FromNormalized(GetValue(0)) * std::exp2((double)mRandomFreqOct), 20., 20000.);
+      const double actBw = std::clamp(pb->FromNormalized(GetValue(1)) * std::exp2((double)mRandomBwOct * 0.5), 1., 31.);
+      const float gx = tb.L + (float)pf->ToNormalized(actF) * tb.W();
+      const float gy = tb.B - (float)pb->ToNormalized(actBw) * tb.H();
+      if (mRandomMapOn[0] && mRandomMapOn[1]) {
+        g.FillCircle(RandomColorGhost(mRandomMapColor[1]), gx, gy, mHandleRadius);
+        g.FillCircle(RandomColor(mRandomMapColor[0]), gx, gy, mHandleRadius * 0.6f);
         g.FillCircle(COL_100(), gx, gy, mHandleRadius * 0.25f);
-      }
-      else
-      {
-        g.FillCircle(AgColorGhost(mAgMapOn[0] ? mAgMapColor[0] : mAgMapColor[1]), gx, gy, mHandleRadius);
+      } else {
+        g.FillCircle(RandomColorGhost(mRandomMapOn[0] ? mRandomMapColor[0] : mRandomMapColor[1]), gx, gy,
+                     mHandleRadius);
         g.FillCircle(COL_100(), gx, gy, mHandleRadius * 0.25f);
       }
     }
     DrawHandle(g, tb, hb);
   }
 
-  void DrawTrack(IGraphics& g) override
-  {
+  void DrawTrack(IGraphics &g) override {
     const IRECT tb = PlotRect();
-    const IParam* pf = GetParam(0);
-    auto xOf = [&](double f) { return tb.L + (float) pf->ToNormalized(f) * tb.W(); };
+    const IParam *pf = GetParam(0);
+    auto xOf = [&](double f) { return tb.L + (float)pf->ToNormalized(f) * tb.W(); };
 
-    struct Band { double lo, hi; float v0, v1; };
+    struct Band {
+      double lo, hi;
+      float v0, v1;
+    };
     static const Band kBands[] = {
-      { 20.,    100.,   194.f, 218.f },
-      { 100.,   1000.,  205.f, 229.f },
-      { 1000.,  10000., 216.f, 240.f },
-      { 10000., 20000., 227.f, 227.f },
+        {20., 100., 194.f, 218.f},
+        {100., 1000., 205.f, 229.f},
+        {1000., 10000., 216.f, 240.f},
+        {10000., 20000., 227.f, 227.f},
     };
 
-    for (const Band& band : kBands)
-    {
-      double edges[16]; int n = 0;
+    for (const Band &band : kBands) {
+      double edges[16];
+      int n = 0;
       edges[n++] = band.lo;
       for (int decade = 1; decade <= 10000; decade *= 10)
-        for (int m = 1; m <= 9; ++m)
-        {
+        for (int m = 1; m <= 9; ++m) {
           const double f = m * decade;
-          if (f > band.lo && f < band.hi) edges[n++] = f;
+          if (f > band.lo && f < band.hi)
+            edges[n++] = f;
         }
       edges[n++] = band.hi;
 
       float xs[16];
-      for (int i = 0; i < n; ++i) xs[i] = xOf(edges[i]);
+      for (int i = 0; i < n; ++i)
+        xs[i] = xOf(edges[i]);
 
       const int cells = n - 1;
-      for (int i = 0; i < cells; ++i)
-      {
-        const float t = (cells > 1) ? (float) i / (cells - 1) : 0.f;
-        const int v = (int) std::lround(band.v0 + (band.v1 - band.v0) * t);
+      for (int i = 0; i < cells; ++i) {
+        const float t = (cells > 1) ? (float)i / (cells - 1) : 0.f;
+        const int v = (int)std::lround(band.v0 + (band.v1 - band.v0) * t);
         g.FillRect(WarmGray(v), IRECT(xs[i], tb.T, xs[i + 1], tb.B));
       }
     }
   }
 
-  void DrawHandle(IGraphics& g, const IRECT&, const IRECT& handleBounds) override
-  {
+  void DrawHandle(IGraphics &g, const IRECT &, const IRECT &handleBounds) override {
     const float cx = handleBounds.MW();
     const float cy = handleBounds.MH();
     g.FillCircle(COL_900(), cx, cy, mHandleRadius);
     g.FillCircle(COL_100(), cx, cy, mHandleRadius * 0.25f);
   }
 
-  bool IsHit(float x, float y) const override
-  {
-    if (mTargetRECT.Contains(x, y)) return true;
-    for (int id : { kCornerCenter, kCornerBw })
-      if (CornerRect(id).Contains(x, y)) return true;
-    if (mSlopeRect.Contains(x, y)) return true;
-    if (PassRejectRect().Contains(x, y)) return true;
-    if (SideLabelRect().Contains(x, y)) return true;
+  bool IsHit(float x, float y) const override {
+    if (mTargetRECT.Contains(x, y))
+      return true;
+    for (int id : {kCornerCenter, kCornerBw})
+      if (CornerRect(id).Contains(x, y))
+        return true;
+    if (mSlopeRect.Contains(x, y))
+      return true;
+    if (PassRejectRect().Contains(x, y))
+      return true;
+    if (SideLabelRect().Contains(x, y))
+      return true;
     return false;
   }
 
-  void DrawSideLabel(IGraphics& g)
-  {
-    if (mSideLabel.GetLength() == 0) return;
+  void DrawSideLabel(IGraphics &g) {
+    if (mSideLabel.GetLength() == 0)
+      return;
     const IRECT r = SideLabelRect();
     IText t(40, COL_500(), kFontBold, EAlign::Center, EVAlign::Middle, -90.f);
     g.DrawText(t, mSideLabel.Get(), r);
   }
 
-  void DrawSpectrum(IGraphics& g)
-  {
+  void DrawSpectrum(IGraphics &g) {
     const IRECT tb = PlotRect();
-    if (tb.W() <= 0.f || tb.H() <= 0.f) return;
-    if (mSpectrumIn.empty() || mSpectrumOut.empty() || mNumBins <= 0) return;
+    if (tb.W() <= 0.f || tb.H() <= 0.f)
+      return;
+    if (mSpectrumIn.empty() || mSpectrumOut.empty() || mNumBins <= 0)
+      return;
 
-    const IParam* pf = GetParam(0);
-    const double binHz = mSampleRate / std::max((double) mNumBins * 2.0, 1.0);
+    const IParam *pf = GetParam(0);
+    const double binHz = mSampleRate / std::max((double)mNumBins * 2.0, 1.0);
 
-    struct Pt { float x, y; };
-
-    auto drawFill = [&](const std::vector<float>& spec, const IColor& topColor, const IColor& bottomColor)
-    {
-      std::vector<Pt> pts;
-      pts.reserve(kSpectrumBands);
+    auto drawFill = [&](const std::vector<float> &spec, const IColor &topColor, const IColor &bottomColor) {
+      mSpecPts.clear();
+      std::fill(mBandMax.begin(), mBandMax.end(), 0.f);
+      std::fill(mBandUsed.begin(), mBandUsed.end(), 0);
       {
         const double logLo = std::log2(kSpecFreqLo);
         const double logHi = std::log2(kSpecFreqHi);
         const double logBand = (logHi - logLo) / kSpectrumBands;
-        std::vector<float> bandMax(kSpectrumBands, 0.f);
-        std::vector<char>  bandUsed(kSpectrumBands, 0);
-        for (int i = 0; i < mNumBins && i < (int) spec.size(); ++i)
-        {
-          const double f = (double) i * binHz;
-          if (f < kSpecFreqLo || f > kSpecFreqHi) continue;
-          const int b = (int) ((std::log2(f) - logLo) / logBand);
-          if (b < 0 || b >= kSpectrumBands) continue;
+        for (int i = 0; i < mNumBins && i < (int)spec.size(); ++i) {
+          const double f = (double)i * binHz;
+          if (f < kSpecFreqLo || f > kSpecFreqHi)
+            continue;
+          const int b = (int)((std::log2(f) - logLo) / logBand);
+          if (b < 0 || b >= kSpectrumBands)
+            continue;
           const float amp = spec[i];
-          if (amp > bandMax[b]) bandMax[b] = amp;
-          bandUsed[b] = 1;
+          if (amp > mBandMax[b])
+            mBandMax[b] = amp;
+          mBandUsed[b] = 1;
         }
-        for (int b = 0; b < kSpectrumBands; ++b)
-        {
-          if (!bandUsed[b]) continue;
+        for (int b = 0; b < kSpectrumBands; ++b) {
+          if (!mBandUsed[b])
+            continue;
           const double fCenter = kSpecFreqLo * std::exp2(logBand * (b + 0.5));
-          const float x = tb.L + (float) pf->ToNormalized(fCenter) * tb.W();
-          const float amp = bandMax[b];
-          const float db = (amp > 1e-6f) ? std::clamp(20.f * std::log10(amp), kSpectrumBottomDb, 0.f)
-                                         : kSpectrumBottomDb;
+          const float x = tb.L + (float)pf->ToNormalized(fCenter) * tb.W();
+          const float amp = mBandMax[b];
+          const float db =
+              (amp > 1e-6f) ? std::clamp(20.f * std::log10(amp), kSpectrumBottomDb, 0.f) : kSpectrumBottomDb;
           const float y = tb.B - (db - kSpectrumBottomDb) / (0.f - kSpectrumBottomDb) * tb.H();
-          pts.push_back({ x, y });
+          mSpecPts.push_back({x, y});
         }
       }
-      if (pts.size() < 2) return;
+      std::vector<Pt> &pts = mSpecPts;
+      if (pts.size() < 2)
+        return;
 
-      pts.front().x = tb.L + (float) pf->ToNormalized(kSpecFreqLo) * tb.W();
-      pts.back().x  = tb.L + (float) pf->ToNormalized(kSpecFreqHi) * tb.W();
+      pts.front().x = tb.L + (float)pf->ToNormalized(kSpecFreqLo) * tb.W();
+      pts.back().x = tb.L + (float)pf->ToNormalized(kSpecFreqHi) * tb.W();
 
       g.PathClear();
       g.PathMoveTo(pts[0].x, pts[0].y);
-      if (pts.size() > 3)
-      {
+      if (pts.size() > 3) {
         const float s = 0.6f;
-        const int n = (int) pts.size();
-        for (int i = 0; i < n - 1; ++i)
-        {
-          const Pt& p0 = pts[std::max(i - 1, 0)];
-          const Pt& p1 = pts[i];
-          const Pt& p2 = pts[i + 1];
-          const Pt& p3 = pts[std::min(i + 2, n - 1)];
+        const int n = (int)pts.size();
+        for (int i = 0; i < n - 1; ++i) {
+          const Pt &p0 = pts[std::max(i - 1, 0)];
+          const Pt &p1 = pts[i];
+          const Pt &p2 = pts[i + 1];
+          const Pt &p3 = pts[std::min(i + 2, n - 1)];
           const float c1x = p1.x + (p2.x - p0.x) * (s / 6.f);
           const float c1y = p1.y + (p2.y - p0.y) * (s / 6.f);
           const float c2x = p2.x - (p3.x - p1.x) * (s / 6.f);
           const float c2y = p2.y - (p3.y - p1.y) * (s / 6.f);
           g.PathCubicBezierTo(c1x, c1y, c2x, c2y, p2.x, p2.y);
         }
-      }
-      else
-      {
-        for (int i = 1; i < (int) pts.size(); ++i)
+      } else {
+        for (int i = 1; i < (int)pts.size(); ++i)
           g.PathLineTo(pts[i].x, pts[i].y);
       }
       g.PathLineTo(pts.back().x, tb.B);
@@ -404,92 +407,85 @@ public:
       g.PathClose();
 
       IPattern fill = IPattern::CreateLinearGradient(tb, EDirection::Vertical,
-                       { IColorStop(topColor, 0.f), IColorStop(bottomColor, 1.f) });
+                                                     {IColorStop(topColor, 0.f), IColorStop(bottomColor, 1.f)});
       g.PathFill(fill);
     };
 
-    const IColor cIn  = COL_500();
+    const IColor cIn = COL_500();
     const IColor cOut = COL_900();
-    drawFill(mSpectrumIn,  IColor(110, cIn.R, cIn.G, cIn.B),    IColor(0, cIn.R, cIn.G, cIn.B));
+    drawFill(mSpectrumIn, IColor(110, cIn.R, cIn.G, cIn.B), IColor(0, cIn.R, cIn.G, cIn.B));
     drawFill(mSpectrumOut, IColor(170, cOut.R, cOut.G, cOut.B), IColor(0, cOut.R, cOut.G, cOut.B));
   }
 
 private:
-  IRECT PlotRect() const
-  {
-    const IRECT& w = mWidgetBounds;
+  IRECT PlotRect() const {
+    const IRECT &w = mWidgetBounds;
     const float top = w.T + kTopPad;
     return IRECT(w.L, top, w.R, w.B);
   }
 
-  IRECT CornerRect(int id) const
-  {
-    const IRECT& w = mWidgetBounds;
-    switch (id)
-    {
-      case kCornerCenter: return IRECT(w.L , w.T - kSideH, w.L + kCornerW, w.T + kCornerTextH);
-      case kCornerBw:     return IRECT(w.R - kCornerW, w.T - kSideH, w.R, w.T + kCornerTextH);
+  IRECT CornerRect(int id) const {
+    const IRECT &w = mWidgetBounds;
+    switch (id) {
+    case kCornerCenter:
+      return IRECT(w.L, w.T - kSideH, w.L + kCornerW, w.T + kCornerTextH);
+    case kCornerBw:
+      return IRECT(w.R - kCornerW, w.T - kSideH, w.R, w.T + kCornerTextH);
     }
     return IRECT();
   }
 
-  IRECT SideLabelRect() const
-  {
-    const IRECT& w = mWidgetBounds;
+  IRECT SideLabelRect() const {
+    const IRECT &w = mWidgetBounds;
     return IRECT(w.L + kSideLabelX, w.T + kTopPad, w.L + kSideW + kSideLabelX, w.B);
   }
 
-  void DrawCorner(IGraphics& g, int id)
-  {
+  void DrawCorner(IGraphics &g, int id) {
     const IRECT r = CornerRect(id);
     const bool far = (id == kCornerBw);
     const EAlign align = far ? EAlign::Far : EAlign::Near;
     const IText t(20, COL_900(), kFontSemiBold, align, EVAlign::Middle);
-    const char* prefix = far ? mBwPrefix.Get() : mCenterPrefix.Get();
+    const char *prefix = far ? mBwPrefix.Get() : mCenterPrefix.Get();
     WDL_String value;
     GetCornerValue(id, value, true);
     const float cy = r.MH();
     IRECT measured;
-    if (far)
-    {
+    if (far) {
       g.MeasureText(t, value.Get(), measured);
-      mAgSwatchRect[1] = IRECT(r.R - AG_SWATCH, cy - AG_SWATCH * 0.5f, r.R, cy + AG_SWATCH * 0.5f);
-      mCornerValueRect[1] = IRECT(mAgSwatchRect[1].L - kSwatchGap - measured.W(), r.T,
-                                  mAgSwatchRect[1].L - kSwatchGap, r.B);
+      mRandomSwatchRect[1] = IRECT(r.R - AG_SWATCH, cy - AG_SWATCH * 0.5f, r.R, cy + AG_SWATCH * 0.5f);
+      mCornerValueRect[1] =
+          IRECT(mRandomSwatchRect[1].L - kSwatchGap - measured.W(), r.T, mRandomSwatchRect[1].L - kSwatchGap, r.B);
       g.DrawText(t, prefix, IRECT(r.L, r.T, mCornerValueRect[1].L - LABEL_VALUE_GAP, r.B));
       g.DrawText(t, value.Get(), mCornerValueRect[1]);
-    }
-    else
-    {
+    } else {
       g.MeasureText(t, prefix, measured);
       const float prefixW = measured.W();
       g.MeasureText(t, value.Get(), measured);
-      mCornerValueRect[0] = IRECT(r.L + prefixW + LABEL_VALUE_GAP, r.T,
-                                  r.L + prefixW + LABEL_VALUE_GAP + measured.W(), r.B);
-      mAgSwatchRect[0] = IRECT(mCornerValueRect[0].R + kSwatchGap, cy - AG_SWATCH * 0.5f,
-                               mCornerValueRect[0].R + kSwatchGap + AG_SWATCH, cy + AG_SWATCH * 0.5f);
+      mCornerValueRect[0] =
+          IRECT(r.L + prefixW + LABEL_VALUE_GAP, r.T, r.L + prefixW + LABEL_VALUE_GAP + measured.W(), r.B);
+      mRandomSwatchRect[0] = IRECT(mCornerValueRect[0].R + kSwatchGap, cy - AG_SWATCH * 0.5f,
+                                   mCornerValueRect[0].R + kSwatchGap + AG_SWATCH, cy + AG_SWATCH * 0.5f);
       g.DrawText(t, prefix, r);
       g.DrawText(t, value.Get(), mCornerValueRect[0]);
     }
     const int i = far ? 1 : 0;
-    g.FillRect(mAgMapOn[i] ? AgColor(mAgMapColor[i]) : AgColorDim(mAgMapColor[i]),
-               mAgSwatchRect[i].GetPadded(-1.f));
+    g.FillRect(mRandomMapOn[i] ? RandomColor(mRandomMapColor[i]) : RandomColorDim(mRandomMapColor[i]),
+               mRandomSwatchRect[i].GetPadded(-1.f));
   }
 
   IRECT CornerValueRect(int id) const { return mCornerValueRect[id == kCornerBw]; }
 
-  IRECT SlopeRect() const
-  {
-    const IRECT& w = mWidgetBounds;
+  IRECT SlopeRect() const {
+    const IRECT &w = mWidgetBounds;
     return IRECT(w.L + kCornerW, w.T - kSideH, w.R - kCornerW, w.T + kCornerTextH);
   }
 
-  void DrawSlope(IGraphics& g)
-  {
+  void DrawSlope(IGraphics &g) {
     const IRECT r = SlopeRect();
     const IText t(20, COL_900(), kFontSemiBold, EAlign::Center, EVAlign::Middle);
 
-    WDL_String value; GetSlopeValue(value);
+    WDL_String value;
+    GetSlopeValue(value);
     IRECT m1, m2;
     g.MeasureText(t, mSlopePrefix.Get(), m1);
     g.MeasureText(t, value.Get(), m2);
@@ -500,11 +496,9 @@ private:
     g.DrawText(t, value.Get(), IRECT(x0 + m1.W() + LABEL_VALUE_GAP, r.T, x0 + totalW, r.B));
   }
 
-  void DrawPassToggle(IGraphics& g)
-  {
+  void DrawPassToggle(IGraphics &g) {
     const IText t(20, COL_900(), kFontSemiBold, EAlign::Center, EVAlign::Middle);
-    const char* label = mPass ? orm::Tr(orm::kTxtPass, orm::UILang())
-                              : orm::Tr(orm::kTxtReject, orm::UILang());
+    const char *label = mPass ? orm::Tr(orm::kTxtPass, orm::UILang()) : orm::Tr(orm::kTxtReject, orm::UILang());
     IRECT m;
     g.MeasureText(t, label, m);
     const float btnW = m.W() + kPassBtnPad * 2.f;
@@ -512,8 +506,7 @@ private:
     const float prefixRight = mCornerValueRect[1].L - LABEL_VALUE_GAP;
     g.MeasureText(t, mBwPrefix.Get(), m);
     const float prefixLeft = prefixRight - m.W();
-    const IRECT b(prefixLeft - kPassGap - btnW, mWidgetBounds.T,
-                  prefixLeft - kPassGap, mWidgetBounds.T + kCornerTextH);
+    const IRECT b(prefixLeft - kPassGap - btnW, mWidgetBounds.T, prefixLeft - kPassGap, mWidgetBounds.T + kCornerTextH);
     mPassRejectRect = b;
 
     const bool hover = mPassBtnHover;
@@ -523,24 +516,24 @@ private:
     g.DrawText(bt, label, b);
   }
 
-  void GetSlopeValue(WDL_String& out) const
-  {
+  void GetSlopeValue(WDL_String &out) const {
     char buf[32];
     std::snprintf(buf, sizeof(buf), "%d dB/oct", kSlopeDb[std::clamp(mSlopeIndex, 0, 3)]);
     out.Set(buf);
   }
 
-  void OpenSlopeMenu()
-  {
-    if (!GetUI()) return;
+  void OpenSlopeMenu() {
+    if (!GetUI())
+      return;
     mSlopeMenu.Clear();
-    mSlopeMenu.SetFunction([this](IPopupMenu* menu) {
+    mSlopeMenu.SetFunction([this](IPopupMenu *menu) {
       const int idx = menu ? menu->GetChosenItemIdx() : -1;
-      if (idx < 0 || idx >= 4) return;
-      if (mHooks.editSlope) mHooks.editSlope(kSlopeDb[idx]);
+      if (idx < 0 || idx >= 4)
+        return;
+      if (mHooks.editSlope)
+        mHooks.editSlope(kSlopeDb[idx]);
     });
-    for (int i = 0; i < 4; ++i)
-    {
+    for (int i = 0; i < 4; ++i) {
       char buf[32];
       std::snprintf(buf, sizeof(buf), "%d dB/oct", kSlopeDb[i]);
       mSlopeMenu.AddItem(buf);
@@ -549,101 +542,82 @@ private:
     GetUI()->CreatePopupMenu(*this, mSlopeMenu, mSlopeRect, kNoValIdx);
   }
 
-  void OpenAgColorMenu(int i)
-  {
-    if (!GetUI()) return;
-    mAgMenu.Clear();
-    mAgMenu.SetFunction([this, i](IPopupMenu* menu) {
-      const int idx = menu ? menu->GetChosenItemIdx() : -1;
-      if (idx < 0 || idx >= kNumAgColors) return;
-      if (mHooks.agSetColor) mHooks.agSetColor(i ? kCornerBw : kCornerCenter, idx);
+  void OpenRandomColorMenu(int i) {
+    if (!GetUI())
+      return;
+    OpenColorPopup(*GetUI(), *this, mRandomMenu, mRandomSwatchRect[i], mRandomMapColor[i], [this, i](int idx) {
+      if (mHooks.randomSetColor)
+        mHooks.randomSetColor(i ? kCornerBw : kCornerCenter, idx);
     });
-    static const int kNameIds[kNumAgColors] = { orm::kTxtRed, orm::kTxtYellow, orm::kTxtBlue, orm::kTxtGreen };
-    for (int c = 0; c < kNumAgColors; ++c)
-      mAgMenu.AddItem(orm::Tr(kNameIds[c], orm::UILang()));
-    mAgMenu.CheckItemAlone(std::clamp(mAgMapColor[i], 0, kNumAgColors - 1));
-    GetUI()->CreatePopupMenu(*this, mAgMenu, mAgSwatchRect[i], kNoValIdx);
   }
 
-  void GetCornerValue(int id, WDL_String& out, bool withUnit, bool withMod = true) const
-  {
+  void GetCornerValue(int id, WDL_String &out, bool withUnit, bool withMod = true) const {
     char buf[32];
-    if (id == kCornerBw)
-    {
+    if (id == kCornerBw) {
       double bw = GetParam(1)->FromNormalized(GetValue(1));
-      if (withMod && mAgMapOn[1]) bw *= std::exp2((double) mAgBwOct * 0.5);
+      if (withMod && mRandomMapOn[1])
+        bw *= std::exp2((double)mRandomBwOct * 0.5);
       std::snprintf(buf, 32, "%.2f", bw);
-    }
-    else
-    {
-      const IParam* pf = GetParam(0);
+    } else {
+      const IParam *pf = GetParam(0);
       double c = pf->FromNormalized(GetValue(0));
-      if (withMod && mAgMapOn[0]) c *= std::exp2((double) mAgFreqOct);
+      if (withMod && mRandomMapOn[0])
+        c *= std::exp2((double)mRandomFreqOct);
       FormatFreq(buf, 32, c, withUnit);
     }
     out.Set(buf);
   }
 
-  static void FormatFreq(char* b, int n, double hz, bool withUnit)
-  {
-    const char* u = withUnit ? "Hz" : "";
-    std::snprintf(b, n, "%.0f%s", hz, u);
-  }
-
-  static bool ParseFreq(const char* s, double& hz)
-  {
-    char* end = nullptr;
-    const double v = std::strtod(s, &end);
-    if (end == s) return false;
-    while (*end && std::isspace((unsigned char)*end)) ++end;
-    if (*end == 'k' || *end == 'K') hz = v * 1000.;
-    else hz = v;
-    return true;
-  }
-
   static constexpr float kCornerW = 170.f;
   static constexpr float kCornerTextH = 22.f;
-  static constexpr float kPassGap   = 8.f;
+  static constexpr float kPassGap = 8.f;
   static constexpr float kPassBtnPad = 6.f;
-  static constexpr float kSideW    = 24.f;
-  static constexpr float kSideH    = 0.f;
-  static constexpr float kTopPad   = 30.f;
+  static constexpr float kSideW = 24.f;
+  static constexpr float kSideH = 0.f;
+  static constexpr float kTopPad = 30.f;
   static constexpr float kSideLabelX = 4.f;
   static constexpr float kSwatchGap = 6.f;
 
   static constexpr float kSpectrumBottomDb = -85.f;
 
-  static constexpr int   kSpectrumBands = 256;
-  static constexpr float kSpecFreqLo    = 20.f;
-  static constexpr float kSpecFreqHi    = 20000.f;
+  static constexpr int kSpectrumBands = 256;
+  static constexpr float kSpecFreqLo = 20.f;
+  static constexpr float kSpecFreqHi = 20000.f;
 
   Hooks mHooks;
   WDL_String mSideLabel;
   bool mGhost = false;
-  WDL_String mCenterPrefix { "CENTER" };
-  WDL_String mBwPrefix { "WIDTH" };
-  WDL_String mSlopePrefix { "SLOPE" };
+  WDL_String mCenterPrefix{"CENTER"};
+  WDL_String mBwPrefix{"WIDTH"};
+  WDL_String mSlopePrefix{"SLOPE"};
   IRECT mCornerValueRect[2];
   IRECT mSlopeRect;
   IPopupMenu mSlopeMenu;
-  IPopupMenu mAgMenu;
-  int   mEditingCorner = -1;
-  int   mSlopeIndex = kSlopeDefaultIdx;
-  bool  mAgMapOn[2] = { false, false };
-  int   mAgMapColor[2] = { 0, 0 };
-  bool  mPass = true;
-  bool  mPassBtnHover = false;
+  IPopupMenu mRandomMenu;
+  int mEditingCorner = -1;
+  int mSlopeIndex = kSlopeDefaultIdx;
+  bool mRandomMapOn[2] = {false, false};
+  int mRandomMapColor[2] = {0, 0};
+  bool mPass = true;
+  bool mPassBtnHover = false;
   IRECT mPassRejectRect;
-  IRECT mAgSwatchRect[2];
-  float mAgFreqOct = 0.f;
-  float mAgBwOct = 0.f;
+  IRECT mRandomSwatchRect[2];
+  float mRandomFreqOct = 0.f;
+  float mRandomBwOct = 0.f;
 
   std::vector<float> mSpectrumIn;
   std::vector<float> mSpectrumOut;
-  float mAttackCoeff  = 0.2f;
+  float mAttackCoeff = 0.2f;
   float mReleaseCoeff = 0.9f;
-  int    mNumBins = 2048;
+  int mNumBins = 2048;
   double mSampleRate = 48000.0;
+
+  struct Pt {
+    float x, y;
+  };
+  std::vector<Pt> mSpecPts;    // 预分配: 频谱填充点
+  std::vector<float> mBandMax; // 预分配: 每 band 峰值
+  std::vector<char> mBandUsed; // 预分配: band 是否有数据
 };
 
 END_IGRAPHICS_NAMESPACE

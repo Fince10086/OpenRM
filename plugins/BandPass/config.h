@@ -36,19 +36,10 @@
 #define AUV2_VIEW_CLASS ORMBandPass_View
 #define AUV2_VIEW_CLASS_STR "ORMBandPass_View"
 
-#define AAX_TYPE_IDS 'GBP1', 'GBP2'
-#define AAX_TYPE_IDS_AUDIOSUITE 'GBS1', 'GBS2'
-#define AAX_PLUG_MFR_STR "OpenRM"
-#define AAX_PLUG_NAME_STR "ORMBandPass\nORMBP"
-#define AAX_PLUG_CATEGORY_STR "Effect"
-#define AAX_DOES_AUDIOSUITE 1
+// 注: AAX / CLAP 目标未构建, 对应的 AAX_* / CLAP_* 配置已移除 (iPlug2 仅在对应
+// 格式编译时才要求这些宏, CLAP 有 #ifndef 兜底)。若将来启用, 参照 iPlug2 示例补回。
 
 #define VST3_SUBCATEGORY "Fx"
-
-#define CLAP_MANUAL_URL "https://github.com/OpenRM"
-#define CLAP_SUPPORT_URL "https://github.com/iPlug2/iPlug2/wiki"
-#define CLAP_DESCRIPTION "Dynamically controllable stereo bandpass filter"
-#define CLAP_FEATURES "audio-effect", "filter"
 
 #define APP_NUM_CHANNELS 2
 #define APP_N_VECTOR_WAIT 0

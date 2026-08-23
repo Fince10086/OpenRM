@@ -10,11 +10,9 @@
 BEGIN_IPLUG_NAMESPACE
 BEGIN_IGRAPHICS_NAMESPACE
 
-class PresetSlotControl : public IVButtonControl
-{
+class PresetSlotControl : public IVButtonControl {
 public:
-  struct Hooks
-  {
+  struct Hooks {
     std::function<void()> onLoad;
     std::function<void()> onSaveHere;
     std::function<void()> onRestoreDefault;
@@ -24,106 +22,95 @@ public:
     std::function<std::string()> getTooltipPrefix;
   };
 
-  PresetSlotControl(const IRECT& bounds, Hooks hooks, const char* label, const IVStyle& style)
-    : IVButtonControl(bounds, nullptr, label, style)
-    , mHooks(std::move(hooks))
-  {
+  PresetSlotControl(const IRECT &bounds, Hooks hooks, const char *label, const IVStyle &style)
+      : IVButtonControl(bounds, nullptr, label, style), mHooks(std::move(hooks)) {
     SetTooltip(BuildTooltip().c_str());
   }
 
-  void OnMouseDown(float x, float y, const IMouseMod& mod) override
-  {
-    if (mod.L)
-    {
-      if (mod.R)
-      {
-        if (mHooks.onSaveHere) mHooks.onSaveHere();
-      }
-      else
-      {
+  void OnMouseDown(float x, float y, const IMouseMod &mod) override {
+    if (mod.L) {
+      if (mod.R) {
+        if (mHooks.onSaveHere)
+          mHooks.onSaveHere();
+      } else {
         mPotentialDrag = true;
         mDragging = false;
-        mDownX = x; mDownY = y;
-        SetValue(1.0); SetDirty();
+        mDownX = x;
+        mDownY = y;
+        SetValue(1.0);
+        SetDirty();
         return;
       }
-      SetValue(0.0); SetDirty(false);
+      SetValue(0.0);
+      SetDirty(false);
       return;
     }
     if (mod.R)
       ShowPopupMenu(x, y);
   }
 
-  void OnMouseDrag(float x, float y, float dX, float dY, const IMouseMod& mod) override
-  {
-    if (!mPotentialDrag) return;
+  void OnMouseDrag(float x, float y, float dX, float dY, const IMouseMod &mod) override {
+    if (!mPotentialDrag)
+      return;
 
-    if (!mDragging &&
-        (std::fabs(x - mDownX) + std::fabs(y - mDownY) > kDragThreshold))
-    {
+    if (!mDragging && (std::fabs(x - mDownX) + std::fabs(y - mDownY) > kDragThreshold)) {
       mDragging = true;
-      if (mHooks.onDragBegin) mHooks.onDragBegin();
+      if (mHooks.onDragBegin)
+        mHooks.onDragBegin();
     }
     if (mDragging && mHooks.onDragMove)
       mHooks.onDragMove(x, y);
   }
 
-  void OnMouseUp(float x, float y, const IMouseMod& mod) override
-  {
-    if (!mPotentialDrag) return;
+  void OnMouseUp(float x, float y, const IMouseMod &mod) override {
+    if (!mPotentialDrag)
+      return;
     mPotentialDrag = false;
 
-    if (mDragging)
-    {
+    if (mDragging) {
       mDragging = false;
-      if (mHooks.onDragDrop) mHooks.onDragDrop(x, y);
-    }
-    else
-    {
-      if (mHooks.onLoad) mHooks.onLoad();
+      if (mHooks.onDragDrop)
+        mHooks.onDragDrop(x, y);
+    } else {
+      if (mHooks.onLoad)
+        mHooks.onLoad();
     }
     SetValue(0.0);
     SetDirty(false);
   }
 
-  void OnMouseOver(float x, float y, const IMouseMod& mod) override
-  {
+  void OnMouseOver(float x, float y, const IMouseMod &mod) override {
     const std::string t = BuildTooltip();
-    if (t != GetTooltip())
-    {
+    if (t != GetTooltip()) {
       SetTooltip(t.c_str());
-      if (GetUI()) GetUI()->UpdateTooltips();
+      if (GetUI())
+        GetUI()->UpdateTooltips();
     }
     IControl::OnMouseOver(x, y, mod);
   }
 
-  void SetDragTarget(bool on)
-  {
-    if (mDragTarget == on) return;
+  void SetDragTarget(bool on) {
+    if (mDragTarget == on)
+      return;
     mDragTarget = on;
     SetDirty();
   }
 
-  void SetSlotLabel(const char* s)
-  {
+  void SetSlotLabel(const char *s) {
     SetLabelStr(s);
     SetDirty(false);
   }
 
-  void Draw(IGraphics& g) override
-  {
+  void Draw(IGraphics &g) override {
     const IRECT b = GetWidgetBounds();
     const bool pressed = GetValue() > 0.5;
-    const IColor fill = mDragTarget ? COL_500()
-                      : pressed     ? COL_900()
-                      : GetMouseIsOver() ? COL_500() : COL_300();
+    const IColor fill = mDragTarget ? COL_500() : pressed ? COL_900() : GetMouseIsOver() ? COL_500() : COL_300();
     g.FillRect(fill, b.GetPadded(-BLOCK_GAP));
     IText t = mStyle.valueText;
     t.mFGColor = pressed ? COL_100() : COL_900();
     strcpy(t.mFont, kFontSemiBold);
     g.DrawText(t, mLabelStr.Get(), b);
-    if (mDragging)
-    {
+    if (mDragging) {
       g.FillRect(IColor(70, 26, 25, 22), b);
     }
   }
@@ -131,22 +118,24 @@ public:
 private:
   static constexpr float kDragThreshold = 8.f;
 
-  std::string BuildTooltip() const
-  {
-    return mHooks.getTooltipPrefix ? mHooks.getTooltipPrefix() : std::string();
-  }
+  std::string BuildTooltip() const { return mHooks.getTooltipPrefix ? mHooks.getTooltipPrefix() : std::string(); }
 
-  void ShowPopupMenu(float x, float y)
-  {
+  void ShowPopupMenu(float x, float y) {
     mMenu.Clear();
-    mMenu.AddItem("Save Here");
-    mMenu.AddItem("Restore Default");
-    mMenu.SetFunction([this](IPopupMenu* p) {
-      switch (p->GetChosenItemIdx())
-      {
-        case 0:  if (mHooks.onSaveHere)      mHooks.onSaveHere();      break;
-        case 1:  if (mHooks.onRestoreDefault) mHooks.onRestoreDefault(); break;
-        default: break;
+    mMenu.AddItem(orm::Tr(orm::kTxtSaveHere, orm::UILang()));
+    mMenu.AddItem(orm::Tr(orm::kTxtRestoreDefault, orm::UILang()));
+    mMenu.SetFunction([this](IPopupMenu *p) {
+      switch (p->GetChosenItemIdx()) {
+      case 0:
+        if (mHooks.onSaveHere)
+          mHooks.onSaveHere();
+        break;
+      case 1:
+        if (mHooks.onRestoreDefault)
+          mHooks.onRestoreDefault();
+        break;
+      default:
+        break;
       }
     });
     GetUI()->CreatePopupMenu(*this, mMenu, x, y, kNoValIdx);

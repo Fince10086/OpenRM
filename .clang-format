@@ -1,0 +1,10 @@
+# OpenRM 统一代码风格 (C++17)
+# 用法: xcrun clang-format -i <files>
+BasedOnStyle: LLVM
+IndentWidth: 2
+ColumnLimit: 120
+BreakBeforeBraces: Attach
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: false
+SortIncludes: false
+NamespaceIndentation: None
