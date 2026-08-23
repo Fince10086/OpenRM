@@ -16,6 +16,44 @@
 #include <algorithm>
 #include <string>
 
+#if defined(OS_MAC)
+  #include <CoreFoundation/CoreFoundation.h>
+#elif defined(OS_WIN)
+  #include <windows.h>
+#endif
+
+int orm::DetectSystemLanguage()
+{
+#if defined(OS_MAC)
+  bool zh = false;
+  CFArrayRef langs = CFLocaleCopyPreferredLanguages();
+  if (langs)
+  {
+    const CFIndex n = CFArrayGetCount(langs);
+    for (CFIndex i = 0; i < n; ++i)
+    {
+      CFStringRef lang = (CFStringRef) CFArrayGetValueAtIndex(langs, i);
+      char buf[64] = { 0 };
+      if (lang && CFStringGetCString(lang, buf, sizeof(buf), kCFStringEncodingUTF8) &&
+          std::strncmp(buf, "zh", 2) == 0)
+      {
+        zh = true;
+        break;
+      }
+    }
+    CFRelease(langs);
+  }
+  return zh ? orm::kLangZH : orm::kLangEN;
+#elif defined(OS_WIN)
+  const LANGID lid = GetUserDefaultUILanguage();
+  if (PRIMARYLANGID(lid) == LANG_CHINESE)
+    return orm::kLangZH;
+  return orm::kLangEN;
+#else
+  return orm::kLangEN;
+#endif
+}
+
 static IVStyle MakeORMStyle()
 {
   IVColorSpec colors = { COL_100(), COL_100(), COL_900(), COL_900(),

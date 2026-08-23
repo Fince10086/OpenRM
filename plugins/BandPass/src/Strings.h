@@ -3,10 +3,11 @@
 namespace orm {
 
 enum ELanguage { kLangEN = 0, kLangZH, kNumLanguages };
+int DetectSystemLanguage();
 
 inline int& UILang()
 {
-  static int lang = kLangEN;
+  static int lang = DetectSystemLanguage();
   return lang;
 }
 
