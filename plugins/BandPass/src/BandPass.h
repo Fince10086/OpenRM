@@ -27,8 +27,30 @@ enum EParams
   kAgRate,
   kSlopeL,
   kSlopeR,
+  kAgColorFreqL,
+  kAgColorBwL,
+  kAgColorGainL,
+  kAgColorFreqR,
+  kAgColorBwR,
+  kAgColorGainR,
+  kAgColorMix,
+  kAgEnableFreqL,
+  kAgEnableBwL,
+  kAgEnableGainL,
+  kAgEnableFreqR,
+  kAgEnableBwR,
+  kAgEnableGainR,
+  kAgEnableMix,
+  kAgAmountY,
+  kAgRateY,
+  kAgAmountB,
+  kAgRateB,
+  kAgAmountG,
+  kAgRateG,
   kNumParams
 };
+
+constexpr int kNumLegacyParamsV2 = 13;
 
 using ParamSnapshot = std::array<double, kNumParams>;
 
@@ -56,6 +78,10 @@ namespace iplug { namespace igraphics {
   class PresetSlotControl;
 } }
 
+class ORMSlider;
+class GainSlider;
+class AgColorPickerControl;
+
 class SettingsPanelControl;
 
 class ORMBandPass final : public Plugin
@@ -72,10 +98,12 @@ public:
   void OnIdle() override;
   void OnParentWindowResize(int width, int height) override;
   bool ConstrainEditorResize(int& w, int& h) const override;
-
+  int UnserializeState(const IByteChunk& chunk, int startPos) override;
 private:
   orm::BandPassCore mCore;
   orm::ParamMailbox<orm::BandPassCore::Params> mParamMailbox;
+  orm::ParamMailbox<orm::BandPassCore::AgDeltas> mAgDeltaMailbox;
+  orm::BandPassCore::AgDeltas mAgDeltas;
 
   SpectrumSTFT<2> mSpectrumL;
   SpectrumSTFT<2> mSpectrumR;
@@ -90,6 +118,13 @@ private:
   FilterNodePad*  mPadR = nullptr;
   BandRangeSlider* mBandL = nullptr;
   BandRangeSlider* mBandR = nullptr;
+  ORMSlider* mMixSlider = nullptr;
+  GainSlider* mGainSliderL = nullptr;
+  GainSlider* mGainSliderR = nullptr;
+  ORMSlider* mAgRangeSlider[4] = {};
+  ORMSlider* mAgSpeedSlider[4] = {};
+  AgColorPickerControl* mAgPicker = nullptr;
+  int mAgSelColor = 0; // session state: which color RANGE/SPEED edit
 
   std::array<ParamSnapshot, kNumPresets> mPresets;
   std::array<int, kNumPresets> mSlotNumber;
@@ -162,6 +197,13 @@ private:
   ParamSnapshot MixSnapshots(const ParamSnapshot& a, const ParamSnapshot& b, double t) const;
   void OnFadeDrag(double normalizedPos);
   void StartFade(const ParamSnapshot& to);
+
+  static void MigrateLegacySnapshot(ParamSnapshot& s);
+  void ToggleAgMap(int enableParamIdx);
+  void SetAgMapColor(int colorParamIdx, int colorIdx);
+  void SetAgSelectedColor(int colorIdx);
+  void UpdateAgMaps();
+  void AgDisplayPush();
   void ApplyLanguage();
   void ApplyTooltips();
   void ApplyTheme();

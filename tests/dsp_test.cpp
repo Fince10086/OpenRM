@@ -174,13 +174,20 @@ int main()
         check("BP center gain stays >=0.85 for 0.2 oct (narrow-band sag)", narrowOk);
     }
 
-    // ---- 6) 稳定性: 白噪声高 Q ----
+    // ---- 6) 稳定性: 白噪声高 Q + 全部随机映射开启 ----
     {
         BandPassCore core;
         core.prepare(kFs);
         BandPassCore::Params p = MakeParams();
         p.freqL = 4000.0; p.bwL = 0.05; p.freqR = 250.0; p.bwR = 0.1;
-        p.agOn = true; p.agAmount = 0.5f; p.agRate = 8.0;
+        p.agAmount[0] = 0.5f; p.agAmount[1] = 1.0f; p.agAmount[2] = 0.3f; p.agAmount[3] = 0.7f;
+        p.agPeriodSec[0] = 0.125; p.agPeriodSec[1] = 2.0; p.agPeriodSec[2] = 0.02; p.agPeriodSec[3] = 10.0;
+        p.agEnableFreqL = true;  p.agEnableBwL = true;  p.agEnableGainL = true;
+        p.agEnableFreqR = true;  p.agEnableBwR = true;  p.agEnableGainR = true;
+        p.agEnableMix = true;
+        p.agColorFreqL = 0; p.agColorBwL = 1; p.agColorGainL = 2;
+        p.agColorFreqR = 3; p.agColorBwR = 2; p.agColorGainR = 1;
+        p.agColorMix = 0;
         core.setParams(p);
         const int n = (int)(kFs * 10);
         std::vector<float> in(n), out(n);
@@ -193,9 +200,57 @@ int main()
             core.process(in.data() + pos, in.data() + pos, out.data() + pos, out.data() + pos, b);
         }
         bool stable = true;
+        double peak = 0.0;
         for (int i = 0; i < n; ++i)
+        {
             if (!std::isfinite(out[i]) || std::fabs(out[i]) > 16.0f) { stable = false; break; }
-        check("stable under narrow-band noise + agitation (10s, |out|<16)", stable);
+            peak = std::max(peak, (double)std::fabs(out[i]));
+        }
+        check("stable under narrow-band noise + all random mappings (10s, |out|<16)", stable);
+        printf("   peak |out| = %.3f\n", peak);
+    }
+
+    // ---- 6b) 随机映射确实改变输出: CENTER 满量程 + GAIN 满量程的极端影响 ----
+    {
+        // 基准: 无映射
+        BandPassCore coreA;
+        coreA.prepare(kFs);
+        BandPassCore::Params pA = MakeParams();
+        pA.freqL = 1000.0; pA.bwL = 1.0; pA.mix = 0.5f;
+        coreA.setParams(pA);
+        const double gNone = measureGain(coreA, 1000.0);
+
+        // CENTER L 映射红色满量程: 中心在 x0.033~x30 之间游走, 1kHz 处增益应显著变化
+        BandPassCore coreB;
+        coreB.prepare(kFs);
+        BandPassCore::Params pB = pA;
+        pB.agEnableFreqL = true; pB.agColorFreqL = 0;
+        pB.agAmount[0] = 1.0f; pB.agPeriodSec[0] = 0.02; // 快速游走, RMS 平均化后可见差异
+        coreB.setParams(pB);
+        const double gFreq = measureGain(coreB, 1000.0);
+
+        // GAIN L 映射红色 ±48dB: RMS 增益应在 [~0.16, ~16] 之外不可能, 但相对基准应有大幅变化
+        BandPassCore coreC;
+        coreC.prepare(kFs);
+        BandPassCore::Params pC = pA;
+        pC.agEnableGainL = true; pC.agColorGainL = 0;
+        pC.agAmount[0] = 1.0f; pC.agPeriodSec[0] = 0.02;
+        coreC.setParams(pC);
+        const double gGain = measureGain(coreC, 1000.0);
+
+        // MIX 映射红色 ±50% (基准 mix=0.5 -> 游走于 0~1)
+        BandPassCore coreD;
+        coreD.prepare(kFs);
+        BandPassCore::Params pD = pA;
+        pD.agEnableMix = true; pD.agColorMix = 0;
+        pD.agAmount[0] = 1.0f; pD.agPeriodSec[0] = 0.02;
+        coreD.setParams(pD);
+        const double gMix = measureGain(coreD, 1000.0);
+
+        printf("   gains: none=%.3f freqMap=%.3f gainMap=%.3f mixMap=%.3f\n", gNone, gFreq, gGain, gMix);
+        check("random center mapping changes output", std::fabs(gFreq - gNone) > 0.05);
+        check("random gain mapping changes output", std::fabs(gGain - gNone) > 0.05);
+        check("random mix mapping changes output", std::fabs(gMix - gNone) > 0.05);
     }
 
     // ---- 7) slope: 默认 96; -3dB 带宽跨档位保持; 越高滚降越陡 ----

@@ -3,6 +3,7 @@
 #include "IGraphics.h"
 #include "Strings.h"
 
+#include <algorithm>
 #include <cmath>
 
 namespace iplug { namespace igraphics {
@@ -62,6 +63,36 @@ static constexpr float BLOCK_GAP = 1.5f;
 static constexpr float HANDLE_R = 7.f;
 static constexpr float HANDLE_RING = 1.5f;
 static constexpr float LABEL_VALUE_GAP = 12.f;
+
+// RANDOM mapping swatches (fixed functional colors, independent of theme hue)
+constexpr float AG_SWATCH_BIG = 26.f;   // RANDOM color picker
+constexpr float AG_SWATCH = 14.f;       // parameter/title swatches
+constexpr float AG_SWATCH_GAP = 8.f;
+
+constexpr int kNumAgColors = 4;
+
+inline IColor AgColor(int idx)
+{
+  static const IColor kColors[kNumAgColors] = {
+    IColor(255, 224, 66, 61),    // red
+    IColor(255, 240, 184, 40),   // yellow
+    IColor(255, 72, 138, 255),   // blue
+    IColor(255, 80, 190, 96),    // green
+  };
+  return kColors[std::clamp(idx, 0, kNumAgColors - 1)];
+}
+
+inline IColor AgColorDim(int idx)
+{
+  const IColor c = AgColor(idx);
+  return IColor(90, c.R, c.G, c.B);
+}
+
+inline IColor AgColorGhost(int idx)
+{
+  const IColor c = AgColor(idx);
+  return IColor(150, c.R, c.G, c.B);
+}
 
 enum EPadCorner : int
 {

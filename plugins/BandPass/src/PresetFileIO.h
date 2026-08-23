@@ -19,7 +19,7 @@ inline bool WritePresetFile(const std::string& path, const PresetFileData& data,
   try
   {
     nlohmann::json j;
-    j["version"] = 2;
+    j["version"] = 3;
     j["presets"] = data.presets;
     j["currentPreset"] = data.currentPreset;
     j["currentValues"] = data.currentValues;
@@ -63,9 +63,15 @@ inline bool ReadPresetFile(const std::string& path, PresetFileData& out, std::st
 
   try
   {
-    if (!j.is_object() || !j.contains("version") || j["version"].get<int>() != 2)
+    if (!j.is_object() || !j.contains("version"))
     {
-      err = "Unsupported preset file (expected version 2)";
+      err = "Unsupported preset file (missing version)";
+      return false;
+    }
+    const int version = j["version"].get<int>();
+    if (version != 2 && version != 3)
+    {
+      err = "Unsupported preset file (expected version 2 or 3)";
       return false;
     }
     if (!j.contains("presets") || !j["presets"].is_array())

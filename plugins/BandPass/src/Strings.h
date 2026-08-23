@@ -27,8 +27,6 @@ enum EText
   kTxtHighCut,
   kTxtLeft,
   kTxtRight,
-  kTxtOn,
-  kTxtOff,
   kTxtLink,
   kTxtFlip,
   kTxtCopyLR,
@@ -65,6 +63,12 @@ enum EText
   kTxtTipDrag,
   kTxtTipSaveHere,
   kTxtTipMenu,
+  kTxtRed,
+  kTxtYellow,
+  kTxtBlue,
+  kTxtGreen,
+  kTxtTipAgSwatch,
+  kTxtTipAgPicker,
   kNumTexts
 };
 
@@ -75,7 +79,7 @@ inline const char* Tr(int id, int lang)
     {
       "PRESETS", "RANDOM", "MORPH", "RANGE", "SPEED", "MIX",
       "GAIN L", "GAIN R", "CENTER", "BANDWIDTH", "SLOPE", "LOWCUT", "HIGHCUT",
-      "LEFT", "RIGHT", "ON", "OFF", "LINK", "FLIP", "L->R", "R->L",
+      "LEFT", "RIGHT", "LINK", "FLIP", "L->R", "R->L",
       "UNDO", "REDO", "SAVE", "LOAD",
       "LANGUAGE", "DARK", "LIGHT", "Theme Color", "SETTINGS",
       "THEME", "HUE", "SATURATION", "NONE", "LOW", "MED", "HIGH", "中文",
@@ -94,11 +98,14 @@ inline const char* Tr(int id, int lang)
       "Drag onto another slot to swap",
       "Cmd+Click: save here",
       "Right-click: menu",
+      "Red", "Yellow", "Blue", "Green",
+      "Click: toggle random / Right-click: color",
+      "Choose the random color to edit",
     },
     {
       "预设", "随机", "渐变", "范围", "速度", "混合",
       "增益 L", "增益 R", "中心", "带宽", "滚降", "低切", "高切",
-      "LEFT", "RIGHT", "开", "关", "同步", "翻转", "左→右", "右→左",
+      "LEFT", "RIGHT", "同步", "翻转", "左→右", "右→左",
       "撤销", "重做", "保存", "读取",
       "语言", "深色", "浅色", "主题色", "设置",
       "主题", "色相", "饱和度", "无", "低", "中", "高", "中文",
@@ -117,6 +124,9 @@ inline const char* Tr(int id, int lang)
       "拖到其他槽位以交换",
       "Cmd+点击：保存到此槽",
       "右键：菜单",
+      "红", "黄", "蓝", "绿",
+      "点击：开关随机 / 右键：选颜色",
+      "选择要编辑的随机颜色",
     },
   };
   return kTable[lang][id];

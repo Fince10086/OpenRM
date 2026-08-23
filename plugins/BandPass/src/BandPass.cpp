@@ -161,6 +161,29 @@ public:
   void SetValueFormatter(std::function<void(WDL_String&)> f) { mValueFormatter = std::move(f); }
   void SetHeaderLabel(const char* s) { mHeaderLabel.Set(s); SetDirty(false); }
 
+  struct AgHooks
+  {
+    std::function<void()> agToggle;
+    std::function<void(int colorIdx)> agSetColor;
+  };
+
+  void SetHeaderSwatchColor(int colorIdx) { mHeaderSwatchColor = colorIdx; SetDirty(false); }
+  void SetAgMapHooks(const AgHooks& h) { mAgHooks = h; }
+  void SetAgMapState(bool on, int colorIdx)
+  {
+    mAgMapOn = on;
+    mAgMapColor = colorIdx;
+    UpdateAgGhost();
+    SetDirty(false);
+  }
+  void SetAgDeltaMix(float d)
+  {
+    if (std::fabs(d - mAgMixDelta) < 1e-4f) return;
+    mAgMixDelta = d;
+    UpdateAgGhost();
+    SetDirty(false);
+  }
+
   void OnResize() override
   {
 
@@ -195,6 +218,12 @@ public:
 
   void OnMouseDown(float x, float y, const IMouseMod& mod) override
   {
+    if (mAgHooks.agToggle && mAgSwatchRect.Contains(x, y))
+    {
+      if (mod.R) OpenAgColorMenu();
+      else mAgHooks.agToggle();
+      return;
+    }
     if (mod.L && !mod.R && !mod.A && ValueRect().Contains(x, y))
     {
       if (GetParam())
@@ -219,6 +248,22 @@ public:
 
   void DrawHandle(IGraphics& g, const IRECT& bounds) override
   {
+    if (mAgMapOn && mAgGhostNorm >= 0.f)
+    {
+      const IRECT tb = mTrackBounds;
+      if (mDirection == EDirection::Horizontal)
+      {
+        const float x = std::clamp(tb.L + mAgGhostNorm * tb.W(), tb.L, tb.R);
+        g.FillCircle(COL_100(), x, tb.MH(), HANDLE_R + HANDLE_RING);
+        g.FillCircle(AgColorGhost(mAgMapColor), x, tb.MH(), HANDLE_R);
+      }
+      else
+      {
+        const float y = std::clamp(tb.B - mAgGhostNorm * tb.H(), tb.T, tb.B);
+        g.FillCircle(COL_100(), tb.MW(), y, HANDLE_R + HANDLE_RING);
+        g.FillCircle(AgColorGhost(mAgMapColor), tb.MW(), y, HANDLE_R);
+      }
+    }
     const float cx = bounds.MW(), cy = bounds.MH();
     g.FillCircle(COL_100(), cx, cy, HANDLE_R + HANDLE_RING);
     g.FillCircle(COL_900(), cx, cy, HANDLE_R);
@@ -227,6 +272,16 @@ public:
 protected:
   static constexpr float kHeaderH = 26.f;
   static constexpr float kHeaderW = 26.f;
+
+  // Normalized ghost-handle position for the active random mapping (-1 = hidden).
+  void UpdateAgGhost()
+  {
+    const IParam* p = GetParam();
+    if (!mAgMapOn || !p) { mAgGhostNorm = -1.f; return; }
+    const double v = std::clamp(p->Value() + GhostDelta(), p->GetMin(), p->GetMax());
+    mAgGhostNorm = (float) p->ToNormalized(v);
+  }
+  virtual double GhostDelta() const { return (double) mAgMixDelta; }
 
   virtual IRECT ValueRect() const
   {
@@ -249,10 +304,17 @@ protected:
     switch (GetParamIdx())
     {
       case kAgAmount:
-      case kMix:
         std::snprintf(buf, sizeof(buf), "%.0f%%", p->Value() * 100.);
         ds.Set(buf);
         break;
+      case kMix:
+      {
+        double v = p->Value();
+        if (mAgMapOn) v = std::clamp(v + (double) mAgMixDelta, 0., 1.);
+        std::snprintf(buf, sizeof(buf), "%.0f%%", v * 100.);
+        ds.Set(buf);
+        break;
+      }
       case kAgRate:
         std::snprintf(buf, sizeof(buf), p->Value() < 10. ? "%.2fs" : "%.1fs", p->Value());
         ds.Set(buf);
@@ -276,10 +338,27 @@ protected:
     if (rot == 0.f)
     {
       const IRECT hdr(mRECT.L, mRECT.T, mRECT.R, mRECT.T + kHeaderH);
+      float labelL = hdr.L;
+      if (mHeaderSwatchColor >= 0)
+      {
+        g.FillRect(AgColor(mHeaderSwatchColor),
+                   IRECT(hdr.L + 1.f, hdr.MH() - AG_SWATCH * 0.5f,
+                         hdr.L + 1.f + AG_SWATCH, hdr.MH() + AG_SWATCH * 0.5f));
+        labelL = hdr.L + AG_SWATCH + AG_SWATCH_GAP;
+      }
+      float valueR = hdr.R;
+      if (mAgHooks.agToggle)
+      {
+        mAgSwatchRect = IRECT(hdr.R - 1.f - AG_SWATCH, hdr.MH() - AG_SWATCH * 0.5f,
+                              hdr.R - 1.f, hdr.MH() + AG_SWATCH * 0.5f);
+        g.FillRect(mAgMapOn ? AgColor(mAgMapColor) : AgColorDim(mAgMapColor),
+                   mAgSwatchRect.GetPadded(-1.f));
+        valueR = mAgSwatchRect.L - 6.f;
+      }
       g.DrawText(IText(20, COL_900(), kFontSemiBold, EAlign::Near, EVAlign::Middle),
-                 mHeaderLabel.Get(), IRECT(hdr.L, hdr.T, hdr.MW(), hdr.B));
+                 mHeaderLabel.Get(), IRECT(labelL, hdr.T, hdr.MW(), hdr.B));
       g.DrawText(IText(20, COL_700(), kFontRegular, EAlign::Far, EVAlign::Middle),
-                 ds.Get(), IRECT(hdr.MW(), hdr.T, hdr.R, hdr.B));
+                 ds.Get(), IRECT(hdr.MW(), hdr.T, valueR, hdr.B));
     }
     else
     {
@@ -291,8 +370,32 @@ protected:
     }
   }
 
+  void OpenAgColorMenu()
+  {
+    if (!GetUI()) return;
+    mAgMenu.Clear();
+    mAgMenu.SetFunction([this](IPopupMenu* menu) {
+      const int idx = menu ? menu->GetChosenItemIdx() : -1;
+      if (idx < 0 || idx >= kNumAgColors) return;
+      if (mAgHooks.agSetColor) mAgHooks.agSetColor(idx);
+    });
+    static const int kNameIds[kNumAgColors] = { orm::kTxtRed, orm::kTxtYellow, orm::kTxtBlue, orm::kTxtGreen };
+    for (int c = 0; c < kNumAgColors; ++c)
+      mAgMenu.AddItem(orm::Tr(kNameIds[c], orm::UILang()));
+    mAgMenu.CheckItemAlone(std::clamp(mAgMapColor, 0, kNumAgColors - 1));
+    GetUI()->CreatePopupMenu(*this, mAgMenu, mAgSwatchRect, kNoValIdx);
+  }
+
   WDL_String mHeaderLabel;
   std::function<void(WDL_String&)> mValueFormatter;
+  int mHeaderSwatchColor = -1;
+  bool mAgMapOn = false;
+  int mAgMapColor = 0;
+  IRECT mAgSwatchRect;
+  IPopupMenu mAgMenu;
+  AgHooks mAgHooks;
+  float mAgGhostNorm = -1.f;
+  float mAgMixDelta = 0.f;
 };
 
 class GainSlider : public ORMSlider
@@ -301,10 +404,31 @@ public:
   GainSlider(const IRECT& bounds, int paramIdx, const char* label, const IVStyle& style)
   : ORMSlider(bounds, paramIdx, label, style, EDirection::Vertical) {}
 
+  void SetAgDeltaDb(float db)
+  {
+    if (std::fabs(db - mAgGainDb) < 1e-3f) return;
+    mAgGainDb = db;
+    UpdateAgGhost();
+    SetDirty(false);
+  }
+
 protected:
   static constexpr float kTextW = 16.f;
   static constexpr float kTextGap = 6.f;
   static constexpr float kPlotTopInset = 30.f;
+
+  double GhostDelta() const override { return (double) mAgGainDb; }
+
+  void FormatValue(WDL_String& ds) const override
+  {
+    const IParam* p = GetParam();
+    if (!p) { ds.Set(""); return; }
+    double v = p->Value();
+    if (mAgMapOn) v = std::clamp(v + (double) mAgGainDb, p->GetMin(), p->GetMax());
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%.1fdB", v);
+    ds.Set(buf);
+  }
 
   IRECT TextRect() const
   {
@@ -336,11 +460,17 @@ protected:
     FormatValue(ds);
 
     const IRECT hdr = TextRect();
+    mAgSwatchRect = IRECT(hdr.MW() - AG_SWATCH * 0.5f, mRECT.T + kPlotTopInset * 0.5f - AG_SWATCH * 0.5f,
+                          hdr.MW() + AG_SWATCH * 0.5f, mRECT.T + kPlotTopInset * 0.5f + AG_SWATCH * 0.5f);
+    g.FillRect(mAgMapOn ? AgColor(mAgMapColor) : AgColorDim(mAgMapColor),
+               mAgSwatchRect.GetPadded(-1.f));
     g.DrawText(IText(20, COL_700(), kFontRegular, EAlign::Center, EVAlign::Top, 90.f),
                ds.Get(), IRECT(hdr.L, TrackVisTop(), hdr.R, hdr.B));
     g.DrawText(IText(20, COL_900(), kFontSemiBold, EAlign::Center, EVAlign::Bottom, 90.f),
                mHeaderLabel.Get(), hdr);
   }
+
+  float mAgGainDb = 0.f;
 };
 
 class InvertToggleControl : public IVToggleControl
@@ -399,6 +529,41 @@ public:
 private:
   int mColorStep = 0;
   int mFontStep = 2;
+};
+
+class AgColorPickerControl : public IControl
+{
+public:
+  AgColorPickerControl(const IRECT& bounds, std::function<void(int)> onPick)
+  : IControl(bounds), mOnPick(std::move(onPick)) {}
+
+  void SetColor(int idx) { mColorIdx = std::clamp(idx, 0, kNumAgColors - 1); SetDirty(false); }
+
+  void Draw(IGraphics& g) override
+  {
+    g.FillRect(AgColor(mColorIdx), mRECT.GetPadded(-BLOCK_GAP));
+  }
+
+  void OnMouseDown(float x, float y, const IMouseMod& mod) override
+  {
+    if (!GetUI() || !mOnPick) return;
+    mMenu.Clear();
+    mMenu.SetFunction([this](IPopupMenu* menu) {
+      const int idx = menu ? menu->GetChosenItemIdx() : -1;
+      if (idx < 0 || idx >= kNumAgColors) return;
+      mOnPick(idx);
+    });
+    static const int kNameIds[kNumAgColors] = { orm::kTxtRed, orm::kTxtYellow, orm::kTxtBlue, orm::kTxtGreen };
+    for (int c = 0; c < kNumAgColors; ++c)
+      mMenu.AddItem(orm::Tr(kNameIds[c], orm::UILang()));
+    mMenu.CheckItemAlone(mColorIdx);
+    GetUI()->CreatePopupMenu(*this, mMenu, mRECT, kNoValIdx);
+  }
+
+private:
+  std::function<void(int)> mOnPick;
+  IPopupMenu mMenu;
+  int mColorIdx = 0;
 };
 
 class SettingsMenuButton : public IControl
@@ -694,6 +859,36 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
     { "12 dB/oct", "24 dB/oct", "48 dB/oct", "96 dB/oct" });
   GetParam(kSlopeR)->InitEnum("Slope R", kSlopeDefaultIdx,
     { "12 dB/oct", "24 dB/oct", "48 dB/oct", "96 dB/oct" });
+  {
+    struct MapDef { int colorIdx; int enableIdx; const char* colorName; const char* enableName; };
+    const MapDef maps[7] = {
+      { kAgColorFreqL, kAgEnableFreqL, "Rand Color Freq L", "Rand Freq L" },
+      { kAgColorBwL,   kAgEnableBwL,   "Rand Color BW L",   "Rand BW L" },
+      { kAgColorGainL, kAgEnableGainL, "Rand Color Gain L", "Rand Gain L" },
+      { kAgColorFreqR, kAgEnableFreqR, "Rand Color Freq R", "Rand Freq R" },
+      { kAgColorBwR,   kAgEnableBwR,   "Rand Color BW R",   "Rand BW R" },
+      { kAgColorGainR, kAgEnableGainR, "Rand Color Gain R", "Rand Gain R" },
+      { kAgColorMix,   kAgEnableMix,   "Rand Color Mix",    "Rand Mix" },
+    };
+    for (const MapDef& m : maps)
+    {
+      GetParam(m.colorIdx)->InitEnum(m.colorName, 0, { "Red", "Yellow", "Blue", "Green" });
+      GetParam(m.enableIdx)->InitBool(m.enableName, false);
+    }
+  }
+  {
+    struct RateDef { int amountIdx; int rateIdx; const char* amountName; const char* rateName; };
+    const RateDef rates[3] = {
+      { kAgAmountY, kAgRateY, "Ag Amount Yellow", "Ag Speed Yellow" },
+      { kAgAmountB, kAgRateB, "Ag Amount Blue",   "Ag Speed Blue" },
+      { kAgAmountG, kAgRateG, "Ag Amount Green",  "Ag Speed Green" },
+    };
+    for (const RateDef& r : rates)
+    {
+      GetParam(r.amountIdx)->InitDouble(r.amountName, 0.1, 0., 1., 0.01, "");
+      GetParam(r.rateIdx)->InitDouble(r.rateName, 1., 0.01, 60., 0.01, "", 0, "", IParam::ShapeExp());
+    }
+  }
 
   for (int i = 0; i < kNumPresets; ++i)
   {
@@ -829,10 +1024,13 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
     constexpr float kSliderH   = 42.f;
     constexpr float kPanelR    = kCol2X + kBtnW;
 
-    auto padHooks = [&](int kF, int kB, int kSlope) -> FilterNodePad::Hooks {
+    auto padHooks = [&](int kF, int kB, int kSlope,
+                        int kEnFreq, int kColFreq, int kEnBw, int kColBw) -> FilterNodePad::Hooks {
       return FilterNodePad::Hooks{
         [this, kF, kB](int id, double v) { EditCorner(kF, kB, id, v); },
         [this, kSlope](int slopeDb) { SetSlopeFromMenu(kSlope, slopeDb); },
+        [this, kEnFreq, kEnBw](int id) { ToggleAgMap(id == kCornerCenter ? kEnFreq : kEnBw); },
+        [this, kColFreq, kColBw](int id, int c) { SetAgMapColor(id == kCornerCenter ? kColFreq : kColBw, c); },
       };
     };
 
@@ -844,7 +1042,8 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
       };
     };
 
-    mPadL = new FilterNodePad(IRECT(20, 30, 668, 210), { kFreqL, kBwL }, "LEFT", style, padHooks(kFreqL, kBwL, kSlopeL));
+    mPadL = new FilterNodePad(IRECT(20, 30, 668, 210), { kFreqL, kBwL }, "LEFT", style,
+                              padHooks(kFreqL, kBwL, kSlopeL, kAgEnableFreqL, kAgColorFreqL, kAgEnableBwL, kAgColorBwL));
     pGraphics->AttachControl(mPadL, kCtrlTagPadL);
     bindText(orm::kTxtLeft, [this](const char* s) { mPadL->SetSideLabel(s); });
     bindText(orm::kTxtCenter, [this](const char* s) { mPadL->SetCenterPrefix(s); });
@@ -857,7 +1056,8 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
     bindText(orm::kTxtHighCut, [this](const char* s) { mBandL->SetHighPrefix(s); });
     bindTip(mBandL, orm::kTxtTipBand);
 
-    mPadR = new FilterNodePad(IRECT(20, 288, 668, 468), { kFreqR, kBwR }, "RIGHT", style, padHooks(kFreqR, kBwR, kSlopeR));
+    mPadR = new FilterNodePad(IRECT(20, 288, 668, 468), { kFreqR, kBwR }, "RIGHT", style,
+                              padHooks(kFreqR, kBwR, kSlopeR, kAgEnableFreqR, kAgColorFreqR, kAgEnableBwR, kAgColorBwR));
     pGraphics->AttachControl(mPadR, kCtrlTagPadR);
     bindText(orm::kTxtRight, [this](const char* s) { mPadR->SetSideLabel(s); });
     bindText(orm::kTxtCenter, [this](const char* s) { mPadR->SetCenterPrefix(s); });
@@ -870,14 +1070,23 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
     bindText(orm::kTxtHighCut, [this](const char* s) { mBandR->SetHighPrefix(s); });
     bindTip(mBandR, orm::kTxtTipBand);
 
-    GainSlider* gainL = new GainSlider(IRECT(672, 30, 730, 210), kGainL, "GAIN L", style);
-    pGraphics->AttachControl(gainL);
-    bindText(orm::kTxtGainL, [gainL](const char* s) { gainL->SetHeaderLabel(s); });
-    bindTip(gainL, orm::kTxtTipGain);
-    GainSlider* gainR = new GainSlider(IRECT(672, 288, 730, 468), kGainR, "GAIN R", style);
-    pGraphics->AttachControl(gainR);
-    bindText(orm::kTxtGainR, [gainR](const char* s) { gainR->SetHeaderLabel(s); });
-    bindTip(gainR, orm::kTxtTipGain);
+    auto gainHooks = [this](int kEnable, int kColor) -> ORMSlider::AgHooks
+    {
+      return ORMSlider::AgHooks{
+        [this, kEnable]() { ToggleAgMap(kEnable); },
+        [this, kColor](int c) { SetAgMapColor(kColor, c); },
+      };
+    };
+    mGainSliderL = new GainSlider(IRECT(672, 30, 730, 210), kGainL, "GAIN L", style);
+    mGainSliderL->SetAgMapHooks(gainHooks(kAgEnableGainL, kAgColorGainL));
+    pGraphics->AttachControl(mGainSliderL);
+    bindText(orm::kTxtGainL, [this](const char* s) { mGainSliderL->SetHeaderLabel(s); });
+    bindTip(mGainSliderL, orm::kTxtTipGain);
+    mGainSliderR = new GainSlider(IRECT(672, 288, 730, 468), kGainR, "GAIN R", style);
+    mGainSliderR->SetAgMapHooks(gainHooks(kAgEnableGainR, kAgColorGainR));
+    pGraphics->AttachControl(mGainSliderR);
+    bindText(orm::kTxtGainR, [this](const char* s) { mGainSliderR->SetHeaderLabel(s); });
+    bindTip(mGainSliderR, orm::kTxtTipGain);
 
     SectionTitleControl* presetsTitle = new SectionTitleControl(IRECT(kCol1X, 30, 1050, 52), "PRESETS",
       IText(20, COL_900(), kFontBold, EAlign::Near, EVAlign::Middle));
@@ -960,18 +1169,31 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
     randomTitle->SetTargetRECT(IRECT(kCol1X, 234, kCol1X + 130, 260));
     bindText(orm::kTxtRandom, [randomTitle](const char* s) { randomTitle->SetStr(s); randomTitle->SetDirty(false); });
     bindTip(randomTitle, orm::kTxtTipRandom);
-    FlatToggleControl* agToggle = new FlatToggleControl(IRECT(kCol1X + 116, 234, kPanelR, 260), kAgOn, " ", toggleStyle, "OFF", "ON");
-    pGraphics->AttachControl(agToggle);
-    bindText(orm::kTxtOff, [agToggle](const char* s) { agToggle->SetOffText(s); });
-    bindText(orm::kTxtOn, [agToggle](const char* s) { agToggle->SetOnText(s); });
-    ORMSlider* rangeSlider = new ORMSlider(IRECT(kCol1X, 264, kPanelR, 306), kAgAmount, "RANGE", style, EDirection::Horizontal);
-    pGraphics->AttachControl(rangeSlider);
-    bindText(orm::kTxtRange, [rangeSlider](const char* s) { rangeSlider->SetHeaderLabel(s); });
-    bindTip(rangeSlider, orm::kTxtTipRange);
-    ORMSlider* speedSlider = new ORMSlider(IRECT(kCol1X, 310, kPanelR, 352), kAgRate, "SPEED", style, EDirection::Horizontal);
-    pGraphics->AttachControl(speedSlider);
-    bindText(orm::kTxtSpeed, [speedSlider](const char* s) { speedSlider->SetHeaderLabel(s); });
-    bindTip(speedSlider, orm::kTxtTipSpeed);
+    mAgPicker = new AgColorPickerControl(IRECT(kPanelR - AG_SWATCH_BIG, 234, kPanelR, 260),
+                                         [this](int idx) { SetAgSelectedColor(idx); });
+    pGraphics->AttachControl(mAgPicker);
+    bindTip(mAgPicker, orm::kTxtTipAgPicker);
+    {
+      const int kAmountParams[4] = { kAgAmount, kAgAmountY, kAgAmountB, kAgAmountG };
+      const int kRateParams[4]   = { kAgRate, kAgRateY, kAgRateB, kAgRateG };
+      for (int c = 0; c < 4; ++c)
+      {
+        mAgRangeSlider[c] = new ORMSlider(IRECT(kCol1X, 264, kPanelR, 306), kAmountParams[c],
+                                          "RANGE", style, EDirection::Horizontal);
+        pGraphics->AttachControl(mAgRangeSlider[c]);
+        mAgRangeSlider[c]->SetHeaderSwatchColor(c);
+        mAgRangeSlider[c]->Hide(c != mAgSelColor);
+        bindText(orm::kTxtRange, [this, c](const char* s) { mAgRangeSlider[c]->SetHeaderLabel(s); });
+        bindTip(mAgRangeSlider[c], orm::kTxtTipRange);
+        mAgSpeedSlider[c] = new ORMSlider(IRECT(kCol1X, 310, kPanelR, 352), kRateParams[c],
+                                          "SPEED", style, EDirection::Horizontal);
+        pGraphics->AttachControl(mAgSpeedSlider[c]);
+        mAgSpeedSlider[c]->SetHeaderSwatchColor(c);
+        mAgSpeedSlider[c]->Hide(c != mAgSelColor);
+        bindText(orm::kTxtSpeed, [this, c](const char* s) { mAgSpeedSlider[c]->SetHeaderLabel(s); });
+        bindTip(mAgSpeedSlider[c], orm::kTxtTipSpeed);
+      }
+    }
 
     IVButtonControl* copyLRBtn = MakeMomentary(IRECT(kCol1X, 356, kCol1X + 78, 386), [this](IControl*) { CopyLtoR(); }, "L->R", btnStyle);
     pGraphics->AttachControl(copyLRBtn);
@@ -985,10 +1207,11 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
     IVButtonControl* flipBtn = MakeMomentary(IRECT(kCol1X + 78, 386, kPanelR, 416), [this](IControl*) { FlipLR(); }, "FLIP", btnStyle);
     pGraphics->AttachControl(flipBtn);
     bindText(orm::kTxtFlip, [flipBtn](const char* s) { flipBtn->SetLabelStr(s); flipBtn->SetDirty(false); });
-    ORMSlider* mixSlider = new ORMSlider(IRECT(kCol1X, 420, kPanelR, 462), kMix, "MIX", style, EDirection::Horizontal);
-    pGraphics->AttachControl(mixSlider);
-    bindText(orm::kTxtMix, [mixSlider](const char* s) { mixSlider->SetHeaderLabel(s); });
-    bindTip(mixSlider, orm::kTxtTipMix);
+    mMixSlider = new ORMSlider(IRECT(kCol1X, 420, kPanelR, 462), kMix, "MIX", style, EDirection::Horizontal);
+    mMixSlider->SetAgMapHooks(gainHooks(kAgEnableMix, kAgColorMix));
+    pGraphics->AttachControl(mMixSlider);
+    bindText(orm::kTxtMix, [this](const char* s) { mMixSlider->SetHeaderLabel(s); });
+    bindTip(mMixSlider, orm::kTxtTipMix);
 
     IVButtonControl* undoBtn = MakeMomentary(IRECT(kCol1X, 466, kCol1X + 78, 496), [this](IControl*) { Undo(); }, "UNDO", btnStyle);
     pGraphics->AttachControl(undoBtn);
@@ -1066,6 +1289,7 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
     pGraphics->EnableTooltips(true);
     ApplyLanguage();
     UpdatePads();
+    UpdateAgMaps();
   };
 #endif
 }
@@ -1118,6 +1342,8 @@ void ORMBandPass::ProcessBlock(sample** inputs, sample** outputs, int nFrames)
     sample* specM[2] = { mSpecInL.data(), mWetL.data() };
     mSpectrumL.ProcessBlock(specM, nSpec, kCtrlTagPadL, 2);
   }
+
+  mAgDeltaMailbox.publish(mCore.agDeltas());
 }
 
 void ORMBandPass::OnReset()
@@ -1157,6 +1383,7 @@ void ORMBandPass::OnParamChangeUI(int paramIdx, EParamSource source)
     MirrorLinkedParams(paramIdx);
   }
   UpdatePads();
+  UpdateAgMaps();
 }
 #endif
 
@@ -1171,9 +1398,24 @@ orm::BandPassCore::Params ORMBandPass::CollectParams() const
   p.gainR  = static_cast<float>(std::pow(10., GetParam(kGainR)->Value() / 20.));
   p.linked = GetParam(kLink)->Value() > 0.5;
   p.mix    = static_cast<float>(GetParam(kMix)->Value());
-  p.agOn   = GetParam(kAgOn)->Value() > 0.5;
-  p.agAmount = static_cast<float>(GetParam(kAgAmount)->Value());
-  p.agRate = 1.0 / GetParam(kAgRate)->Value();
+  {
+    const int kAmountParams[4] = { kAgAmount, kAgAmountY, kAgAmountB, kAgAmountG };
+    const int kRateParams[4]   = { kAgRate, kAgRateY, kAgRateB, kAgRateG };
+    for (int c = 0; c < 4; ++c)
+    {
+      p.agAmount[c]    = static_cast<float>(GetParam(kAmountParams[c])->Value());
+      p.agPeriodSec[c] = GetParam(kRateParams[c])->Value();
+    }
+  }
+  auto mapEnable = [&](int idx) { return GetParam(idx)->Value() > 0.5; };
+  auto mapColor  = [&](int idx) { return (std::uint8_t) std::clamp(GetParam(idx)->Int(), 0, 3); };
+  p.agEnableFreqL = mapEnable(kAgEnableFreqL); p.agColorFreqL = mapColor(kAgColorFreqL);
+  p.agEnableBwL   = mapEnable(kAgEnableBwL);   p.agColorBwL   = mapColor(kAgColorBwL);
+  p.agEnableGainL = mapEnable(kAgEnableGainL); p.agColorGainL = mapColor(kAgColorGainL);
+  p.agEnableFreqR = mapEnable(kAgEnableFreqR); p.agColorFreqR = mapColor(kAgColorFreqR);
+  p.agEnableBwR   = mapEnable(kAgEnableBwR);   p.agColorBwR   = mapColor(kAgColorBwR);
+  p.agEnableGainR = mapEnable(kAgEnableGainR); p.agColorGainR = mapColor(kAgColorGainR);
+  p.agEnableMix   = mapEnable(kAgEnableMix);   p.agColorMix   = mapColor(kAgColorMix);
   p.slopeDbL = kSlopeDb[std::clamp(GetParam(kSlopeL)->Int(), 0, 3)];
   p.slopeDbR = kSlopeDb[std::clamp(GetParam(kSlopeR)->Int(), 0, 3)];
   return p;
@@ -1201,6 +1443,7 @@ void ORMBandPass::RefreshAfterEdit()
   }
 #endif
   UpdatePads();
+  UpdateAgMaps();
   MarkStateStable();
 }
 
@@ -1259,6 +1502,92 @@ void ORMBandPass::SetSlopeFromMenu(int slopeParamIdx, int slopeDb)
   SetParamFromEditor(slopeParamIdx, (double) idx);
   MirrorLinkedParams(slopeParamIdx);
   RefreshAfterEdit();
+}
+
+void ORMBandPass::ToggleAgMap(int enableParamIdx)
+{
+  mFading = false;
+  MaybePushGestureUndo();
+  SetParamFromEditor(enableParamIdx, GetParam(enableParamIdx)->Value() > 0.5 ? 0. : 1.);
+  RefreshAfterEdit();
+}
+
+void ORMBandPass::SetAgMapColor(int colorParamIdx, int colorIdx)
+{
+  if (GetParam(colorParamIdx)->Int() == colorIdx) return;
+  mFading = false;
+  MaybePushGestureUndo();
+  SetParamFromEditor(colorParamIdx, (double) colorIdx);
+  RefreshAfterEdit();
+}
+
+void ORMBandPass::SetAgSelectedColor(int colorIdx)
+{
+  if (colorIdx == mAgSelColor) return;
+  mAgSelColor = std::clamp(colorIdx, 0, 3);
+  if (mAgPicker)
+    mAgPicker->SetColor(mAgSelColor);
+  for (int c = 0; c < 4; ++c)
+  {
+    if (mAgRangeSlider[c]) mAgRangeSlider[c]->Hide(c != mAgSelColor);
+    if (mAgSpeedSlider[c]) mAgSpeedSlider[c]->Hide(c != mAgSelColor);
+  }
+}
+
+void ORMBandPass::UpdateAgMaps()
+{
+#if IPLUG_EDITOR
+  auto mapOn = [this](int idx) { return GetParam(idx)->Value() > 0.5; };
+  auto color = [this](int idx) { return std::clamp(GetParam(idx)->Int(), 0, 3); };
+  if (mPadL)
+    mPadL->SetAgMap(mapOn(kAgEnableFreqL), color(kAgColorFreqL), mapOn(kAgEnableBwL), color(kAgColorBwL));
+  if (mPadR)
+    mPadR->SetAgMap(mapOn(kAgEnableFreqR), color(kAgColorFreqR), mapOn(kAgEnableBwR), color(kAgColorBwR));
+  if (mGainSliderL) mGainSliderL->SetAgMapState(mapOn(kAgEnableGainL), color(kAgColorGainL));
+  if (mGainSliderR) mGainSliderR->SetAgMapState(mapOn(kAgEnableGainR), color(kAgColorGainR));
+  if (mMixSlider)   mMixSlider->SetAgMapState(mapOn(kAgEnableMix), color(kAgColorMix));
+#endif
+}
+
+void ORMBandPass::AgDisplayPush()
+{
+#if IPLUG_EDITOR
+  if (mPadL) mPadL->SetAgDeltas(mAgDeltas.freqOct[0], mAgDeltas.bwOct[0]);
+  if (mPadR) mPadR->SetAgDeltas(mAgDeltas.freqOct[1], mAgDeltas.bwOct[1]);
+  if (mGainSliderL) mGainSliderL->SetAgDeltaDb(mAgDeltas.gainDb[0]);
+  if (mGainSliderR) mGainSliderR->SetAgDeltaDb(mAgDeltas.gainDb[1]);
+  if (mMixSlider)   mMixSlider->SetAgDeltaMix(mAgDeltas.mix);
+#endif
+}
+
+void ORMBandPass::MigrateLegacySnapshot(ParamSnapshot& s)
+{
+  if (s[kAgOn] <= 0.5) return;
+  static const int kEnableParams[7] = {
+    kAgEnableFreqL, kAgEnableBwL, kAgEnableGainL,
+    kAgEnableFreqR, kAgEnableBwR, kAgEnableGainR, kAgEnableMix,
+  };
+  for (int i = 0; i < 7; ++i)
+    if (s[kEnableParams[i]] > 0.5) return; // already uses the new mapping system
+  s[kAgEnableFreqL] = 1.;
+  s[kAgEnableFreqR] = 1.;
+  s[kAgColorFreqL] = 0.; // red
+  s[kAgColorFreqR] = 0.;
+}
+
+int ORMBandPass::UnserializeState(const IByteChunk& chunk, int startPos)
+{
+  const int pos = Plugin::UnserializeState(chunk, startPos);
+  if (pos <= 0) return pos;
+  ParamSnapshot s = Snapshot();
+  const ParamSnapshot before = s;
+  MigrateLegacySnapshot(s);
+  if (!(s == before))
+  {
+    for (int i = 0; i < kNumParams; ++i)
+      if (s[i] != before[i]) SetParamFromEditor(i, s[i]);
+  }
+  return pos;
 }
 
 void ORMBandPass::UpdatePads()
@@ -1337,6 +1666,11 @@ void ORMBandPass::OnIdle()
   mSpectrumR.TransmitData(*this);
 
   SendSpectrumConfig();
+
+#if IPLUG_EDITOR
+  if (mAgDeltaMailbox.consume(mAgDeltas))
+    AgDisplayPush();
+#endif
 
   using namespace std::chrono;
   const double now = duration<double>(steady_clock::now().time_since_epoch()).count();
@@ -1510,19 +1844,30 @@ void ORMBandPass::ReadPresetFileFrom(const std::string& path, std::string& err)
   if (!ReadPresetFile(path, data, err)) return;
 
   if ((int) data.presets.size() != kNumPresets) { err = "Preset count mismatch (expected 24)"; return; }
+  const auto checkLen = [&](const std::vector<double>& e) -> bool {
+    return (int) e.size() == kNumParams || (int) e.size() == kNumLegacyParamsV2;
+  };
   for (const auto& e : data.presets)
-    if ((int) e.size() != kNumParams)           { err = "Preset parameter count mismatch (expected " + std::to_string(kNumParams) + ")"; return; }
-  if ((int) data.currentValues.size() != kNumParams) { err = "Current values count mismatch (expected " + std::to_string(kNumParams) + ")"; return; }
+    if (!checkLen(e)) { err = "Preset parameter count mismatch (expected " + std::to_string(kNumParams) + ")"; return; }
+  if (!data.currentValues.empty() && !checkLen(data.currentValues))
+  { err = "Current values count mismatch (expected " + std::to_string(kNumParams) + ")"; return; }
+
+  const auto toSnapshot = [&](const std::vector<double>& e) -> ParamSnapshot {
+    ParamSnapshot s = mDefaultSnapshot;
+    const int n = std::min((int) e.size(), (int) kNumParams);
+    for (int i = 0; i < n; ++i) s[i] = e[i];
+    MigrateLegacySnapshot(s);
+    return s;
+  };
 
   PushUndo();
   mFading = false;
 
   for (int i = 0; i < kNumPresets; ++i)
-    std::copy(data.presets[i].begin(), data.presets[i].end(), mPresets[i].begin());
+    mPresets[i] = toSnapshot(data.presets[i]);
   mCurrentPreset = std::clamp(data.currentPreset, 0, kNumPresets - 1);
 
-  ParamSnapshot cur {};
-  std::copy(data.currentValues.begin(), data.currentValues.end(), cur.begin());
+  ParamSnapshot cur = data.currentValues.empty() ? mDefaultSnapshot : toSnapshot(data.currentValues);
   ApplySnapshot(cur);
 
   mFadePos = std::clamp(data.fadePos, 0.0, (double) (kNumQuick - 1));

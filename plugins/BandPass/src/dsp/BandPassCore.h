@@ -4,6 +4,7 @@
 #include <cmath>
 #include <algorithm>
 #include <atomic>
+#include <cstdint>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -152,12 +153,29 @@ public:
 
         bool   linked   = false;
         float  mix      = 1.0f;
-        bool   agOn     = false;
-        float  agAmount = 0.1f;
-        double agRate   = 1.0;
+        float  agAmount[4]    = { 0.1f, 0.1f, 0.1f, 0.1f }; // per color, 0..1
+        double agPeriodSec[4] = { 1.0, 1.0, 1.0, 1.0 };     // per color, seconds per random step
+        bool   agEnableFreqL = false, agEnableBwL = false, agEnableGainL = false;
+        bool   agEnableFreqR = false, agEnableBwR = false, agEnableGainR = false;
+        bool   agEnableMix   = false;
+        std::uint8_t agColorFreqL = 0, agColorBwL = 0, agColorGainL = 0;   // 0=red 1=yellow 2=blue 3=green
+        std::uint8_t agColorFreqR = 0, agColorBwR = 0, agColorGainR = 0;
+        std::uint8_t agColorMix   = 0;
         double slopeDbL = 96.0;
         double slopeDbR = 96.0;
     };
+
+    // Per-sample random modulation actually applied in run(); published to the UI
+    // so pads/sliders can display the modulated ("actual") values and ghost handles.
+    struct AgDeltas
+    {
+        float freqOct[2] = { 0.f, 0.f }; // center shift in octaves
+        float bwOct[2]   = { 0.f, 0.f }; // full-bandwidth shift in octaves
+        float gainDb[2]  = { 0.f, 0.f }; // gain shift in dB
+        float mix        = 0.f;          // mix shift (pre-clamp)
+    };
+
+    const AgDeltas& agDeltas() const noexcept { return mAgDeltas; }
 
     BandPassCore() = default;
 
@@ -165,7 +183,8 @@ public:
     {
         mSampleRate = sampleRate;
         for (auto& ch : mCh) ch.prepare(sampleRate);
-        mAgPhase = 0.0;
+        for (int i = 0; i < kNumAgStreams; ++i)
+            mAgStream[i].walk.seed(0x9E3779B9u * (unsigned) (i + 1) + 0x5bd1e995u);
         reset();
     }
     void reset() noexcept
@@ -178,12 +197,29 @@ public:
         mParams.gainL = std::clamp(p.gainL, 0.0f, 2.0f);
         mParams.gainR = std::clamp(p.gainR, 0.0f, 2.0f);
         mParams.mix   = std::clamp(p.mix, 0.0f, 1.0f);
-        mParams.agAmount = std::clamp(p.agAmount, 0.0f, 1.0f);
+        for (int c = 0; c < 4; ++c)
+        {
+            mParams.agAmount[c]    = std::clamp(p.agAmount[c], 0.0f, 1.0f);
+            mParams.agPeriodSec[c] = std::max(p.agPeriodSec[c], 0.001);
+        }
         if (p.linked)
         {
             mParams.freqR    = mParams.freqL;
             mParams.bwR      = mParams.bwL;
             mParams.slopeDbR = mParams.slopeDbL;
+        }
+        const struct { bool en; std::uint8_t color; } maps[kNumAgStreams] = {
+            { p.agEnableFreqL, p.agColorFreqL }, { p.agEnableBwL, p.agColorBwL }, { p.agEnableGainL, p.agColorGainL },
+            { p.agEnableFreqR, p.agColorFreqR }, { p.agEnableBwR, p.agColorBwR }, { p.agEnableGainR, p.agColorGainR },
+            { p.agEnableMix,   p.agColorMix },
+        };
+        for (int i = 0; i < kNumAgStreams; ++i)
+        {
+            const int col = std::min((int) maps[i].color, 3);
+            const float amt = mParams.agAmount[col];
+            mAgStream[i].active = maps[i].en && amt > 0.0f;
+            mAgStream[i].amount = amt;
+            mAgStream[i].walk.setPeriod(mParams.agPeriodSec[col], mSampleRate);
         }
         mCh[0].setTarget(mParams.freqL, mParams.bwL, mParams.slopeDbL);
         mCh[1].setTarget(mParams.freqR, mParams.bwR, mParams.slopeDbR);
@@ -212,8 +248,60 @@ public:
     }
 
 private:
-    static constexpr double kAgitationMaxOct = 0.5;
+    // Full-scale random modulation depths (amount slider = 1)
+    static constexpr double kAgFreqModOct  = 4.90689059560852;  // log2(30): center x30 / /30
+    static constexpr double kAgBwModOct    = 4.64385618977472;  // 2*log2(5): bandwidth mult x5 / /5
+    static constexpr float  kAgGainModDb   = 48.f;
+    static constexpr float  kAgMixMod      = 0.5f;
+    static constexpr float  kDbToLin       = 0.115129254649702f; // ln(10)/20
 
+    enum { kAgFreqL = 0, kAgBwL, kAgGainL, kAgFreqR, kAgBwR, kAgGainR, kAgMix, kNumAgStreams };
+
+    // Smooth random walk in [-1, 1]: each period a new random target is chosen and
+    // reached on a cosine ease (zero velocity at the segment joins).
+    class RandomWalk
+    {
+    public:
+        void seed(unsigned s) noexcept
+        {
+            mState = s ? s : 1u;
+            mFrom = mTo = mPhase = 0.0;
+            mInc = 0.0;
+        }
+        void setPeriod(double seconds, double sampleRate) noexcept
+        {
+            mInc = 1.0 / std::max(seconds * sampleRate, 1.0);
+        }
+        inline float tick() noexcept
+        {
+            mPhase += mInc;
+            if (mPhase >= 1.0)
+            {
+                mPhase -= std::floor(mPhase);
+                mFrom = mTo;
+                mTo = nextTarget();
+            }
+            const double t = 0.5 - 0.5 * std::cos(M_PI * mPhase);
+            return static_cast<float>(mFrom + (mTo - mFrom) * t);
+        }
+    private:
+        double nextTarget() noexcept
+        {
+            std::uint32_t x = mState;
+            x ^= x << 13; x ^= x >> 17; x ^= x << 5;
+            mState = x;
+            return (double) (x >> 8) / 8388607.5 - 1.0;
+        }
+        double mFrom = 0.0, mTo = 0.0, mPhase = 0.0, mInc = 0.0;
+        std::uint32_t mState = 1;
+    };
+
+    struct AgStream
+    {
+        RandomWalk walk;
+        bool active = false;
+        float amount = 0.0f;
+    };
     struct Channel
     {
         void prepare(double sr) noexcept
@@ -230,7 +318,7 @@ private:
             targetBw = bw;
             slopeDb = slope;
         }
-        
+
         void smooth(double coef) noexcept
         {
             smFreq += (targetFreq - smFreq) * coef;
@@ -238,12 +326,13 @@ private:
             halfBw = std::pow(2.0, smBw * 0.5);
             chain.update(smFreq / halfBw, smFreq * halfBw, slopeDb);
         }
-        inline float process(float x, double modOct, double sampleRate) noexcept
+        inline float process(float x, double modFreqOct, double modBwOct, double sampleRate) noexcept
         {
-            if (modOct != 0.0)
+            if (modFreqOct != 0.0 || modBwOct != 0.0)
             {
-                const double f = std::clamp(smFreq * std::exp2(modOct), 20.0, sampleRate * 0.49);
-                chain.update(f / halfBw, f * halfBw, slopeDb);
+                const double f = std::clamp(smFreq * std::exp2(modFreqOct), 20.0, sampleRate * 0.49);
+                const double hb = halfBw * std::exp2(modBwOct * 0.5);
+                chain.update(f / hb, f * hb, slopeDb);
             }
             return chain.process(x);
         }
@@ -257,34 +346,78 @@ private:
              int numCh, int n) noexcept
     {
         const float gains[2] = { mParams.gainL, mParams.gainR };
-        const float mixAngle = mParams.mix * 0.5f * static_cast<float>(M_PI);
-        const float dryGain = std::cos(mixAngle), wetGain = std::sin(mixAngle);
-        const float agAmt = mParams.agOn ? mParams.agAmount : 0.0f;
-        const double agInc = 2.0 * M_PI * mParams.agRate / mSampleRate;
+        const bool mixMod = mAgStream[kAgMix].active;
+        const float baseMix = mParams.mix;
+        float dryGain, wetGain;
+        if (!mixMod)
+        {
+            const float mixAngle = baseMix * 0.5f * static_cast<float>(M_PI);
+            dryGain = std::cos(mixAngle);
+            wetGain = std::sin(mixAngle);
+        }
+        else
+        {
+            dryGain = wetGain = 0.0f;
+        }
 
         for (int i = 0; i < n; ++i)
         {
-            double modOct = 0.0;
-            if (agAmt > 0.0f)
+            float freqOct[2] = { 0.f, 0.f };
+            float bwOct[2]   = { 0.f, 0.f };
+            float gainDb[2]  = { 0.f, 0.f };
+            float mixDelta   = 0.f;
+            float gainLin[2] = { 1.f, 1.f };
+            if (mAgStream[kAgFreqL].active)
+                freqOct[0] = mAgStream[kAgFreqL].walk.tick() * mAgStream[kAgFreqL].amount * (float) kAgFreqModOct;
+            if (mAgStream[kAgBwL].active)
+                bwOct[0]   = mAgStream[kAgBwL].walk.tick() * mAgStream[kAgBwL].amount * (float) kAgBwModOct;
+            if (mAgStream[kAgGainL].active)
             {
-                mAgPhase += agInc;
-                if (mAgPhase > 2.0 * M_PI) mAgPhase -= 2.0 * M_PI;
-                modOct = agAmt * kAgitationMaxOct * std::sin(mAgPhase);
+                gainDb[0]  = mAgStream[kAgGainL].walk.tick() * mAgStream[kAgGainL].amount * kAgGainModDb;
+                gainLin[0] = std::exp(gainDb[0] * kDbToLin);
+            }
+            if (numCh > 1)
+            {
+                if (mAgStream[kAgFreqR].active)
+                    freqOct[1] = mAgStream[kAgFreqR].walk.tick() * mAgStream[kAgFreqR].amount * (float) kAgFreqModOct;
+                if (mAgStream[kAgBwR].active)
+                    bwOct[1]   = mAgStream[kAgBwR].walk.tick() * mAgStream[kAgBwR].amount * (float) kAgBwModOct;
+                if (mAgStream[kAgGainR].active)
+                {
+                    gainDb[1]  = mAgStream[kAgGainR].walk.tick() * mAgStream[kAgGainR].amount * kAgGainModDb;
+                    gainLin[1] = std::exp(gainDb[1] * kDbToLin);
+                }
+            }
+            if (mixMod)
+            {
+                mixDelta = mAgStream[kAgMix].walk.tick() * mAgStream[kAgMix].amount * kAgMixMod;
+                const float m = std::clamp(baseMix + mixDelta, 0.0f, 1.0f);
+                const float mixAngle = m * 0.5f * static_cast<float>(M_PI);
+                dryGain = std::cos(mixAngle);
+                wetGain = std::sin(mixAngle);
             }
             for (int c = 0; c < numCh; ++c)
             {
                 const float x = in[c][i];
-                const float wetS = mCh[c].process(x, modOct, mSampleRate) * gains[c];
+                const float wetS = mCh[c].process(x, freqOct[c], bwOct[c], mSampleRate) * gains[c] * gainLin[c];
                 if (wet[c]) wet[c][i] = wetS;
                 out[c][i] = x * dryGain + wetS * wetGain;
             }
+            mAgDeltas.freqOct[0] = freqOct[0];
+            mAgDeltas.freqOct[1] = freqOct[1];
+            mAgDeltas.bwOct[0]   = bwOct[0];
+            mAgDeltas.bwOct[1]   = bwOct[1];
+            mAgDeltas.gainDb[0]  = gainDb[0];
+            mAgDeltas.gainDb[1]  = gainDb[1];
+            mAgDeltas.mix        = mixDelta;
         }
     }
 
     double mSampleRate = 44100.0;
     Params mParams;
     Channel mCh[2];
-    double mAgPhase = 0.0;
+    AgStream mAgStream[kNumAgStreams];
+    AgDeltas mAgDeltas;
 };
 
 }

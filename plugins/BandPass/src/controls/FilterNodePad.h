@@ -21,6 +21,8 @@ public:
   {
     std::function<void(int cornerId, double value)> editCorner;
     std::function<void(int slopeDb)> editSlope;
+    std::function<void(int cornerId)> agToggle;
+    std::function<void(int cornerId, int colorIdx)> agSetColor;
   };
 
   using TDataPacket = std::array<float, 4096>;
@@ -95,6 +97,19 @@ public:
   void SetBwPrefix(const char* s) { mBwPrefix.Set(s); SetDirty(false); }
   void SetSlopePrefix(const char* s) { mSlopePrefix.Set(s); SetDirty(false); }
   void SetSlopeIndex(int idx) { mSlopeIndex = idx; SetDirty(false); }
+  void SetAgMap(bool centerOn, int centerColor, bool bwOn, int bwColor)
+  {
+    mAgMapOn[0] = centerOn;   mAgMapColor[0] = centerColor;
+    mAgMapOn[1] = bwOn;       mAgMapColor[1] = bwColor;
+    SetDirty(false);
+  }
+  void SetAgDeltas(float freqOct, float bwOct)
+  {
+    if (std::fabs(freqOct - mAgFreqOct) < 1e-4f && std::fabs(bwOct - mAgBwOct) < 1e-4f) return;
+    mAgFreqOct = freqOct;
+    mAgBwOct = bwOct;
+    SetDirty(false);
+  }
 
   void Draw(IGraphics& g) override
   {
@@ -113,11 +128,20 @@ public:
       OpenSlopeMenu();
       return;
     }
+    for (int i = 0; i < 2; ++i)
+    {
+      if (mAgSwatchRect[i].Contains(x, y))
+      {
+        if (mod.R) OpenAgColorMenu(i);
+        else if (mHooks.agToggle) mHooks.agToggle(i ? kCornerBw : kCornerCenter);
+        return;
+      }
+    }
     for (int id : { kCornerCenter, kCornerBw })
     {
       if (CornerValueRect(id).Contains(x, y))
       {
-        WDL_String init; GetCornerValue(id, init, false);
+        WDL_String init; GetCornerValue(id, init, false, false);
         EAlign align = (id == kCornerBw) ? EAlign::Far : EAlign::Near;
         IText t(20, COL_900(), kFontSemiBold, align, EVAlign::Middle);
         mEditingCorner = id;
@@ -150,6 +174,18 @@ public:
     const float ypos = (float) GetValue(1) * tb.H();
     const IRECT hb(tb.L + xpos - mHandleRadius, tb.B - ypos - mHandleRadius,
                    tb.L + xpos + mHandleRadius, tb.B - ypos + mHandleRadius);
+    if (mAgMapOn[0] || mAgMapOn[1])
+    {
+      const IParam* pf = GetParam(0);
+      const IParam* pb = GetParam(1);
+      const double actF = std::clamp(pf->FromNormalized(GetValue(0)) * std::exp2((double) mAgFreqOct), 20., 20000.);
+      const double actBw = std::clamp(pb->FromNormalized(GetValue(1)) * std::exp2((double) mAgBwOct * 0.5), 1., 31.);
+      const float gx = tb.L + (float) pf->ToNormalized(actF) * tb.W();
+      const float gy = tb.B - (float) pb->ToNormalized(actBw) * tb.H();
+      const float r = mHandleRadius * 0.75f;
+      g.FillCircle(COL_100(), gx, gy, r + 1.5f);
+      g.FillCircle(AgColorGhost(mAgMapOn[0] ? mAgMapColor[0] : mAgMapColor[1]), gx, gy, r);
+    }
     DrawHandle(g, tb, hb);
   }
 
@@ -339,11 +375,14 @@ private:
     const char* prefix = far ? mBwPrefix.Get() : mCenterPrefix.Get();
     WDL_String value;
     GetCornerValue(id, value, true);
+    const float cy = r.MH();
     IRECT measured;
     if (far)
     {
       g.MeasureText(t, value.Get(), measured);
-      mCornerValueRect[1] = IRECT(r.R - measured.W(), r.T, r.R, r.B);
+      mAgSwatchRect[1] = IRECT(r.R - AG_SWATCH, cy - AG_SWATCH * 0.5f, r.R, cy + AG_SWATCH * 0.5f);
+      mCornerValueRect[1] = IRECT(mAgSwatchRect[1].L - kSwatchGap - measured.W(), r.T,
+                                  mAgSwatchRect[1].L - kSwatchGap, r.B);
       g.DrawText(t, prefix, IRECT(r.L, r.T, mCornerValueRect[1].L - LABEL_VALUE_GAP, r.B));
       g.DrawText(t, value.Get(), mCornerValueRect[1]);
     }
@@ -354,9 +393,14 @@ private:
       g.MeasureText(t, value.Get(), measured);
       mCornerValueRect[0] = IRECT(r.L + prefixW + LABEL_VALUE_GAP, r.T,
                                   r.L + prefixW + LABEL_VALUE_GAP + measured.W(), r.B);
+      mAgSwatchRect[0] = IRECT(mCornerValueRect[0].R + kSwatchGap, cy - AG_SWATCH * 0.5f,
+                               mCornerValueRect[0].R + kSwatchGap + AG_SWATCH, cy + AG_SWATCH * 0.5f);
       g.DrawText(t, prefix, r);
       g.DrawText(t, value.Get(), mCornerValueRect[0]);
     }
+    const int i = far ? 1 : 0;
+    g.FillRect(mAgMapOn[i] ? AgColor(mAgMapColor[i]) : AgColorDim(mAgMapColor[i]),
+               mAgSwatchRect[i].GetPadded(-1.f));
   }
 
   IRECT CornerValueRect(int id) const { return mCornerValueRect[id == kCornerBw]; }
@@ -409,18 +453,36 @@ private:
     GetUI()->CreatePopupMenu(*this, mSlopeMenu, mSlopeRect, kNoValIdx);
   }
 
-  void GetCornerValue(int id, WDL_String& out, bool withUnit) const
+  void OpenAgColorMenu(int i)
+  {
+    if (!GetUI()) return;
+    mAgMenu.Clear();
+    mAgMenu.SetFunction([this, i](IPopupMenu* menu) {
+      const int idx = menu ? menu->GetChosenItemIdx() : -1;
+      if (idx < 0 || idx >= kNumAgColors) return;
+      if (mHooks.agSetColor) mHooks.agSetColor(i ? kCornerBw : kCornerCenter, idx);
+    });
+    static const int kNameIds[kNumAgColors] = { orm::kTxtRed, orm::kTxtYellow, orm::kTxtBlue, orm::kTxtGreen };
+    for (int c = 0; c < kNumAgColors; ++c)
+      mAgMenu.AddItem(orm::Tr(kNameIds[c], orm::UILang()));
+    mAgMenu.CheckItemAlone(std::clamp(mAgMapColor[i], 0, kNumAgColors - 1));
+    GetUI()->CreatePopupMenu(*this, mAgMenu, mAgSwatchRect[i], kNoValIdx);
+  }
+
+  void GetCornerValue(int id, WDL_String& out, bool withUnit, bool withMod = true) const
   {
     char buf[32];
     if (id == kCornerBw)
     {
-      const double bw = GetParam(1)->FromNormalized(GetValue(1));
+      double bw = GetParam(1)->FromNormalized(GetValue(1));
+      if (withMod && mAgMapOn[1]) bw *= std::exp2((double) mAgBwOct * 0.5);
       std::snprintf(buf, 32, "%.2f", bw);
     }
     else
     {
       const IParam* pf = GetParam(0);
-      const double c = pf->FromNormalized(GetValue(0));
+      double c = pf->FromNormalized(GetValue(0));
+      if (withMod && mAgMapOn[0]) c *= std::exp2((double) mAgFreqOct);
       FormatFreq(buf, 32, c, withUnit);
     }
     out.Set(buf);
@@ -451,6 +513,7 @@ private:
   static constexpr float kSideH    = 0.f;
   static constexpr float kTopPad   = 30.f;
   static constexpr float kSideLabelX = 4.f;
+  static constexpr float kSwatchGap = 6.f;
 
   static constexpr float kSpectrumBottomDb = -85.f;
 
@@ -466,8 +529,14 @@ private:
   IRECT mCornerValueRect[2];
   IRECT mSlopeRect;
   IPopupMenu mSlopeMenu;
+  IPopupMenu mAgMenu;
   int   mEditingCorner = -1;
   int   mSlopeIndex = kSlopeDefaultIdx;
+  bool  mAgMapOn[2] = { false, false };
+  int   mAgMapColor[2] = { 0, 0 };
+  IRECT mAgSwatchRect[2];
+  float mAgFreqOct = 0.f;
+  float mAgBwOct = 0.f;
 
   std::vector<float> mSpectrumIn;
   std::vector<float> mSpectrumOut;
