@@ -221,8 +221,20 @@ public:
       const double actBw = std::clamp(pb->FromNormalized(GetValue(1)) * std::exp2((double) mAgBwOct * 0.5), 1., 31.);
       const float gx = tb.L + (float) pf->ToNormalized(actF) * tb.W();
       const float gy = tb.B - (float) pb->ToNormalized(actBw) * tb.H();
-      g.FillCircle(AgColorGhost(mAgMapOn[0] ? mAgMapColor[0] : mAgMapColor[1]), gx, gy, mHandleRadius);
-      g.FillCircle(COL_100(), gx, gy, mHandleRadius * 0.25f);
+      if (mAgMapOn[0] && mAgMapOn[1])
+      {
+        // Both center and bandwidth randoms are on: the ghost indicator
+        // splits into an outer ring (bandwidth color, translucent) and an
+        // inner circle (center color).
+        g.FillCircle(AgColorGhost(mAgMapColor[1]), gx, gy, mHandleRadius);
+        g.FillCircle(AgColor(mAgMapColor[0]), gx, gy, mHandleRadius * 0.6f);
+        g.FillCircle(COL_100(), gx, gy, mHandleRadius * 0.25f);
+      }
+      else
+      {
+        g.FillCircle(AgColorGhost(mAgMapOn[0] ? mAgMapColor[0] : mAgMapColor[1]), gx, gy, mHandleRadius);
+        g.FillCircle(COL_100(), gx, gy, mHandleRadius * 0.25f);
+      }
     }
     DrawHandle(g, tb, hb);
   }
