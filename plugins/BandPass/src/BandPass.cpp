@@ -2017,9 +2017,12 @@ void ORMBandPass::OnParentWindowResize(int width, int height)
   if (auto* pGraphics = GetUI())
   {
     const float platformScale = pGraphics->GetPlatformWindowScale();
-    const float sx = static_cast<float>(width) / platformScale / static_cast<float>(pGraphics->Width());
-    const float sy = static_cast<float>(height) / platformScale / static_cast<float>(pGraphics->Height());
-    pGraphics->Resize(pGraphics->Width(), pGraphics->Height(), std::min(sx, sy), false);
+    const float targetW = std::ceil(static_cast<float>(width) / platformScale);
+    const float targetH = std::ceil(static_cast<float>(height) / platformScale);
+    const float sx = targetW / static_cast<float>(pGraphics->Width());
+    const float sy = targetH / static_cast<float>(pGraphics->Height());
+    const float scale = std::max(sx, sy) * (1.f + 1e-4f);
+    pGraphics->Resize(pGraphics->Width(), pGraphics->Height(), scale, false);
   }
 }
 
