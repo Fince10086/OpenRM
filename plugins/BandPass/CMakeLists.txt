@@ -25,10 +25,8 @@ iplug_add_plugin(${PROJECT_NAME}
   DEFINES SAMPLE_TYPE_FLOAT
 )
 
-# 注意：字体故意不通过 iPlug2 的 RESOURCES 参数打包。iPlug2 用 CMake 的
-# MACOSX_PACKAGE_LOCATION 机制拷贝资源，实测该拷贝发生在所有 POST_BUILD 之后，
-# 会破坏 ad-hoc 签名的 SealedResources（Live 12 因此拒绝加载 VST3）。
-# 因此在下方 POST_BUILD 中按“拷字体 -> 签名 -> 部署”顺序手动处理。
+# 注意：字体故意不通过 iPlug2 的 RESOURCES 参数打包，
+# 在下方 POST_BUILD 中按“拷字体 -> 签名 -> 部署”顺序手动处理。
 
 target_include_directories(_${PROJECT_NAME}-base INTERFACE "${IPLUG2_DIR}/Dependencies/Extras")
 
@@ -66,15 +64,17 @@ if(APPLE)
     endforeach()
   endif()
 
-  # 2) Standalone app still needs the fonts bundled.
-  if(TARGET ${PROJECT_NAME}-app)
-    add_custom_command(TARGET ${PROJECT_NAME}-app POST_BUILD
-      COMMAND ${CMAKE_COMMAND} -E rm -rf "${CMAKE_BINARY_DIR}/out/${PROJECT_NAME}.app/Contents/Resources"
-      COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/out/${PROJECT_NAME}.app/Contents/Resources"
-      COMMAND ${CMAKE_COMMAND} -E copy "${_font_src_dir}/Mixed-Regular.ttf"    "${CMAKE_BINARY_DIR}/out/${PROJECT_NAME}.app/Contents/Resources/Mixed-Regular.ttf"
-      COMMAND ${CMAKE_COMMAND} -E copy "${_font_src_dir}/Mixed-SemiBold.ttf"   "${CMAKE_BINARY_DIR}/out/${PROJECT_NAME}.app/Contents/Resources/Mixed-SemiBold.ttf"
-      COMMAND ${CMAKE_COMMAND} -E copy "${_font_src_dir}/Mixed-Bold.ttf"       "${CMAKE_BINARY_DIR}/out/${PROJECT_NAME}.app/Contents/Resources/Mixed-Bold.ttf"
-      COMMENT "Copy fonts into ${PROJECT_NAME}.app"
+  # 2) Standalone app
+  if(IPLUG2_CODESIGN_EXEC AND TARGET ${PROJECT_NAME}-app)
+    set(_sig_app "${CMAKE_BINARY_DIR}/out/${PROJECT_NAME}.app")
+    add_custom_target(${PROJECT_NAME}-app-sign ALL
+      COMMAND ${CMAKE_COMMAND} -E make_directory "${_sig_app}/Contents/Resources"
+      COMMAND ${CMAKE_COMMAND} -E copy "${_font_src_dir}/Mixed-Regular.ttf"    "${_sig_app}/Contents/Resources/Mixed-Regular.ttf"
+      COMMAND ${CMAKE_COMMAND} -E copy "${_font_src_dir}/Mixed-SemiBold.ttf"   "${_sig_app}/Contents/Resources/Mixed-SemiBold.ttf"
+      COMMAND ${CMAKE_COMMAND} -E copy "${_font_src_dir}/Mixed-Bold.ttf"       "${_sig_app}/Contents/Resources/Mixed-Bold.ttf"
+      COMMAND ${IPLUG2_CODESIGN_EXEC} --force --deep --sign - "${_sig_app}"
+      DEPENDS ${PROJECT_NAME}-app
+      COMMENT "Copy fonts + ad-hoc sign ${_sig_app}"
     )
   endif()
 endif()
