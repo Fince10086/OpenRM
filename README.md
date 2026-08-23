@@ -4,10 +4,17 @@ Open Realtime Music Tools BandPass （开源实时音乐工具 带通效果器�
 
 ## 构建
 
+第三方依赖 iPlug2 以 git 子模块管理（指向本组织 fork `Fince10086/iPlug2` 的 `openrm` 分支，含本项目补丁）；其中 VST3 目标还需要 Steinberg VST3 SDK（上游不随 iPlug2 分发），首次构建请运行脚本下载。
+
 ```sh
+git clone --recurse-submodules <本仓库地址> OpenRM
+cd OpenRM
+./scripts/get_vst3_sdk.sh     # 首次构建: 下载 VST3 SDK (~500MB, 已钉版本)
 cmake -B build -S .
-cmake --build build          # 产出 APP / AU / VST3 (build/out/)
+cmake --build build           # 产出 APP / AU / VST3 (build/out/)
 ```
+
+iPlug2 补丁更新方式：在 `third_party/iPlug2` 提交后推送 fork 的 `openrm` 分支，主仓库再 `git add third_party/iPlug2` 更新子模块指针。
 
 ## 测试
 

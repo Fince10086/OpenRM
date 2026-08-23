@@ -1,0 +1,5 @@
+[submodule "third_party/iPlug2"]
+	path = third_party/iPlug2
+	url = https://github.com/Fince10086/iPlug2.git
+	shallow = true
+	branch = openrm

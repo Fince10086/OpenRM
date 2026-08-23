@@ -1,0 +1,13 @@
+# macOS 系统文件
+.DS_Store
+
+# 本地工具数据
+.workbuddy/
+
+# 构建产物
+build/
+
+# third_party/iPlug2 以 git 子模块管理 (见 .gitmodules, 指向 Fince10086/iPlug2 的 openrm 分支)
+# 其中 Dependencies/IPlug/VST3_SDK (~500MB) 由 scripts/get_vst3_sdk.sh 下载, 不入库
+
+.zcode
