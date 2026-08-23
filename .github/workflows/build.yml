@@ -35,16 +35,20 @@ jobs:
             https://github.com/steinbergmedia/vst3sdk.git `
             third_party/iPlug2/Dependencies/IPlug/VST3_SDK
 
-      - name: Configure (VS2022 x64)
-        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+      - name: 激活 MSVC x64 环境
+        # VS 生成器在 CI 上偶发探测不到 VS 实例, 改用 Ninja + 显式 MSVC 环境 (GitHub 官方推荐)
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Configure (Ninja)
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 
       - name: Build VST3 + APP
-        run: cmake --build build --config Release --target ORMBandPass-vst3 ORMBandPass-app
+        run: cmake --build build --target ORMBandPass-vst3 ORMBandPass-app
 
       - name: DSP 自测
         run: |
-          cmake --build build --config Release --target dsp_test
-          .\build\Release\dsp_test.exe
+          cmake --build build --target dsp_test
+          .\build\dsp_test.exe
 
       - uses: actions/upload-artifact@v4
         with:
