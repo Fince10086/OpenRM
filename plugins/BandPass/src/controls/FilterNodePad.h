@@ -218,7 +218,7 @@ public:
   {
     if (mSideLabel.GetLength() == 0) return;
     const IRECT r = SideLabelRect();
-    IText t(28, COL_500(), FontBold(), EAlign::Center, EVAlign::Middle, -90.f);
+    IText t(40, COL_500(), FontBold(), EAlign::Center, EVAlign::Middle, -90.f);
     g.DrawText(t, mSideLabel.Get(), r);
   }
 
@@ -269,6 +269,9 @@ public:
         }
       }
       if (pts.size() < 2) return;
+
+      pts.front().x = tb.L + (float) pf->ToNormalized(kSpecFreqLo) * tb.W();
+      pts.back().x  = tb.L + (float) pf->ToNormalized(kSpecFreqHi) * tb.W();
 
       g.PathClear();
       g.PathMoveTo(pts[0].x, pts[0].y);
@@ -332,9 +335,7 @@ private:
   IRECT SideLabelRect() const
   {
     const IRECT& w = mWidgetBounds;
-    // Hug the inner-left edge of the plot area, centred vertically within it
-    // (not within the whole control, which includes the corner-label strip).
-    return IRECT(w.L, w.T + kTopPad, w.L + kSideW, w.B);
+    return IRECT(w.L + kSideLabelX, w.T + kTopPad, w.L + kSideW + kSideLabelX, w.B);
   }
 
   void DrawCorner(IGraphics& g, int id)
@@ -459,6 +460,7 @@ private:
   static constexpr float kSideW    = 24.f;
   static constexpr float kSideH    = 0.f;
   static constexpr float kTopPad   = 30.f;
+  static constexpr float kSideLabelX = 4.f;
 
   // Bottom of the spectrum dB scale (top is 0 dBFS).
   static constexpr float kSpectrumBottomDb = -85.f;

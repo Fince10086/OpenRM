@@ -54,6 +54,7 @@ def write_if_changed(path, data):
     if os.path.exists(path):
         with open(path, "rb") as f:
             if f.read() == data:
+                os.utime(path, None)
                 return False
     with open(path, "wb") as f:
         f.write(data)

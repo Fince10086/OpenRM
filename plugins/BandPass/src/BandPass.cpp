@@ -1,6 +1,7 @@
 #include "BandPass.h"
 #include "IPlug_include_in_plug_src.h"
 #include "IControls.h"
+#include "ICornerResizerControl.h"
 #include "Theme.h"
 #include "controls/FilterNodePad.h"
 #include "controls/BandRangeSlider.h"
@@ -35,6 +36,36 @@ static IVStyle MakeButtonStyle()
                  0.f, 2.f, 0.f, 1.f, 0.f);
 }
 
+class ThemeCornerResizer : public ICornerResizerControl
+{
+public:
+  ThemeCornerResizer(const IRECT& graphicsBounds)
+  : ICornerResizerControl(graphicsBounds, 20.f) {}
+
+  void Draw(IGraphics& g) override
+  {
+    const IColor col = mDragging        ? COL_700()  // dragging
+                     : GetMouseIsOver() ? COL_900()  // hover
+                                        : COL_500(); // rest
+    g.FillTriangle(col, mRECT.L, mRECT.B, mRECT.R, mRECT.T, mRECT.R, mRECT.B);
+  }
+
+  void OnMouseDown(float x, float y, const IMouseMod& mod) override
+  {
+    mDragging = true;
+    ICornerResizerControl::OnMouseDown(x, y, mod);
+  }
+
+  void OnMouseUp(float x, float y, const IMouseMod& mod) override
+  {
+    mDragging = false;
+    IControl::OnMouseUp(x, y, mod);
+  }
+
+private:
+  bool mDragging = false;
+};
+
 class FlatActionButton : public IVButtonControl
 {
 public:
@@ -67,8 +98,6 @@ static IVButtonControl* MakeMomentary(const IRECT& r,
   }, label, st);
 }
 
-// Bandwidth is stored/displayed as a multiplier (1–31, exponential shape);
-// the DSP core still works in octaves.
 static double BwMultToOct(double m) { return 2. * std::log2(m); }
 
 class PresetFadeSlider : public IVSliderControl
@@ -97,8 +126,8 @@ public:
     for (int i = 0; i < kNumQuick; ++i)
     {
       const float x = x0 + w * i / (kNumQuick - 1.f);
-      g.FillRect(COL_900(), IRECT(x - 1.f, mTrackBounds.T - 3.f, x + 1.f, mTrackBounds.T));
-      g.FillRect(COL_900(), IRECT(x - 1.f, mTrackBounds.B, x + 1.f, mTrackBounds.B + 3.f));
+      g.FillRect(COL_500(), IRECT(x - 1.f, mTrackBounds.T - 3.f, x + 1.f, mTrackBounds.T));
+      g.FillRect(COL_500(), IRECT(x - 1.f, mTrackBounds.B, x + 1.f, mTrackBounds.B + 3.f));
     }
   }
   void DrawHandle(IGraphics& g, const IRECT& bounds) override
@@ -159,8 +188,6 @@ public:
 
   void Draw(IGraphics& g) override
   {
-    // Live background (see FilterNodePad::Draw): the base-class kBG color is
-    // captured at construction, so paint it ourselves for real-time themes.
     g.FillRect(COL_100(), mRECT);
     DrawWidget(g);
     DrawHeader(g, mDirection == EDirection::Vertical ? -90.f : 0.f);
@@ -268,9 +295,6 @@ protected:
   std::function<void(WDL_String&)> mValueFormatter;
 };
 
-// Vertical gain slider variant: track on the left, text column on the right —
-// numeric value top-right, GAIN (L/R) label bottom-right. Both texts are
-// rotated so their bottoms face left (they read top-to-bottom).
 class GainSlider : public ORMSlider
 {
 public:
@@ -278,9 +302,9 @@ public:
   : ORMSlider(bounds, paramIdx, label, style, EDirection::Vertical) {}
 
 protected:
-  static constexpr float kTextW = 16.f;   // text column width
-  static constexpr float kTextGap = 6.f;  // right padding inside the control
-  static constexpr float kPlotTopInset = 30.f; // FilterNodePad's kTopPad
+  static constexpr float kTextW = 16.f;
+  static constexpr float kTextGap = 6.f;
+  static constexpr float kPlotTopInset = 30.f;
 
   IRECT TextRect() const
   {
@@ -364,10 +388,6 @@ public:
 class SectionTitleControl : public ITextControl
 {
 public:
-  // colorStep: 0 = COL_900 (primary), 1 = COL_500 (muted).
-  // fontStep: 0 = regular, 1 = semibold, 2 = bold. Both are resolved live in
-  // Draw() so language switches (Outfit <-> Mixed) and theme changes apply
-  // without rebuilding the UI - the base class stores a captured IText copy.
   SectionTitleControl(const IRECT& bounds, const char* str, const IText& text, int colorStep = 0, int fontStep = 2)
   : ITextControl(bounds, str, text), mColorStep(colorStep), mFontStep(fontStep) {}
 
@@ -393,8 +413,6 @@ public:
   void Draw(IGraphics& g) override
   {
     const float cx = mRECT.MW(), cy = mRECT.MH();
-    // Draw the gear slightly smaller than its hit-area rect, keeping it
-    // centered on the text cap-height.
     const float r = (mRECT.W() * 0.5f - 2.f) * 0.8f;
     const IColor col = GetMouseIsOver() ? COL_900() : COL_700();
 
@@ -427,13 +445,6 @@ private:
   std::function<void()> mOnToggle;
 };
 
-// In-app settings "second window": a centered modal panel styled like the
-// right-hand control column of the main UI (no rounded corners, flat buttons,
-// left-aligned uppercase titles, ORMSlider-style stepped sliders). Replaces
-// the old native popup menu. Contains LANGUAGE (title + 中文 / English),
-// THEME (dark / light), HUE (15..360 step 15) and SATURATION (0/15/30/50)
-// controls. All edits repaint live via RefreshThemeColors(), never rebuild
-// the UI, so the panel stays open for preview. Clicking outside closes it.
 class SettingsPanelControl : public IControl
 {
 public:
@@ -469,7 +480,7 @@ public:
 
   void Draw(IGraphics& g) override
   {
-    g.FillRect(IColor(70, 26, 25, 22), mRECT); // dim backdrop
+    g.FillRect(IColor(70, 26, 25, 22), mRECT);
 
     g.FillRect(COL_100(), mCard);
     g.DrawRect(COL_300(), mCard, &mBlend, 1.f);
@@ -478,14 +489,11 @@ public:
     const int theme = ThemeMode();
     const float L = mCard.L + kPad;
 
-    // Group titles: same size as the main panel's section titles, left aligned.
     g.DrawText(IText(kTitleSize, COL_900(), FontBold(), EAlign::Near, EVAlign::Middle),
                orm::Tr(orm::kTxtLanguage, lang), IRECT(L, mCard.T + kLangTitleY, mCard.R - kPad, mCard.T + kLangTitleY + kTitleSize));
     g.DrawText(IText(kTitleSize, COL_900(), FontBold(), EAlign::Near, EVAlign::Middle),
                orm::Tr(orm::kTxtTheme, lang), IRECT(L, mCard.T + kThemeTitleY, mCard.R - kPad, mCard.T + kThemeTitleY + kTitleSize));
 
-    // Language names render in their own script: 中文 always uses the CJK
-    // Mixed font (Outfit has no Chinese glyphs), English stays latin.
     DrawButton(g, mLangBtns[0],  orm::Tr(orm::kTxtChinese, lang), lang == orm::kLangZH, mHover == kHoverLangZh, FontCJKSemiBold());
     DrawButton(g, mLangBtns[1],  "ENGLISH", lang == orm::kLangEN, mHover == kHoverLangEn, "Outfit-SemiBold");
     DrawButton(g, mThemeBtns[0], orm::Tr(orm::kTxtDark,  lang), theme == 1, mHover == kHoverThemeDark);
@@ -554,8 +562,6 @@ private:
   enum EHover { kHoverNone, kHoverLangZh, kHoverLangEn, kHoverThemeDark, kHoverThemeLight };
   enum EDrag  { kDragNone, kDragHue, kDragSat };
 
-  // Normalized handle positions, read from live theme state. Saturation maps
-  // by step index (none/low/med/high are equally spaced, not linear in %).
   float HueNorm() const { const int h = ThemeHue(); return (h - kHueMin) / (float) (kHueMax - kHueMin); }
   float SatNorm() const
   {
@@ -637,18 +643,15 @@ private:
     return orm::Tr(kIds[idx], lang);
   }
 
-  // Card layout (fixed, centered). Compact: two button rows, two slider rows
-  // (header + track), and bottom padding. Buttons sit flush like the main
-  // panel's L->R / R->L pair (no gap). Slider header matches ORMSlider.
   static constexpr float kCardW = 380.f;
   static constexpr float kCardH = 270.f;
   static constexpr float kPad = 20.f;
   static constexpr float kBtnH = 30.f;
-  static constexpr float kBtnGap = 0.f;      // flush, like the main panel buttons
-  static constexpr float kTitleSize = 20.f;   // group titles (main panel size)
-  static constexpr float kHeaderFontSize = 20.f; // slider header text (ORMSlider)
-  static constexpr float kHeaderH = 26.f;     // slider header line height
-  static constexpr float kTrackH = 26.f;      // slider track + handle zone
+  static constexpr float kBtnGap = 0.f;
+  static constexpr float kTitleSize = 20.f;
+  static constexpr float kHeaderFontSize = 20.f;
+  static constexpr float kHeaderH = 26.f;
+  static constexpr float kTrackH = 26.f;
   static constexpr float kLangTitleY = 14.f;
   static constexpr float kLangBtnY = 38.f;
   static constexpr float kThemeTitleY = 80.f;
@@ -704,8 +707,6 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
   mDefaultSnapshot = Snapshot();
   mStableSnapshot  = Snapshot();
 
-  // Presets 1-14, given as low/high cut pairs (Hz). Center = sqrt(low*high),
-  // bandwidth multiplier = sqrt(high/low).
   auto setBand = [](ParamSnapshot& s, double lowL, double highL,
                     double lowR, double highR)
   {
@@ -802,7 +803,7 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
 
   mLayoutFunc = [&](IGraphics* pGraphics)
   {
-    pGraphics->AttachCornerResizer(EUIResizerMode::Scale, false);
+    pGraphics->AttachCornerResizer(new ThemeCornerResizer(pGraphics->GetBounds()), EUIResizerMode::Scale, false);
     pGraphics->AttachPanelBackground(COL_100());
     pGraphics->LoadFont("Outfit", OUTFIT_FN);
     pGraphics->LoadFont("Outfit-SemiBold", OUTFIT_SB_FN);
@@ -1032,8 +1033,6 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
 
     IText ormText(32, COL_900(), FontBold(), EAlign::Near, EVAlign::Bottom);
     pGraphics->AttachControl(new SectionTitleControl(IRECT(kCol1X, 544, kCol1X + 120, 578), "ORM", ormText, 0));
-    // Align the gear and version to the actual ink box of "ORM" so the gear
-    // bottom sits on the baseline rather than on the descender line.
     IRECT ormInk(kCol1X, 544, kCol1X + 120, 578);
     pGraphics->MeasureText(ormText, "ORM", ormInk);
     const float gearL = ormInk.R + 8.f;
@@ -1045,9 +1044,6 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
     pGraphics->AttachControl(new SectionTitleControl(IRECT(gearR + 8.f, 541, 1060, 575), "v" PLUG_VERSION_STR,
       IText(20, COL_500(), FontRegular(), EAlign::Near, EVAlign::Bottom), 1, 0));
 
-    // In-app settings panel (modal second window). Attached last so it draws
-    // above every control; starts hidden. Hue / saturation edits repaint the
-    // whole UI live (RefreshThemeColors), so the panel never needs to close.
     mSettingsPanel = new SettingsPanelControl(IRECT(0.f, 0.f, (float) PLUG_WIDTH, (float) PLUG_HEIGHT),
     {
       [this](int lang) {
@@ -1092,9 +1088,6 @@ void ORMBandPass::ProcessBlock(sample** inputs, sample** outputs, int nFrames)
   const int nOuts = NOutChansConnected();
   const int nIns = NInChansConnected();
 
-  // Snapshot the dry input BEFORE processing: some hosts run the plug-in
-  // in-place (inputs == outputs), so reading inputs[] after process() would
-  // give us the processed signal instead of the original.
   const int nSpec = std::min(nFrames, kMaxSpecBlock);
   if (nIns >= 2)
   {
@@ -1119,9 +1112,6 @@ void ORMBandPass::ProcessBlock(sample** inputs, sample** outputs, int nFrames)
       std::memcpy(outputs[c], outputs[0], nFrames * sizeof(sample));
   }
 
-  // Feed the pad spectra: ch0 = dry input (pre-process snapshot), ch1 = the
-  // band-pass wet signal (filtered x gain, before the mix crossfade), so the
-  // "processed" line always shows what the filter itself renders regardless of MIX.
   if (nIns >= 2)
   {
     sample* specL[2] = { mSpecInL.data(), mWetL.data() };
@@ -1141,7 +1131,6 @@ void ORMBandPass::OnReset()
   mCore.setParams(CollectParams());
   mCore.prepare(GetSampleRate(), GetBlockSize());
 
-  // Configure the spectrum analyzers (FFT runs on the main thread in TransmitData)
   mSpectrumL.SetFFTSizeAndOverlap(kSpectrumFFTSize, kSpectrumOverlap);
   mSpectrumR.SetFFTSizeAndOverlap(kSpectrumFFTSize, kSpectrumOverlap);
 
@@ -1150,10 +1139,6 @@ void ORMBandPass::OnReset()
 
 void ORMBandPass::SendSpectrumConfig()
 {
-  // Sample rate / FFT size messages for the pads. Idempotent; re-sent from
-  // OnIdle every frame so a pad that attaches after OnReset (the common case:
-  // host instantiates the plugin, DSP init runs before the editor controls
-  // exist) still converges to the correct values.
   const double sr = GetSampleRate();
   const int fftSize = kSpectrumFFTSize;
   SendControlMsgFromDelegate(kCtrlTagPadL, FilterNodePad::kMsgTagSampleRate, sizeof(double), &sr);
@@ -1201,7 +1186,7 @@ orm::BandPassCore::Params ORMBandPass::CollectParams() const
   p.mix    = static_cast<float>(GetParam(kMix)->Value());
   p.agOn   = GetParam(kAgOn)->Value() > 0.5;
   p.agAmount = static_cast<float>(GetParam(kAgAmount)->Value());
-  p.agRate = 1.0 / GetParam(kAgRate)->Value(); // UI is seconds (period), core expects Hz
+  p.agRate = 1.0 / GetParam(kAgRate)->Value();
   p.slopeDbL = kSlopeDb[std::clamp(GetParam(kSlopeL)->Int(), 0, 3)];
   p.slopeDbR = kSlopeDb[std::clamp(GetParam(kSlopeR)->Int(), 0, 3)];
   return p;
@@ -1259,7 +1244,6 @@ void ORMBandPass::EditBand(int kFreq, int kBw, double lowNorm, double highNorm)
   const double lowHz = pf->FromNormalized(lowNorm);
   const double highHz = pf->FromNormalized(highNorm);
   const double center = std::sqrt(lowHz * highHz);
-  // Edges are center/bw and center*bw, so high/low == bw^2.
   const double bw = std::sqrt(highHz / lowHz);
   ClampAndSet(kFreq, kBw, center, bw);
 }
@@ -1362,12 +1346,9 @@ void ORMBandPass::MaybePushGestureUndo()
 
 void ORMBandPass::OnIdle()
 {
-  // Spectrum FFT + UI transfer happens here (main thread), never on the audio thread.
   mSpectrumL.TransmitData(*this);
   mSpectrumR.TransmitData(*this);
 
-  // Re-send sample rate / FFT size every frame: if the pads attached after the
-  // last OnReset (first UI open), they converge within one frame.
   SendSpectrumConfig();
 
   using namespace std::chrono;
@@ -1394,9 +1375,6 @@ void ORMBandPass::OnIdle()
   }
 }
 
-// 拖拽 App 窗口/宿主缩放视图时, 保持布局逻辑尺寸不变, 按两轴较小比例等比缩放 UI。
-// needsPlatformResize=false 避免在 live resize 中反向改动窗口尺寸形成回路;
-// 窗口宽高比由平台层的 contentAspectRatio 锁定, 因此两轴比例始终一致。
 void ORMBandPass::OnParentWindowResize(int width, int height)
 {
   if (auto* pGraphics = GetUI())
@@ -1406,6 +1384,17 @@ void ORMBandPass::OnParentWindowResize(int width, int height)
     const float sy = static_cast<float>(height) / platformScale / static_cast<float>(pGraphics->Height());
     pGraphics->Resize(pGraphics->Width(), pGraphics->Height(), std::min(sx, sy), false);
   }
+}
+
+bool ORMBandPass::ConstrainEditorResize(int& w, int& h) const
+{
+  constexpr double kMinScale = DEFAULT_MIN_DRAW_SCALE;
+  w = std::max(w, static_cast<int>(PLUG_WIDTH * kMinScale));
+
+  const int wantH = static_cast<int>(std::lround(w * static_cast<double>(PLUG_HEIGHT) / PLUG_WIDTH));
+  const bool ok = (h == wantH);
+  h = wantH;
+  return ok;
 }
 
 void ORMBandPass::MarkStateStable()
@@ -1734,16 +1723,11 @@ void ORMBandPass::ApplyTheme()
   RefreshThemeColors();
 }
 
-// Repaint everything with the current theme state. Colors are resolved live
-// in every Draw() (see Theme.h), so no UI rebuild is needed - the settings
-// panel stays open for real-time preview while hue / saturation / mode change.
 void ORMBandPass::RefreshThemeColors()
 {
 #if IPLUG_EDITOR
   if (GetUI())
   {
-    // The panel background is an IPanelControl with a captured pattern -
-    // update it live so the backdrop follows the theme too.
     if (IControl* pBG = GetUI()->GetBackgroundControl())
     {
       if (IPanelControl* pPanel = dynamic_cast<IPanelControl*>(pBG))

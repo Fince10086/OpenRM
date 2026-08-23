@@ -1,7 +1,6 @@
 cmake_minimum_required(VERSION 3.14)
 project(ORMBandPass VERSION 0.1.1)
 
-# 定位 iPlug2 (默认相对本文件路径, 可用 -DIPLUG2_DIR=... 覆盖)
 if(NOT DEFINED IPLUG2_DIR)
   set(IPLUG2_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../third_party/iPlug2" CACHE PATH "iPlug2 root directory")
 endif()
@@ -57,9 +56,6 @@ add_custom_command(
   VERBATIM
 )
 
-# AU (macOS 原生) + APP (独立运行, 便于快速调试) + VST3 (需 Steinberg VST3 SDK)
-# VST3_SDK 已就位: third_party/iPlug2/Dependencies/IPlug/VST3_SDK
-# 拿到 CLAP_SDK 后可追加 CLAP: FORMATS APP AU VST3 CLAP
 iplug_add_plugin(${PROJECT_NAME}
   SOURCES
     src/BandPass.h
@@ -82,5 +78,11 @@ iplug_add_plugin(${PROJECT_NAME}
   DEFINES SAMPLE_TYPE_FLOAT
 )
 
-# nlohmann/json (iPlug2 vendored) 不在默认 include path, 补一行供 PresetFileIO.h 使用
 target_include_directories(_${PROJECT_NAME}-base INTERFACE "${IPLUG2_DIR}/Dependencies/Extras")
+
+add_custom_target(${PROJECT_NAME}-mixed-fonts DEPENDS ${MIXED_FONTS})
+foreach(_fmt IN ITEMS APP AU VST3)
+  if(TARGET ${PROJECT_NAME}-${_fmt})
+    add_dependencies(${PROJECT_NAME}-${_fmt} ${PROJECT_NAME}-mixed-fonts)
+  endif()
+endforeach()

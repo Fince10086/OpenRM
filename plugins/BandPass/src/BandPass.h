@@ -36,7 +36,6 @@ constexpr int kNumPresets = 24;
 constexpr int kNumQuick   = 8;
 constexpr int kNumBottom  = 8;
 
-// Spectrum analysis settings (FFT runs on the main thread inside TransmitData)
 constexpr int kSpectrumFFTSize  = 4096;
 constexpr int kSpectrumOverlap  = 4;
 
@@ -57,7 +56,7 @@ namespace iplug { namespace igraphics {
   class PresetSlotControl;
 } }
 
-class SettingsPanelControl; // defined in BandPass.cpp (global scope)
+class SettingsPanelControl;
 
 class ORMBandPass final : public Plugin
 {
@@ -72,21 +71,18 @@ public:
 #endif
   void OnIdle() override;
   void OnParentWindowResize(int width, int height) override;
+  bool ConstrainEditorResize(int& w, int& h) const override;
 
 private:
   orm::BandPassCore mCore;
   orm::ParamMailbox<orm::BandPassCore::Params> mParamMailbox;
 
-  SpectrumSTFT<2> mSpectrumL; // ch0 = L dry input, ch1 = L band-pass wet output
-  SpectrumSTFT<2> mSpectrumR; // ch0 = R dry input, ch1 = R band-pass wet output
+  SpectrumSTFT<2> mSpectrumL;
+  SpectrumSTFT<2> mSpectrumR;
 
-  // Pre-process snapshot of the dry input, so the "original" spectrum stays valid
-  // even when the host processes in-place (inputs == outputs).
   static constexpr int kMaxSpecBlock = 16384;
   std::array<sample, kMaxSpecBlock> mSpecInL {};
   std::array<sample, kMaxSpecBlock> mSpecInR {};
-  // Band-pass wet signal (filtered x gain, before the mix crossfade), fed to the
-  // spectrum "processed" line so it shows the filter output regardless of MIX.
   std::array<sample, kMaxSpecBlock> mWetL {};
   std::array<sample, kMaxSpecBlock> mWetR {};
 
