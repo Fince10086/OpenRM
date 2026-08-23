@@ -442,15 +442,15 @@ private:
 
   void DrawCorner(IGraphics &g, int id) {
     const IRECT r = CornerRect(id);
-    const bool far = (id == kCornerBw);
-    const EAlign align = far ? EAlign::Far : EAlign::Near;
+    const bool isBw = (id == kCornerBw);
+    const EAlign align = isBw ? EAlign::Far : EAlign::Near;
     const IText t(20, COL_900(), kFontSemiBold, align, EVAlign::Middle);
-    const char *prefix = far ? mBwPrefix.Get() : mCenterPrefix.Get();
+    const char *prefix = isBw ? mBwPrefix.Get() : mCenterPrefix.Get();
     WDL_String value;
     GetCornerValue(id, value, true);
     const float cy = r.MH();
     IRECT measured;
-    if (far) {
+    if (isBw) {
       g.MeasureText(t, value.Get(), measured);
       mRandomSwatchRect[1] = IRECT(r.R - AG_SWATCH, cy - AG_SWATCH * 0.5f, r.R, cy + AG_SWATCH * 0.5f);
       mCornerValueRect[1] =
@@ -468,7 +468,7 @@ private:
       g.DrawText(t, prefix, r);
       g.DrawText(t, value.Get(), mCornerValueRect[0]);
     }
-    const int i = far ? 1 : 0;
+    const int i = isBw ? 1 : 0;
     g.FillRect(mRandomMapOn[i] ? RandomColor(mRandomMapColor[i]) : RandomColorDim(mRandomMapColor[i]),
                mRandomSwatchRect[i].GetPadded(-1.f));
   }

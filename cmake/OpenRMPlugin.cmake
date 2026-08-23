@@ -106,9 +106,8 @@ function(openrm_add_plugin NAME)
     add_custom_target(${NAME}-app-sign ALL
       COMMAND ${CMAKE_COMMAND} -E make_directory "${_sig_app}/Contents/Resources"
       ${_copy_cmds}
-      COMMAND ${IPLUG2_CODESIGN_EXEC} --force --deep --sign - "${_sig_app}"
       DEPENDS ${NAME}-app
-      COMMENT "Copy fonts + ad-hoc sign ${_sig_app}"
+      COMMENT "Copy fonts ${_sig_app}"
     )
   endif()
 endfunction()

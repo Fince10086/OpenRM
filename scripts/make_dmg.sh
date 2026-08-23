@@ -33,6 +33,10 @@ $NAME $VERSION
 VST3 / AU 请复制到对应插件目录:
   VST3 -> ~/Library/Audio/Plug-Ins/VST3
   AU   -> ~/Library/Audio/Plug-Ins/Components
+
+macOS 15+ 首次打开若提示"无法验证开发者/已损坏":
+  右键点 app -> 打开, 或执行:
+  sudo xattr -cr /Applications/ORMBandPass.app
 EOF
 
 # ---- 生成 DMG ----

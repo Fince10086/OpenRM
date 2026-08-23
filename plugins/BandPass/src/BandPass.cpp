@@ -170,19 +170,19 @@ ORMBandPass::ORMBandPass(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     pGraphics->LoadFont(kFontBold, MIXED_BD_FN);
 
     auto loadFontFile = [](IGraphics *g, const char *id, const char *path) -> bool {
-      FILE *f = std::fopen(path, "rb");
+      FILE *f = fopen(path, "rb");
       if (!f)
         return false;
-      std::fseek(f, 0, SEEK_END);
-      const long sz = std::ftell(f);
-      std::fseek(f, 0, SEEK_SET);
+      fseek(f, 0, SEEK_END);
+      const long sz = ftell(f);
+      fseek(f, 0, SEEK_SET);
       if (sz <= 0) {
-        std::fclose(f);
+        fclose(f);
         return false;
       }
       std::vector<char> buf(static_cast<size_t>(sz));
-      const bool ok = std::fread(buf.data(), 1, buf.size(), f) == buf.size();
-      std::fclose(f);
+      const bool ok = fread(buf.data(), 1, buf.size(), f) == buf.size();
+      fclose(f);
       return ok && g->LoadFont(id, buf.data(), static_cast<int>(buf.size()));
     };
     bool sysFontOk = false;
