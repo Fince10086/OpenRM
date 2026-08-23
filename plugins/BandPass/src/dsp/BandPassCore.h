@@ -184,7 +184,10 @@ public:
         mSampleRate = sampleRate;
         for (auto& ch : mCh) ch.prepare(sampleRate);
         for (int i = 0; i < kNumAgStreams; ++i)
+        {
             mAgStream[i].walk.seed(0x9E3779B9u * (unsigned) (i + 1) + 0x5bd1e995u);
+            mAgStream[i].walk.setPeriod(mAgStream[i].periodSec, sampleRate);
+        }
         reset();
     }
     void reset() noexcept
@@ -219,7 +222,8 @@ public:
             const float amt = mParams.agAmount[col];
             mAgStream[i].active = maps[i].en && amt > 0.0f;
             mAgStream[i].amount = amt;
-            mAgStream[i].walk.setPeriod(mParams.agPeriodSec[col], mSampleRate);
+            mAgStream[i].periodSec = mParams.agPeriodSec[col];
+            mAgStream[i].walk.setPeriod(mAgStream[i].periodSec, mSampleRate);
         }
         mCh[0].setTarget(mParams.freqL, mParams.bwL, mParams.slopeDbL);
         mCh[1].setTarget(mParams.freqR, mParams.bwR, mParams.slopeDbR);
@@ -301,6 +305,7 @@ private:
         RandomWalk walk;
         bool active = false;
         float amount = 0.0f;
+        double periodSec = 1.0;
     };
     struct Channel
     {

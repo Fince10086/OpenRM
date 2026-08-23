@@ -253,6 +253,29 @@ int main()
         check("random mix mapping changes output", std::fabs(gMix - gNone) > 0.05);
     }
 
+    // ---- 6c) 宿主 Reset 后随机游走必须继续推进 ----
+    {
+        BandPassCore core;
+        core.prepare(kFs);
+        BandPassCore::Params p = MakeParams();
+        p.agEnableFreqL = true; p.agColorFreqL = 0;
+        p.agAmount[0] = 1.0f; p.agPeriodSec[0] = 0.01f; // 快速游走
+        core.setParams(p);
+        core.prepare(kFs); // 复现宿主 Reset (prepare 落在 setParams 之后)
+        const int n = (int)(kFs * 1);
+        std::vector<float> in(n, 0.f), out(n);
+        float maxDelta = 0.f;
+        for (int pos = 0; pos < n; pos += kBlock)
+        {
+            const int b = std::min(kBlock, n - pos);
+            core.updateSmoothing(b);
+            core.process(in.data() + pos, out.data() + pos, b);
+            maxDelta = std::max(maxDelta, std::fabs(core.agDeltas().freqOct[0]));
+        }
+        check("random walk survives host reset (prepare after setParams)", maxDelta > 0.05f);
+        printf("   max |freq delta| after reset = %.3f oct\n", maxDelta);
+    }
+
     // ---- 7) slope: 默认 96; -3dB 带宽跨档位保持; 越高滚降越陡 ----
     {
         BandPassCore::Params d;

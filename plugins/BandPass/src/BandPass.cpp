@@ -1498,8 +1498,8 @@ void ORMBandPass::ProcessBlock(sample** inputs, sample** outputs, int nFrames)
 
 void ORMBandPass::OnReset()
 {
-  mCore.setParams(CollectParams());
   mCore.prepare(GetSampleRate());
+  mCore.setParams(CollectParams());
 
   mSpectrumL.SetFFTSizeAndOverlap(kSpectrumFFTSize, kSpectrumOverlap);
   mSpectrumR.SetFFTSizeAndOverlap(kSpectrumFFTSize, kSpectrumOverlap);
