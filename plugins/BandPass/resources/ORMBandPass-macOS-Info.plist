@@ -7,7 +7,7 @@
 	<key>CFBundleExecutable</key>
 	<string>ORMBandPass</string>
 	<key>CFBundleGetInfoString</key>
-	<string>ORMBandPass v1.0.0 Copyright 2025 Acme Inc</string>
+	<string>ORMBandPass v0.3.0 Copyright 2026 OpenRM</string>
 	<key>CFBundleIconFile</key>
 	<string>ORMBandPass.icns</string>
 	<key>CFBundleIdentifier</key>
@@ -19,11 +19,11 @@
 	<key>CFBundlePackageType</key>
 	<string>BNDL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.0.0</string>
+	<string>0.3.0</string>
 	<key>CFBundleSignature</key>
 	<string>GrBP</string>
 	<key>CFBundleVersion</key>
-	<string>1.0.0</string>
+	<string>0.3.0</string>
 	<key>CSResourcesFileMapped</key>
 	<true/>
 	<key>LSApplicationCategoryType</key>
