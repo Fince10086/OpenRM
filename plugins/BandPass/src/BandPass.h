@@ -98,6 +98,7 @@ public:
   void OnParamChangeUI(int paramIdx, EParamSource source) override;
 #endif
   void OnIdle() override;
+  void OnUIClose() override;
   void OnParentWindowResize(int width, int height) override;
   bool ConstrainEditorResize(int& w, int& h) const override;
   int UnserializeState(const IByteChunk& chunk, int startPos) override;

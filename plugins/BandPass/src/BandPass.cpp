@@ -1532,8 +1532,14 @@ void ORMBandPass::OnParamChangeUI(int paramIdx, EParamSource source)
     MaybePushGestureUndo();
     MirrorLinkedParams(paramIdx);
   }
-  UpdatePads();
-  UpdateAgMaps();
+#if IPLUG_EDITOR
+  // May fire from host automation while the editor is closed
+  if (GetUI())
+  {
+    UpdatePads();
+    UpdateAgMaps();
+  }
+#endif
 }
 #endif
 
@@ -1702,6 +1708,9 @@ void ORMBandPass::UpdateAgMaps()
 void ORMBandPass::AgDisplayPush()
 {
 #if IPLUG_EDITOR
+  // OnIdle keeps firing after the editor closes; every stored control pointer
+  // is dangling once IGraphics is destroyed (see OnUIClose)
+  if (!GetUI()) return;
   if (mPadL) mPadL->SetAgDeltas(mAgDeltas.freqOct[0], mAgDeltas.bwOct[0]);
   if (mPadR) mPadR->SetAgDeltas(mAgDeltas.freqOct[1], mAgDeltas.bwOct[1]);
   if (mGainSliderL) mGainSliderL->SetAgDeltaDb(mAgDeltas.gainDb[0]);
@@ -1860,6 +1869,26 @@ void ORMBandPass::OnIdle()
       mInFadeApply = false;
     }
   }
+}
+
+void ORMBandPass::OnUIClose()
+{
+  // The delegate destroys IGraphics and every attached control when the editor
+  // closes, while OnIdle/automation callbacks keep running: drop all references.
+  mPadL = mPadR = nullptr;
+  mBandL = mBandR = nullptr;
+  mMixSlider = nullptr;
+  mGainSliderL = mGainSliderR = nullptr;
+  for (ORMSlider*& s : mAgRangeSlider) s = nullptr;
+  for (ORMSlider*& s : mAgSpeedSlider) s = nullptr;
+  mAgPicker = nullptr;
+  mFadeSlider = nullptr;
+  for (PresetSlotControl*& b : mSlotButtons) b = nullptr;
+  mSettingsPanel = nullptr;
+  mTextBindings.clear();
+  mTooltipBindings.clear();
+  // let OnIdle re-apply mono display to the freshly created controls on reopen
+  mMonoDisplay = false;
 }
 
 void ORMBandPass::OnParentWindowResize(int width, int height)
