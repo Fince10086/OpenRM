@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.14)
-project(OpenRM VERSION 0.1.1)
+project(OpenRM VERSION 0.2.0)
 
 add_subdirectory(plugins/BandPass)
 
