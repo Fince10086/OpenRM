@@ -1082,7 +1082,7 @@ void ORMBandPass::ProcessBlock(sample** inputs, sample** outputs, int nFrames)
   const int nOuts = NOutChansConnected();
   const int nIns = NInChansConnected();
 
-  const int nSpec = std::min(nFrames, kMaxSpecBlock);
+  const int nSpec = std::min(nFrames, kMaxBlock);
   if (nIns >= 2)
   {
     std::memcpy(mSpecInL.data(), inputs[0], nSpec * sizeof(sample));
@@ -1110,20 +1110,20 @@ void ORMBandPass::ProcessBlock(sample** inputs, sample** outputs, int nFrames)
   {
     sample* specL[2] = { mSpecInL.data(), mWetL.data() };
     sample* specR[2] = { mSpecInR.data(), mWetR.data() };
-    mSpectrumL.ProcessBlock(specL, nFrames, kCtrlTagPadL, 2);
-    mSpectrumR.ProcessBlock(specR, nFrames, kCtrlTagPadR, 2);
+    mSpectrumL.ProcessBlock(specL, nSpec, kCtrlTagPadL, 2);
+    mSpectrumR.ProcessBlock(specR, nSpec, kCtrlTagPadR, 2);
   }
   else
   {
     sample* specM[2] = { mSpecInL.data(), mWetL.data() };
-    mSpectrumL.ProcessBlock(specM, nFrames, kCtrlTagPadL, 2);
+    mSpectrumL.ProcessBlock(specM, nSpec, kCtrlTagPadL, 2);
   }
 }
 
 void ORMBandPass::OnReset()
 {
   mCore.setParams(CollectParams());
-  mCore.prepare(GetSampleRate(), GetBlockSize());
+  mCore.prepare(GetSampleRate());
 
   mSpectrumL.SetFFTSizeAndOverlap(kSpectrumFFTSize, kSpectrumOverlap);
   mSpectrumR.SetFFTSizeAndOverlap(kSpectrumFFTSize, kSpectrumOverlap);
@@ -1143,14 +1143,7 @@ void ORMBandPass::SendSpectrumConfig()
 
 void ORMBandPass::OnParamChange(int paramIdx, EParamSource source, int sampleOffset)
 {
-  if (source == EParamSource::kHost)
-  {
-    mCore.setParams(CollectParams());
-  }
-  else
-  {
-    PublishParamsToCore();
-  }
+  PublishParamsToCore();
 }
 
 void ORMBandPass::OnParamChangeUI(int paramIdx, EParamSource source)

@@ -83,10 +83,8 @@ public:
     static constexpr int kMaxSections = 8;
     void prepare(double sr) noexcept
     {
-        mSampleRate = sr;
         for (auto& f : mHp) f.prepare(sr);
         for (auto& f : mLp) f.prepare(sr);
-        reset();
     }
     void reset() noexcept
     {
@@ -94,28 +92,21 @@ public:
         for (auto& f : mLp) f.reset();
     }
 
-    void setParams(double lowHz, double highHz, double slopeDb) noexcept
+    void update(double lowHz, double highHz, double slopeDb) noexcept
     {
         const int sections = std::clamp((int) std::lround(slopeDb / 12.0), 1, kMaxSections);
         if (sections != mSections)
         {
             mSections = sections;
-            for (auto& f : mHp) f.reset();
-            for (auto& f : mLp) f.reset();
+            const int poles = 2 * sections;
+            for (int k = 0; k < sections; ++k)
+            {
+                mQ[k] = 1.0 / (2.0 * std::cos((2.0 * k + 1.0) * M_PI / (2.0 * poles)));
+                mHp[k].reset();
+                mLp[k].reset();
+            }
         }
-        const int poles = 2 * sections;
         for (int k = 0; k < sections; ++k)
-        {
-            const double theta = (2.0 * k + 1.0) * M_PI / (2.0 * poles);
-            mQ[k] = 1.0 / (2.0 * std::cos(theta));
-            mHp[k].setParams(lowHz, mQ[k]);
-            mLp[k].setParams(highHz, mQ[k]);
-        }
-    }
-
-    void setFreqs(double lowHz, double highHz) noexcept
-    {
-        for (int k = 0; k < mSections; ++k)
         {
             mHp[k].setParams(lowHz, mQ[k]);
             mLp[k].setParams(highHz, mQ[k]);
@@ -140,8 +131,7 @@ public:
     }
 
 private:
-    double mSampleRate = 44100.0;
-    int    mSections = 1;
+    int    mSections = 0;
     double mQ[kMaxSections] = {};
     std::array<SvfFilter, kMaxSections> mHp;
     std::array<SvfFilter, kMaxSections> mLp;
@@ -171,21 +161,17 @@ public:
 
     BandPassCore() = default;
 
-    void prepare(double sampleRate, int ) noexcept
+    void prepare(double sampleRate) noexcept
     {
         mSampleRate = sampleRate;
-        mChainL.prepare(sampleRate);
-        mChainR.prepare(sampleRate);
-        mSmFreqL = mParams.freqL; mSmBwL = mParams.bwL;
-        mSmFreqR = mParams.freqR; mSmBwR = mParams.bwR;
-        mHalfBwL = std::pow(2.0, mSmBwL * 0.5);
-        mHalfBwR = std::pow(2.0, mSmBwR * 0.5);
+        for (auto& ch : mCh) ch.prepare(sampleRate);
         mAgPhase = 0.0;
         reset();
     }
-
-    void reset() noexcept { mChainL.reset(); mChainR.reset(); }
-
+    void reset() noexcept
+    {
+        for (auto& ch : mCh) ch.reset();
+    }
     void setParams(const Params& p) noexcept
     {
         mParams = p;
@@ -193,116 +179,112 @@ public:
         mParams.gainR = std::clamp(p.gainR, 0.0f, 2.0f);
         mParams.mix   = std::clamp(p.mix, 0.0f, 1.0f);
         mParams.agAmount = std::clamp(p.agAmount, 0.0f, 1.0f);
-        mSlopeDbL = p.slopeDbL;
-        mSlopeDbR = p.slopeDbR;
+        if (p.linked)
+        {
+            mParams.freqR    = mParams.freqL;
+            mParams.bwR      = mParams.bwL;
+            mParams.slopeDbR = mParams.slopeDbL;
+        }
+        mCh[0].setTarget(mParams.freqL, mParams.bwL, mParams.slopeDbL);
+        mCh[1].setTarget(mParams.freqR, mParams.bwR, mParams.slopeDbR);
     }
-
-    const Params& getParams() const noexcept { return mParams; }
-
     void updateSmoothing(int blockSize) noexcept
     {
         const double coef = 1.0 - std::exp(-(double)blockSize / (0.015 * mSampleRate));
-        mSmFreqL += (mParams.freqL - mSmFreqL) * coef;
-        mSmBwL   += (mParams.bwL   - mSmBwL)   * coef;
-
-        if (mParams.linked)
-        {
-            mSmFreqR += (mParams.freqL - mSmFreqR) * coef;
-            mSmBwR   += (mParams.bwL   - mSmBwR)   * coef;
-        }
-        else
-        {
-            mSmFreqR += (mParams.freqR - mSmFreqR) * coef;
-            mSmBwR   += (mParams.bwR   - mSmBwR)   * coef;
-        }
-
-        mHalfBwL = std::pow(2.0, mSmBwL * 0.5);
-        mHalfBwR = std::pow(2.0, mSmBwR * 0.5);
-        mChainL.setParams(mSmFreqL / mHalfBwL, mSmFreqL * mHalfBwL, mSlopeDbL);
-        mChainR.setParams(mSmFreqR / mHalfBwR, mSmFreqR * mHalfBwR,
-                          mParams.linked ? mSlopeDbL : mSlopeDbR);
+        for (auto& ch : mCh) ch.smooth(coef);
     }
-
     void process(const float* const inL, const float* const inR,
                  float* const outL, float* const outR, int n,
                  float* wetOutL = nullptr, float* wetOutR = nullptr) noexcept
     {
-        const float gL = mParams.gainL, gR = mParams.gainR;
-        const float mixAngle = mParams.mix * 0.5f * static_cast<float>(M_PI);
-        const float dryGain = std::cos(mixAngle), wetGain = std::sin(mixAngle);
-        const float agAmt = mParams.agOn ? mParams.agAmount : 0.0f;
-        const double agInc = 2.0 * M_PI * mParams.agRate / mSampleRate;
-
-        for (int i = 0; i < n; ++i)
-        {
-            double modOct = 0.0;
-            if (agAmt > 0.0f)
-            {
-                mAgPhase += agInc;
-                if (mAgPhase > 2.0 * M_PI) mAgPhase -= 2.0 * M_PI;
-                modOct = agAmt * kAgitationMaxOct * std::sin(mAgPhase);
-            }
-
-            const float xl = inL[i], xr = inR[i];
-
-            float wetL, wetR;
-            if (modOct != 0.0)
-            {
-                const double fL = std::clamp(mSmFreqL * std::exp2(modOct), 20.0, mSampleRate * 0.49);
-                const double fR = std::clamp(mSmFreqR * std::exp2(modOct), 20.0, mSampleRate * 0.49);
-                mChainL.setFreqs(fL / mHalfBwL, fL * mHalfBwL);
-                mChainR.setFreqs(fR / mHalfBwR, fR * mHalfBwR);
-            }
-            wetL = mChainL.process(xl) * gL;
-            wetR = mChainR.process(xr) * gR;
-            if (wetOutL) wetOutL[i] = wetL;
-            if (wetOutR) wetOutR[i] = wetR;
-
-            outL[i] = xl * dryGain + wetL * wetGain;
-            outR[i] = xr * dryGain + wetR * wetGain;
-        }
+        const float* in[2]  = { inL, inR };
+        float* out[2] = { outL, outR };
+        float* wet[2] = { wetOutL, wetOutR };
+        run(in, out, wet, 2, n);
     }
-
     void process(const float* const in, float* const out, int n,
                  float* wetOut = nullptr) noexcept
     {
-        const float g = mParams.gainL;
-        const float mixAngle = mParams.mix * 0.5f * static_cast<float>(M_PI);
-        const float dryGain = std::cos(mixAngle), wetGain = std::sin(mixAngle);
-        const float agAmt = mParams.agOn ? mParams.agAmount : 0.0f;
-        const double agInc = 2.0 * M_PI * mParams.agRate / mSampleRate;
-        for (int i = 0; i < n; ++i)
-        {
-            double modOct = 0.0;
-            if (agAmt > 0.0f)
-            {
-                mAgPhase += agInc;
-                if (mAgPhase > 2.0 * M_PI) mAgPhase -= 2.0 * M_PI;
-                modOct = agAmt * kAgitationMaxOct * std::sin(mAgPhase);
-            }
-            if (modOct != 0.0)
-            {
-                const double f = std::clamp(mSmFreqL * std::exp2(modOct), 20.0, mSampleRate * 0.49);
-                mChainL.setFreqs(f / mHalfBwL, f * mHalfBwL);
-            }
-            const float wet = mChainL.process(in[i]) * g;
-            if (wetOut) wetOut[i] = wet;
-            out[i] = in[i] * dryGain + wet * wetGain;
-        }
+        const float* ins[1] = { in };
+        float* outs[1] = { out };
+        float* wets[1] = { wetOut };
+        run(ins, outs, wets, 1, n);
     }
 
 private:
     static constexpr double kAgitationMaxOct = 0.5;
 
+    struct Channel
+    {
+        void prepare(double sr) noexcept
+        {
+            chain.prepare(sr);
+            smFreq = targetFreq;
+            smBw = targetBw;
+            halfBw = std::pow(2.0, smBw * 0.5);
+        }
+        void reset() noexcept { chain.reset(); }
+        void setTarget(double freq, double bw, double slope) noexcept
+        {
+            targetFreq = freq;
+            targetBw = bw;
+            slopeDb = slope;
+        }
+        
+        void smooth(double coef) noexcept
+        {
+            smFreq += (targetFreq - smFreq) * coef;
+            smBw   += (targetBw - smBw) * coef;
+            halfBw = std::pow(2.0, smBw * 0.5);
+            chain.update(smFreq / halfBw, smFreq * halfBw, slopeDb);
+        }
+        inline float process(float x, double modOct, double sampleRate) noexcept
+        {
+            if (modOct != 0.0)
+            {
+                const double f = std::clamp(smFreq * std::exp2(modOct), 20.0, sampleRate * 0.49);
+                chain.update(f / halfBw, f * halfBw, slopeDb);
+            }
+            return chain.process(x);
+        }
+        double targetFreq = 1000.0, targetBw = 1.0;
+        double smFreq = 1000.0, smBw = 1.0, halfBw = 1.0;
+        double slopeDb = 96.0;
+        ChannelChain chain;
+    };
+
+    void run(const float* const* in, float* const* out, float* const* wet,
+             int numCh, int n) noexcept
+    {
+        const float gains[2] = { mParams.gainL, mParams.gainR };
+        const float mixAngle = mParams.mix * 0.5f * static_cast<float>(M_PI);
+        const float dryGain = std::cos(mixAngle), wetGain = std::sin(mixAngle);
+        const float agAmt = mParams.agOn ? mParams.agAmount : 0.0f;
+        const double agInc = 2.0 * M_PI * mParams.agRate / mSampleRate;
+
+        for (int i = 0; i < n; ++i)
+        {
+            double modOct = 0.0;
+            if (agAmt > 0.0f)
+            {
+                mAgPhase += agInc;
+                if (mAgPhase > 2.0 * M_PI) mAgPhase -= 2.0 * M_PI;
+                modOct = agAmt * kAgitationMaxOct * std::sin(mAgPhase);
+            }
+            for (int c = 0; c < numCh; ++c)
+            {
+                const float x = in[c][i];
+                const float wetS = mCh[c].process(x, modOct, mSampleRate) * gains[c];
+                if (wet[c]) wet[c][i] = wetS;
+                out[c][i] = x * dryGain + wetS * wetGain;
+            }
+        }
+    }
+
     double mSampleRate = 44100.0;
     Params mParams;
-    ChannelChain mChainL, mChainR;
+    Channel mCh[2];
     double mAgPhase = 0.0;
-    double mSlopeDbL = 96.0, mSlopeDbR = 96.0;
-
-    double mSmFreqL = 1000.0, mSmBwL = 1.0;
-    double mSmFreqR = 1000.0, mSmBwR = 1.0;
-    double mHalfBwL = 1.0, mHalfBwR = 1.0;
 };
 
 }

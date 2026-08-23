@@ -80,11 +80,11 @@ private:
   SpectrumSTFT<2> mSpectrumL;
   SpectrumSTFT<2> mSpectrumR;
 
-  static constexpr int kMaxSpecBlock = 16384;
-  std::array<sample, kMaxSpecBlock> mSpecInL {};
-  std::array<sample, kMaxSpecBlock> mSpecInR {};
-  std::array<sample, kMaxSpecBlock> mWetL {};
-  std::array<sample, kMaxSpecBlock> mWetR {};
+  static constexpr int kMaxBlock = 16384;
+  std::array<sample, kMaxBlock> mSpecInL {};
+  std::array<sample, kMaxBlock> mSpecInR {};
+  std::array<sample, kMaxBlock> mWetL {};
+  std::array<sample, kMaxBlock> mWetR {};
 
   FilterNodePad*  mPadL = nullptr;
   FilterNodePad*  mPadR = nullptr;

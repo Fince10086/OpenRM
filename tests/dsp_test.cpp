@@ -68,7 +68,7 @@ int main()
     // ---- 1) BP 峰值在中心频率 ----
     {
         BandPassCore core;
-        core.prepare(kFs, kBlock);
+        core.prepare(kFs);
         BandPassCore::Params p = MakeParams();
         p.freqL = 2000.0; p.bwL = 1.0;
         core.setParams(p);
@@ -84,7 +84,7 @@ int main()
     {
         auto measureBw = [](double bwOct) {
             BandPassCore core;
-            core.prepare(kFs, kBlock);
+            core.prepare(kFs);
             BandPassCore::Params p = MakeParams();
             p.freqL = 2000.0; p.bwL = bwOct;
             core.setParams(p);
@@ -112,7 +112,7 @@ int main()
     // ---- 3) link: R 跟随 L ----
     {
         BandPassCore core;
-        core.prepare(kFs, kBlock);
+        core.prepare(kFs);
         BandPassCore::Params p = MakeParams();
         p.freqL = 3000.0; p.bwL = 0.5;
         p.freqR = 500.0;  p.bwR = 0.5;
@@ -142,7 +142,7 @@ int main()
     // ---- 4) mix 干湿 ----
     {
         BandPassCore core;
-        core.prepare(kFs, kBlock);
+        core.prepare(kFs);
         BandPassCore::Params p = MakeParams();
         p.freqL = 1000.0; p.bwL = 1.0; p.mix = 0.0f; // 全干: 输出=输入
         core.setParams(p);
@@ -158,7 +158,7 @@ int main()
     // ---- 5) 峰值增益归一化: 不同带宽下中心频率增益 ~1 ----
     {
         BandPassCore core;
-        core.prepare(kFs, kBlock);
+        core.prepare(kFs);
         bool wideOk = true, narrowOk = true;
         for (double bw : {0.2, 1.0, 2.0})
         {
@@ -177,7 +177,7 @@ int main()
     // ---- 6) 稳定性: 白噪声高 Q ----
     {
         BandPassCore core;
-        core.prepare(kFs, kBlock);
+        core.prepare(kFs);
         BandPassCore::Params p = MakeParams();
         p.freqL = 4000.0; p.bwL = 0.05; p.freqR = 250.0; p.bwR = 0.1;
         p.agOn = true; p.agAmount = 0.5f; p.agRate = 8.0;
@@ -206,7 +206,7 @@ int main()
         // -3dB 带宽（绝对 -3dB 点, 即 LOWCUT/HIGHCUT）不随 slope 档位改变
         auto bwAt = [](double slopeDb) {
             BandPassCore core;
-            core.prepare(kFs, kBlock);
+            core.prepare(kFs);
             BandPassCore::Params p = MakeParams();
             p.freqL = 1000.0; p.bwL = 1.0; p.slopeDbL = slopeDb;
             core.setParams(p);
@@ -239,7 +239,7 @@ int main()
         // 高切 1414Hz (中心 1k, 1 oct 带宽): 1 个八度外 (2828Hz) 衰减应 ≈ 档位值
         auto attnDb = [](double slopeDb, double octAboveCut) {
             BandPassCore core;
-            core.prepare(kFs, kBlock);
+            core.prepare(kFs);
             BandPassCore::Params p = MakeParams();
             p.freqL = 1000.0; p.bwL = 1.0; p.slopeDbL = slopeDb;
             core.setParams(p);
@@ -258,7 +258,7 @@ int main()
 
         // cut 前通带平直: 高切内侧 0.25 oct 处衰减应 < 0.1 dB (96 档)
         BandPassCore core;
-        core.prepare(kFs, kBlock);
+        core.prepare(kFs);
         BandPassCore::Params p = MakeParams();
         p.freqL = 1000.0; p.bwL = 1.0; p.slopeDbL = 96.0;
         core.setParams(p);
@@ -270,7 +270,7 @@ int main()
     // ---- 8) 左右斜率独立 (LINK 关) / R 跟随 L (LINK 开) ----
     {
         BandPassCore core;
-        core.prepare(kFs, kBlock);
+        core.prepare(kFs);
         BandPassCore::Params p = MakeParams();
         p.freqL = 1000.0; p.bwL = 1.0; p.slopeDbL = 12.0;
         p.freqR = 1000.0; p.bwR = 1.0; p.slopeDbR = 96.0;
