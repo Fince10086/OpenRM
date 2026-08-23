@@ -93,7 +93,7 @@ public:
         for (auto& f : mLp) f.reset();
     }
 
-    void update(double lowHz, double highHz, double slopeDb) noexcept
+    void update(double lowHz, double highHz, double slopeDb, bool reject) noexcept
     {
         const int sections = std::clamp((int) std::lround(slopeDb / 12.0), 1, kMaxSections);
         if (sections != mSections)
@@ -107,10 +107,14 @@ public:
                 mLp[k].reset();
             }
         }
+        // PASS: high-pass(lowHz) in series with low-pass(highHz)  -> band-pass.
+        // REJECT: low-pass(lowHz) in parallel with high-pass(highHz) -> band-reject.
+        const double hpFreq = reject ? highHz : lowHz;
+        const double lpFreq = reject ? lowHz   : highHz;
         for (int k = 0; k < sections; ++k)
         {
-            mHp[k].setParams(lowHz, mQ[k]);
-            mLp[k].setParams(highHz, mQ[k]);
+            mHp[k].setParams(hpFreq, mQ[k]);
+            mLp[k].setParams(lpFreq, mQ[k]);
         }
     }
 
@@ -129,6 +133,28 @@ public:
             x = lo;
         }
         return x;
+    }
+
+    // Band-reject: low-pass branch (passes below lowHz) added to a high-pass
+    // branch (passes above highHz). The two branches share the same section
+    // filters (already parameterised for reject mode), each cascaded per pole.
+    inline float processReject(float x) noexcept
+    {
+        float lpAcc = x;
+        for (int k = 0; k < mSections; ++k)
+        {
+            float lo, b, h;
+            mLp[k].process(lpAcc, lo, b, h);
+            lpAcc = lo;
+        }
+        float hpAcc = x;
+        for (int k = 0; k < mSections; ++k)
+        {
+            float lo, b, h;
+            mHp[k].process(hpAcc, lo, b, h);
+            hpAcc = h;
+        }
+        return lpAcc + hpAcc;
     }
 
 private:
@@ -152,6 +178,8 @@ public:
         float  gainR = 1.0f;
 
         bool   linked   = false;
+        bool   rejectL  = false;  // true = REJECT (band-reject), false = PASS (band-pass)
+        bool   rejectR  = false;
         float  mix      = 1.0f;
         float  agAmount[4]    = { 0.1f, 0.1f, 0.1f, 0.1f }; // per color, 0..1
         double agPeriodSec[4] = { 1.0, 1.0, 1.0, 1.0 };     // per color, seconds per random step
@@ -211,6 +239,7 @@ public:
             mParams.bwR      = mParams.bwL;
             mParams.slopeDbR = mParams.slopeDbL;
             mParams.gainR    = mParams.gainL;
+            mParams.rejectR  = mParams.rejectL;
             mParams.agEnableFreqR = mParams.agEnableFreqL; mParams.agColorFreqR = mParams.agColorFreqL;
             mParams.agEnableBwR   = mParams.agEnableBwL;   mParams.agColorBwR   = mParams.agColorBwL;
             mParams.agEnableGainR = mParams.agEnableGainL; mParams.agColorGainR = mParams.agColorGainL;
@@ -231,6 +260,8 @@ public:
         }
         mCh[0].setTarget(mParams.freqL, mParams.bwL, mParams.slopeDbL);
         mCh[1].setTarget(mParams.freqR, mParams.bwR, mParams.slopeDbR);
+        mCh[0].reject = mParams.rejectL;
+        mCh[1].reject = mParams.rejectR;
     }
     void updateSmoothing(int blockSize) noexcept
     {
@@ -333,7 +364,7 @@ private:
             smFreq += (targetFreq - smFreq) * coef;
             smBw   += (targetBw - smBw) * coef;
             halfBw = std::pow(2.0, smBw * 0.5);
-            chain.update(smFreq / halfBw, smFreq * halfBw, slopeDb);
+            chain.update(smFreq / halfBw, smFreq * halfBw, slopeDb, reject);
         }
         inline float process(float x, double modFreqOct, double modBwOct, double sampleRate) noexcept
         {
@@ -341,13 +372,14 @@ private:
             {
                 const double f = std::clamp(smFreq * std::exp2(modFreqOct), 20.0, sampleRate * 0.49);
                 const double hb = halfBw * std::exp2(modBwOct * 0.5);
-                chain.update(f / hb, f * hb, slopeDb);
+                chain.update(f / hb, f * hb, slopeDb, reject);
             }
-            return chain.process(x);
+            return reject ? chain.processReject(x) : chain.process(x);
         }
         double targetFreq = 1000.0, targetBw = 1.0;
         double smFreq = 1000.0, smBw = 1.0, halfBw = 1.0;
         double slopeDb = 96.0;
+        bool   reject = false;
         ChannelChain chain;
     };
 

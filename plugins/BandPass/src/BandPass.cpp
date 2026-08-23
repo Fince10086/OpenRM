@@ -531,8 +531,19 @@ protected:
     FormatValue(ds);
 
     const IRECT hdr = TextRect();
-    mAgSwatchRect = IRECT(hdr.MW() - AG_SWATCH * 0.5f, mRECT.T + kPlotTopInset * 0.5f - AG_SWATCH * 0.5f,
-                          hdr.MW() + AG_SWATCH * 0.5f, mRECT.T + kPlotTopInset * 0.5f + AG_SWATCH * 0.5f);
+
+    // Random swatch sits directly above the GAIN title. The title is drawn
+    // rotated 90deg and bottom-aligned, so its on-screen height equals the
+    // unrotated text width (ZH vs EN labels differ). Measure unrotated and
+    // derive the top edge manually - the framework's rotated MeasureText is
+    // unreliable for anchoring.
+    IRECT m;
+    g.MeasureText(IText(20, COL_900(), kFontSemiBold, EAlign::Center, EVAlign::Middle),
+                  mHeaderLabel.Get(), m);
+    const float titleH = m.W();  // rotated 90deg: on-screen height = unrotated width
+    const float swatchCY = hdr.B - titleH - AG_SWATCH_GAP - AG_SWATCH * 0.5f;
+    mAgSwatchRect = IRECT(hdr.MW() - AG_SWATCH * 0.5f, swatchCY - AG_SWATCH * 0.5f,
+                          hdr.MW() + AG_SWATCH * 0.5f, swatchCY + AG_SWATCH * 0.5f);
     g.FillRect(mAgMapOn ? AgColor(mAgMapColor) : AgColorDim(mAgMapColor),
                mAgSwatchRect.GetPadded(-1.f));
     g.DrawText(IText(20, COL_700(), kFontRegular, EAlign::Center, EVAlign::Top, 90.f),
@@ -730,9 +741,9 @@ public:
     const int theme = ThemeMode();
     const float L = mCard.L + kPad;
 
-    g.DrawText(IText(kTitleSize, COL_900(), kFontBold, EAlign::Near, EVAlign::Middle),
+    g.DrawText(IText(kTitleSize, COL_900(), kFontSemiBold, EAlign::Near, EVAlign::Middle),
                orm::Tr(orm::kTxtLanguage, lang), IRECT(L, mCard.T + kLangTitleY, mCard.R - kPad, mCard.T + kLangTitleY + kTitleSize));
-    g.DrawText(IText(kTitleSize, COL_900(), kFontBold, EAlign::Near, EVAlign::Middle),
+    g.DrawText(IText(kTitleSize, COL_900(), kFontSemiBold, EAlign::Near, EVAlign::Middle),
                orm::Tr(orm::kTxtTheme, lang), IRECT(L, mCard.T + kThemeTitleY, mCard.R - kPad, mCard.T + kThemeTitleY + kTitleSize));
 
     DrawButton(g, mLangBtns[0],  orm::Tr(orm::kTxtChinese, lang), lang == orm::kLangZH, mHover == kHoverLangZh, kFontSemiBold);
@@ -740,14 +751,34 @@ public:
     DrawButton(g, mThemeBtns[0], orm::Tr(orm::kTxtDark,  lang), theme == 1, mHover == kHoverThemeDark);
     DrawButton(g, mThemeBtns[1], orm::Tr(orm::kTxtLight, lang), theme == 0, mHover == kHoverThemeLight);
 
-    DrawSliderHeader(g, mSliderHeader[0], orm::Tr(orm::kTxtHue, lang),        HueLabel(lang));
+    const float sw = AG_SWATCH;
+    // Hue swatch: solid color of the current hue, slightly desaturated so it
+    // is not overpoweringly bright.
+    const IRECT hueSw(mSliderHeader[0].L, mSliderHeader[0].MH() - sw * 0.5f,
+                      mSliderHeader[0].L + sw, mSliderHeader[0].MH() + sw * 0.5f);
+    g.FillRect(HSBToIColor(ThemeHue(), 0.85f, 1.f), hueSw.GetPadded(-1.f));
+    DrawSliderHeader(g, mSliderHeader[0], orm::Tr(orm::kTxtHue, lang), HueLabel(lang),
+                     mSliderHeader[0].L + sw + AG_SWATCH_GAP);
     DrawSlider(g, mSliderTrack[0], HueNorm());
-    DrawSliderHeader(g, mSliderHeader[1], orm::Tr(orm::kTxtSaturation, lang), SatLabel(lang));
+
+    // Saturation swatch: stacked bands showing the current saturation level at
+    // different brightness values (bright -> dark).
+    const IRECT satSw(mSliderHeader[1].L, mSliderHeader[1].MH() - sw * 0.5f,
+                      mSliderHeader[1].L + sw, mSliderHeader[1].MH() + sw * 0.5f);
+    for (int i = 0; i < kNumSat; ++i)
+    {
+      const float segH = satSw.H() / kNumSat;
+      const IRECT seg(satSw.L, satSw.T + i * segH, satSw.R, satSw.T + (i + 1.f) * segH);
+      const float b = 1.f - 0.25f * (float) i;  // 1.0, 0.75, 0.5, 0.25
+      g.FillRect(HSBToIColor(ThemeHue(), ThemeSatMax() / 100.f, b), seg);
+    }
+    DrawSliderHeader(g, mSliderHeader[1], orm::Tr(orm::kTxtSaturation, lang), SatLabel(lang),
+                     mSliderHeader[1].L + sw + AG_SWATCH_GAP);
     DrawSlider(g, mSliderTrack[1], SatNorm());
 
     if (mHasAudio)
     {
-      g.DrawText(IText(kTitleSize, COL_900(), kFontBold, EAlign::Near, EVAlign::Middle),
+      g.DrawText(IText(kTitleSize, COL_900(), kFontSemiBold, EAlign::Near, EVAlign::Middle),
                  orm::Tr(orm::kTxtAudio, lang), IRECT(L, mCard.T + kAudioTitleY, mCard.R - kPad, mCard.T + kAudioTitleY + kTitleSize));
       for (int i = 0; i < 2; ++i)
         DrawDeviceRow(g, mAudioRow[i], orm::Tr(i == 0 ? orm::kTxtAudioInput : orm::kTxtAudioOutput, lang),
@@ -866,10 +897,10 @@ private:
     g.DrawText(IText(20, fg, font ? font : kFontSemiBold, EAlign::Center, EVAlign::Middle), label, b);
   }
 
-  void DrawSliderHeader(IGraphics& g, const IRECT& hdr, const char* title, const char* value)
+  void DrawSliderHeader(IGraphics& g, const IRECT& hdr, const char* title, const char* value, float titleL)
   {
-    g.DrawText(IText(kHeaderFontSize, COL_900(), kFontSemiBold, EAlign::Near, EVAlign::Middle),
-               title, IRECT(hdr.L, hdr.T, hdr.MW(), hdr.B));
+    g.DrawText(IText(kHeaderFontSize, COL_900(), kFontRegular, EAlign::Near, EVAlign::Middle),
+               title, IRECT(titleL, hdr.T, hdr.MW(), hdr.B));
     g.DrawText(IText(kHeaderFontSize, COL_700(), kFontRegular, EAlign::Far, EVAlign::Middle),
                value, IRECT(hdr.MW(), hdr.T, hdr.R, hdr.B));
   }
@@ -923,7 +954,7 @@ private:
   {
     if (hover)
       g.FillRect(COL_300(), r);
-    const IText labelTxt(20, COL_900(), kFontSemiBold, EAlign::Near, EVAlign::Middle);
+    const IText labelTxt(20, COL_900(), kFontRegular, EAlign::Near, EVAlign::Middle);
     g.DrawText(labelTxt, label, r);
     IRECT labelBox = r;
     g.MeasureText(labelTxt, label, labelBox);
@@ -1050,6 +1081,9 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
       GetParam(r.rateIdx)->InitDouble(r.rateName, kDefaultRate[i], 0.01, 60., 0.01, "", 0, "", IParam::ShapeExp());
     }
   }
+
+  GetParam(kPassL)->InitBool("Pass L", true);
+  GetParam(kPassR)->InitBool("Pass R", true);
 
   for (int i = 0; i < kNumPresets; ++i)
   {
@@ -1220,13 +1254,14 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
     constexpr float kSliderH   = 42.f;
     constexpr float kPanelR    = kCol2X + kBtnW;
 
-    auto padHooks = [&](int kF, int kB, int kSlope,
+    auto padHooks = [&](int kF, int kB, int kSlope, int kPass,
                         int kEnFreq, int kColFreq, int kEnBw, int kColBw) -> FilterNodePad::Hooks {
       return FilterNodePad::Hooks{
         [this, kF, kB](int id, double v) { EditCorner(kF, kB, id, v); },
         [this, kSlope](int slopeDb) { SetSlopeFromMenu(kSlope, slopeDb); },
         [this, kEnFreq, kEnBw](int id) { ToggleAgMap(id == kCornerCenter ? kEnFreq : kEnBw); },
         [this, kColFreq, kColBw](int id, int c) { SetAgMapColor(id == kCornerCenter ? kColFreq : kColBw, c); },
+        [this, kPass]() { TogglePass(kPass); },
       };
     };
 
@@ -1239,7 +1274,7 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
     };
 
     mPadL = new FilterNodePad(IRECT(20, 30, 668, 210), { kFreqL, kBwL }, "LEFT", style,
-                              padHooks(kFreqL, kBwL, kSlopeL, kAgEnableFreqL, kAgColorFreqL, kAgEnableBwL, kAgColorBwL));
+                              padHooks(kFreqL, kBwL, kSlopeL, kPassL, kAgEnableFreqL, kAgColorFreqL, kAgEnableBwL, kAgColorBwL));
     pGraphics->AttachControl(mPadL, kCtrlTagPadL);
     bindText(orm::kTxtLeft, [this](const char* s) {
       mPadL->SetSideLabel(mMonoDisplay ? orm::Tr(orm::kTxtMono, orm::UILang()) : s);
@@ -1247,7 +1282,6 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
     bindText(orm::kTxtCenter, [this](const char* s) { mPadL->SetCenterPrefix(s); });
     bindText(orm::kTxtBandwidth, [this](const char* s) { mPadL->SetBwPrefix(s); });
     bindText(orm::kTxtSlope, [this](const char* s) { mPadL->SetSlopePrefix(s); });
-    bindTip(mPadL, orm::kTxtTipPad);
     mBandL = new BandRangeSlider(IRECT(20, 216, 668, 262), { kFreqL, kBwL }, bandHooks(kFreqL, kBwL));
     pGraphics->AttachControl(mBandL);
     bindText(orm::kTxtLowCut, [this](const char* s) { mBandL->SetLowPrefix(s); });
@@ -1255,13 +1289,12 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
     bindTip(mBandL, orm::kTxtTipBand);
 
     mPadR = new FilterNodePad(IRECT(20, 288, 668, 468), { kFreqR, kBwR }, "RIGHT", style,
-                              padHooks(kFreqR, kBwR, kSlopeR, kAgEnableFreqR, kAgColorFreqR, kAgEnableBwR, kAgColorBwR));
+                              padHooks(kFreqR, kBwR, kSlopeR, kPassR, kAgEnableFreqR, kAgColorFreqR, kAgEnableBwR, kAgColorBwR));
     pGraphics->AttachControl(mPadR, kCtrlTagPadR);
     bindText(orm::kTxtRight, [this](const char* s) { mPadR->SetSideLabel(s); });
     bindText(orm::kTxtCenter, [this](const char* s) { mPadR->SetCenterPrefix(s); });
     bindText(orm::kTxtBandwidth, [this](const char* s) { mPadR->SetBwPrefix(s); });
     bindText(orm::kTxtSlope, [this](const char* s) { mPadR->SetSlopePrefix(s); });
-    bindTip(mPadR, orm::kTxtTipPad);
     mBandR = new BandRangeSlider(IRECT(20, 474, 668, 520), { kFreqR, kBwR }, bandHooks(kFreqR, kBwR));
     pGraphics->AttachControl(mBandR);
     bindText(orm::kTxtLowCut, [this](const char* s) { mBandR->SetLowPrefix(s); });
@@ -1637,6 +1670,8 @@ orm::BandPassCore::Params ORMBandPass::CollectParams() const
   p.bwR    = BwMultToOct(GetParam(kBwR)->Value());
   p.gainR  = static_cast<float>(std::pow(10., GetParam(kGainR)->Value() / 20.));
   p.linked = GetParam(kLink)->Value() > 0.5;
+  p.rejectL = GetParam(kPassL)->Value() < 0.5;
+  p.rejectR = GetParam(kPassR)->Value() < 0.5;
   p.mix    = static_cast<float>(GetParam(kMix)->Value());
   {
     const int kAmountParams[4] = { kAgAmount, kAgAmountY, kAgAmountB, kAgAmountG };
@@ -1693,6 +1728,7 @@ const std::pair<int, int> kLRParamPairs[] = {
   { kAgEnableFreqL, kAgEnableFreqR }, { kAgColorFreqL, kAgColorFreqR },
   { kAgEnableBwL,   kAgEnableBwR },   { kAgColorBwL,   kAgColorBwR },
   { kAgEnableGainL, kAgEnableGainR }, { kAgColorGainL, kAgColorGainR },
+  { kPassL, kPassR },
 };
 
 int LeftMirrorOf(int idx)
@@ -1782,6 +1818,15 @@ void ORMBandPass::ToggleAgMap(int enableParamIdx)
   RefreshAfterEdit();
 }
 
+void ORMBandPass::TogglePass(int passIdx)
+{
+  mFading = false;
+  MaybePushGestureUndo();
+  SetParamFromEditor(passIdx, GetParam(passIdx)->Value() > 0.5 ? 0. : 1.);
+  MirrorLinkedParams(passIdx);
+  RefreshAfterEdit();
+}
+
 void ORMBandPass::SetAgMapColor(int colorParamIdx, int colorIdx)
 {
   const bool changed = GetParam(colorParamIdx)->Int() != colorIdx;
@@ -1820,6 +1865,8 @@ void ORMBandPass::UpdateAgMaps()
     mPadL->SetAgMap(mapOn(kAgEnableFreqL), color(kAgColorFreqL), mapOn(kAgEnableBwL), color(kAgColorBwL));
   if (mPadR)
     mPadR->SetAgMap(mapOn(kAgEnableFreqR), color(kAgColorFreqR), mapOn(kAgEnableBwR), color(kAgColorBwR));
+  if (mPadL) mPadL->SetPass(mapOn(kPassL));
+  if (mPadR) mPadR->SetPass(mapOn(kPassR));
   if (mGainSliderL) mGainSliderL->SetAgMapState(mapOn(kAgEnableGainL), color(kAgColorGainL));
   if (mGainSliderR) mGainSliderR->SetAgMapState(mapOn(kAgEnableGainR), color(kAgColorGainR));
   if (mMixSlider)   mMixSlider->SetAgMapState(mapOn(kAgEnableMix), color(kAgColorMix));

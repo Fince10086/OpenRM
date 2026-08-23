@@ -74,6 +74,8 @@ enum EText
   kTxtAudio,
   kTxtAudioInput,
   kTxtAudioOutput,
+  kTxtPass,
+  kTxtReject,
   kNumTexts
 };
 
@@ -82,12 +84,12 @@ inline const char* Tr(int id, int lang)
   static const char* const kTable[kNumLanguages][kNumTexts] =
   {
     {
-      "PRESETS", "RANDOM", "MORPH", "RANGE", "SPEED", "MIX",
-      "GAIN L", "GAIN R", "CENTER", "BANDWIDTH", "SLOPE", "LOWCUT", "HIGHCUT",
+      "PRESETS", "RANDOM", "Morph", "Range", "Speed", "MIX",
+      "GAIN L", "GAIN R", "CENTER", "WIDTH", "SLOPE", "LOWCUT", "HIGHCUT",
       "LEFT", "RIGHT", "MONO", "LINK", "FLIP", "L->R", "R->L",
       "UNDO", "REDO", "SAVE", "LOAD",
       "LANGUAGE", "DARK", "LIGHT", "Theme Color", "SETTINGS",
-      "THEME", "HUE", "SATURATION", "NONE", "LOW", "MED", "HIGH", "中文",
+      "THEME", "Hue", "Saturation", "NONE", "LOW", "MED", "HIGH", "中文",
       "Preset %d",
       "Drag to set center frequency and bandwidth",
       "Drag the handles to set the low and high cut",
@@ -107,10 +109,11 @@ inline const char* Tr(int id, int lang)
       "Click: toggle random / Right-click: color",
       "Choose the random color to edit",
       "AUDIO", "Input", "Output",
+      "BP", "BR",
     },
     {
       "预设", "随机", "渐变", "范围", "速度", "混合",
-      "增益 L", "增益 R", "中心", "带宽", "滚降", "低切", "高切",
+      "增益 L", "增益 R", "中心", "宽度", "滚降", "低切", "高切",
       "LEFT", "RIGHT", "MONO", "同步", "翻转", "左→右", "右→左",
       "撤销", "重做", "保存", "读取",
       "语言", "深色", "浅色", "主题色", "设置",
@@ -134,6 +137,7 @@ inline const char* Tr(int id, int lang)
       "点击：开关随机 / 右键：选颜色",
       "选择要编辑的随机颜色",
       "音频", "输入", "输出",
+      "带通", "带阻",
     },
   };
   return kTable[lang][id];

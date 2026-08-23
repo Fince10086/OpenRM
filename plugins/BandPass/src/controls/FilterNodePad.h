@@ -23,6 +23,7 @@ public:
     std::function<void(int slopeDb)> editSlope;
     std::function<void(int cornerId)> agToggle;
     std::function<void(int cornerId, int colorIdx)> agSetColor;
+    std::function<void()> togglePass;
   };
 
   using TDataPacket = std::array<float, 4096>;
@@ -94,6 +95,12 @@ public:
 
   void SetSideLabel(const char* s) { mSideLabel.Set(s); SetDirty(false); }
 
+  void SetPass(bool pass) { mPass = pass; SetDirty(false); }
+
+  // PASS/REJECT toggle button, laid out dynamically just left of the WIDTH
+  // corner text (updated on each draw from the measured text widths).
+  IRECT PassRejectRect() const { return mPassRejectRect; }
+
   // Mono-output mode: only a washed-out gradient background remains, everything
   // else (spectrum, nodes, corner texts, swatches, label) is hidden and inert.
   void SetGhost(bool ghost)
@@ -134,12 +141,41 @@ public:
     DrawCorner(g, kCornerCenter);
     DrawCorner(g, kCornerBw);
     DrawSlope(g);
+    DrawPassToggle(g);
     DrawSideLabel(g);
+  }
+
+  void OnMouseOver(float x, float y, const IMouseMod& mod) override
+  {
+    // Hover highlight for the PASS/REJECT button must track only the button's
+    // own rect - the control-level mouse-over covers the whole pad.
+    const bool over = mPassRejectRect.Contains(x, y);
+    if (over != mPassBtnHover)
+    {
+      mPassBtnHover = over;
+      SetDirty(false);
+    }
+    IVXYPadControl::OnMouseOver(x, y, mod);
+  }
+
+  void OnMouseOut() override
+  {
+    if (mPassBtnHover)
+    {
+      mPassBtnHover = false;
+      SetDirty(false);
+    }
+    IVXYPadControl::OnMouseOut();
   }
 
   void OnMouseDown(float x, float y, const IMouseMod& mod) override
   {
     if (mGhost) return;
+    if (PassRejectRect().Contains(x, y))
+    {
+      if (!mod.R && mHooks.togglePass) mHooks.togglePass();
+      return;
+    }
     if (mSlopeRect.Contains(x, y))
     {
       if (!mod.R) OpenSlopeMenu();
@@ -292,6 +328,7 @@ public:
     for (int id : { kCornerCenter, kCornerBw })
       if (CornerRect(id).Contains(x, y)) return true;
     if (mSlopeRect.Contains(x, y)) return true;
+    if (PassRejectRect().Contains(x, y)) return true;
     if (SideLabelRect().Contains(x, y)) return true;
     return false;
   }
@@ -477,6 +514,38 @@ private:
     g.DrawText(t, value.Get(), IRECT(x0 + m1.W() + LABEL_VALUE_GAP, r.T, x0 + totalW, r.B));
   }
 
+  // PASS/REJECT flat toggle: placed dynamically just left of the WIDTH corner
+  // text with a fixed gap (not a fixed x position), width fits its own label,
+  // and the label uses the same 20px font as the text outside the button.
+  // Styled like the LINK button (flat fill block + centered text).
+  void DrawPassToggle(IGraphics& g)
+  {
+    const IText t(20, COL_900(), kFontSemiBold, EAlign::Center, EVAlign::Middle);
+    const char* label = mPass ? orm::Tr(orm::kTxtPass, orm::UILang())
+                              : orm::Tr(orm::kTxtReject, orm::UILang());
+    IRECT m;
+    g.MeasureText(t, label, m);
+    const float btnW = m.W() + kPassBtnPad * 2.f;
+
+    // The WIDTH prefix text is right-aligned to end at
+    // valueLeft - LABEL_VALUE_GAP (see DrawCorner); the button sits kPassGap
+    // px to the left of that prefix's measured left edge.
+    const float prefixRight = mCornerValueRect[1].L - LABEL_VALUE_GAP;
+    g.MeasureText(t, mBwPrefix.Get(), m);
+    const float prefixLeft = prefixRight - m.W();
+    const IRECT b(prefixLeft - kPassGap - btnW, mWidgetBounds.T,
+                  prefixLeft - kPassGap, mWidgetBounds.T + kCornerTextH);
+    mPassRejectRect = b;
+
+    // PASS (band-pass) = flat gray block, REJECT (band-reject) = filled dark.
+    // Hover uses the button's own hit rect, not the whole pad.
+    const bool hover = mPassBtnHover;
+    const IColor fill = mPass ? (hover ? COL_500() : COL_300()) : COL_900();
+    g.FillRect(fill, b.GetPadded(-1.f));
+    const IText bt(20, mPass ? COL_900() : COL_100(), kFontSemiBold, EAlign::Center, EVAlign::Middle);
+    g.DrawText(bt, label, b);
+  }
+
   void GetSlopeValue(WDL_String& out) const
   {
     char buf[32];
@@ -540,10 +609,9 @@ private:
 
   static void FormatFreq(char* b, int n, double hz, bool withUnit)
   {
+    // Always show hertz with 1 Hz precision, never switch to kHz.
     const char* u = withUnit ? "Hz" : "";
-    if (hz >= 10000.) std::snprintf(b, n, "%.1fk%s", hz / 1000., u);
-    else if (hz >= 1000.) std::snprintf(b, n, "%.2fk%s", hz / 1000., u);
-    else std::snprintf(b, n, "%.0f%s", hz, u);
+    std::snprintf(b, n, "%.0f%s", hz, u);
   }
 
   static bool ParseFreq(const char* s, double& hz)
@@ -559,6 +627,8 @@ private:
 
   static constexpr float kCornerW = 170.f;
   static constexpr float kCornerTextH = 22.f;
+  static constexpr float kPassGap   = 8.f;   // fixed gap between button and WIDTH text
+  static constexpr float kPassBtnPad = 6.f;  // horizontal padding inside the button
   static constexpr float kSideW    = 24.f;
   static constexpr float kSideH    = 0.f;
   static constexpr float kTopPad   = 30.f;
@@ -575,7 +645,7 @@ private:
   WDL_String mSideLabel;
   bool mGhost = false;
   WDL_String mCenterPrefix { "CENTER" };
-  WDL_String mBwPrefix { "BANDWIDTH" };
+  WDL_String mBwPrefix { "WIDTH" };
   WDL_String mSlopePrefix { "SLOPE" };
   IRECT mCornerValueRect[2];
   IRECT mSlopeRect;
@@ -585,6 +655,9 @@ private:
   int   mSlopeIndex = kSlopeDefaultIdx;
   bool  mAgMapOn[2] = { false, false };
   int   mAgMapColor[2] = { 0, 0 };
+  bool  mPass = true;  // true = PASS (band-pass), false = REJECT (band-reject)
+  bool  mPassBtnHover = false;  // hover over the button rect only, not the pad
+  IRECT mPassRejectRect;  // updated on draw, used for hit testing
   IRECT mAgSwatchRect[2];
   float mAgFreqOct = 0.f;
   float mAgBwOct = 0.f;

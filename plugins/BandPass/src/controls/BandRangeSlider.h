@@ -234,10 +234,9 @@ private:
 
   static void FormatFreq(char* b, int n, double hz, bool withUnit)
   {
+    // Always show hertz with 1 Hz precision, never switch to kHz.
     const char* u = withUnit ? "Hz" : "";
-    if (hz >= 10000.) std::snprintf(b, n, "%.1fk%s", hz / 1000., u);
-    else if (hz >= 1000.) std::snprintf(b, n, "%.2fk%s", hz / 1000., u);
-    else std::snprintf(b, n, "%.0f%s", hz, u);
+    std::snprintf(b, n, "%.0f%s", hz, u);
   }
 
   static bool ParseFreq(const char* s, double& hz)

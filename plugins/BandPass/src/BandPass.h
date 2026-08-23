@@ -49,6 +49,8 @@ enum EParams
   kAgRateB,
   kAgAmountG,
   kAgRateG,
+  kPassL,
+  kPassR,
   kNumParams
 };
 
@@ -174,6 +176,7 @@ private:
   void EditBand(int kFreq, int kBw, double lowNorm, double highNorm);
   void ClampAndSet(int kFreq, int kBw, double centerHz, double bw);
   void SetSlopeFromMenu(int slopeParamIdx, int slopeDb);
+  void TogglePass(int passIdx);
 
   ParamSnapshot Snapshot() const;
   void ApplySnapshot(const ParamSnapshot& s);
