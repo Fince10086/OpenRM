@@ -863,7 +863,7 @@ private:
                                  : COL_300();
     g.FillRect(fill, b);
     const IColor fg = active ? COL_100() : COL_900();
-    g.DrawText(IText(16, fg, font ? font : kFontSemiBold, EAlign::Center, EVAlign::Middle), label, b);
+    g.DrawText(IText(20, fg, font ? font : kFontSemiBold, EAlign::Center, EVAlign::Middle), label, b);
   }
 
   void DrawSliderHeader(IGraphics& g, const IRECT& hdr, const char* title, const char* value)
@@ -923,11 +923,13 @@ private:
   {
     if (hover)
       g.FillRect(COL_300(), r);
-    const IText labelTxt(16, COL_900(), kFontSemiBold, EAlign::Near, EVAlign::Middle);
+    const IText labelTxt(20, COL_900(), kFontSemiBold, EAlign::Near, EVAlign::Middle);
     g.DrawText(labelTxt, label, r);
     IRECT labelBox = r;
     g.MeasureText(labelTxt, label, labelBox);
-    const IText valTxt(16, COL_700(), kFontRegular, EAlign::Far, EVAlign::Middle);
+    // Device names are dynamic and may contain glyphs missing from the subset
+    // Mixed fonts - render them with the system sans-serif fallback font.
+    const IText valTxt(20, COL_700(), kFontSystem, EAlign::Far, EVAlign::Middle);
     const IRECT valRect(labelBox.R + 12.f, r.T, r.R, r.B);
     WDL_String fitted;
     FitText(g, valTxt, device, valRect.W(), fitted);
@@ -1159,6 +1161,41 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
     pGraphics->LoadFont(kFontRegular, MIXED_FN);
     pGraphics->LoadFont(kFontSemiBold, MIXED_SB_FN);
     pGraphics->LoadFont(kFontBold, MIXED_BD_FN);
+
+    // System sans-serif fallback for dynamic text (e.g. audio device names)
+    // whose glyphs may be missing from the subset Mixed fonts.
+    // NOTE: IGraphics::LoadFont(fontName, style) is unreliable on macOS here -
+    // PingFang.ttc cannot be parsed by NanoVG's stb_truetype and the ttc face
+    // style matching in GetFaceIdx fails, so LoadFont returns false and any
+    // DrawText/MeasureText with that font ID asserts. Instead we read system
+    // font files directly and load from memory, with a Mixed-font fallback so
+    // kFontSystem is ALWAYS bound (never crashes).
+    auto loadFontFile = [](IGraphics* g, const char* id, const char* path) -> bool {
+      FILE* f = std::fopen(path, "rb");
+      if (!f) return false;
+      std::fseek(f, 0, SEEK_END);
+      const long sz = std::ftell(f);
+      std::fseek(f, 0, SEEK_SET);
+      if (sz <= 0) { std::fclose(f); return false; }
+      std::vector<char> buf(static_cast<size_t>(sz));
+      const bool ok = std::fread(buf.data(), 1, buf.size(), f) == buf.size();
+      std::fclose(f);
+      return ok && g->LoadFont(id, buf.data(), static_cast<int>(buf.size()));
+    };
+    bool sysFontOk = false;
+#if defined(OS_MAC)
+    static const char* kSysFontCandidates[] = {
+      "/System/Library/Fonts/Supplemental/Arial Unicode.ttf", // single ttf, full CJK
+      "/System/Library/Fonts/STHeiti Medium.ttc",             // Chinese systems
+      "/System/Library/Fonts/HelveticaNeue.ttc",              // any macOS (latin only)
+    };
+    for (const char* p : kSysFontCandidates)
+      if ((sysFontOk = loadFontFile(pGraphics, kFontSystem, p))) break;
+#else
+    sysFontOk = pGraphics->LoadFont(kFontSystem, "Segoe UI", ETextStyle::Normal);
+#endif
+    if (!sysFontOk)
+      pGraphics->LoadFont(kFontSystem, MIXED_FN);
 
     const IVStyle style   = MakeORMStyle();
     const IVStyle btnStyle= MakeButtonStyle();

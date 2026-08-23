@@ -11,6 +11,9 @@ namespace iplug { namespace igraphics {
 constexpr const char* kFontRegular  = "Mixed";
 constexpr const char* kFontSemiBold = "Mixed-SemiBold";
 constexpr const char* kFontBold     = "Mixed-Bold";
+// System sans-serif fallback for dynamic text (e.g. audio device names) whose
+// characters can't be known at build time and may be missing from Mixed fonts.
+constexpr const char* kFontSystem = "System";
 
 inline int& ThemeMode()   { static int mode = 0; return mode; }
 inline int& ThemeHue()    { static int hue = 45; return hue; }
