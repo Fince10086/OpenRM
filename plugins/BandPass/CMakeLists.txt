@@ -30,3 +30,23 @@ iplug_add_plugin(${PROJECT_NAME}
 )
 
 target_include_directories(_${PROJECT_NAME}-base INTERFACE "${IPLUG2_DIR}/Dependencies/Extras")
+
+if(APPLE)
+  find_program(IPLUG2_CODESIGN_EXEC codesign)
+  if(IPLUG2_CODESIGN_EXEC AND TARGET ${PROJECT_NAME}-au AND TARGET ${PROJECT_NAME}-vst3)
+    set(_sig_src_au  "${CMAKE_BINARY_DIR}/out/${PROJECT_NAME}.component")
+    set(_sig_dst_au  "$ENV{HOME}/Library/Audio/Plug-Ins/Components/${PROJECT_NAME}.component")
+    set(_sig_src_v3  "${CMAKE_BINARY_DIR}/out/${PROJECT_NAME}.vst3")
+    set(_sig_dst_v3  "$ENV{HOME}/Library/Audio/Plug-Ins/VST3/${PROJECT_NAME}.vst3")
+    add_custom_target(${PROJECT_NAME}-final-sign ALL
+      COMMAND ${IPLUG2_CODESIGN_EXEC} --force --deep --sign - "${_sig_src_au}"
+      COMMAND ${CMAKE_COMMAND} -E rm -rf "${_sig_dst_au}"
+      COMMAND ${CMAKE_COMMAND} -E copy_directory "${_sig_src_au}" "${_sig_dst_au}"
+      COMMAND ${IPLUG2_CODESIGN_EXEC} --force --deep --sign - "${_sig_src_v3}"
+      COMMAND ${CMAKE_COMMAND} -E rm -rf "${_sig_dst_v3}"
+      COMMAND ${CMAKE_COMMAND} -E copy_directory "${_sig_src_v3}" "${_sig_dst_v3}"
+      DEPENDS ${PROJECT_NAME}-au ${PROJECT_NAME}-vst3
+      COMMENT "Final ad-hoc sign + deploy AU/VST3 bundles"
+    )
+  endif()
+endif()
