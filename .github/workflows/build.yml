@@ -15,12 +15,25 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Cache VST3 SDK
+        id: cache-vst3
+        uses: actions/cache@v4
+        with:
+          path: third_party/iPlug2/Dependencies/IPlug/VST3_SDK
+          key: vst3sdk-v3.8.1_build_84-${{ runner.os }}
+
       - name: VST3 SDK
+        # iPlug2 子模块强制跟踪了 VST3_SDK/README.md, checkout 后目录非空,
+        # 必须先清理再克隆, 否则 git clone 报 "already exists and is not an empty directory"
+        if: steps.cache-vst3.outputs.cache-hit != 'true'
+        shell: powershell
         run: |
+          if (Test-Path third_party/iPlug2/Dependencies/IPlug/VST3_SDK) {
+            Remove-Item -Recurse -Force third_party/iPlug2/Dependencies/IPlug/VST3_SDK
+          }
           git clone --recursive --branch v3.8.1_build_84 --shallow-submodules `
             https://github.com/steinbergmedia/vst3sdk.git `
             third_party/iPlug2/Dependencies/IPlug/VST3_SDK
-        shell: powershell
 
       - name: Configure (VS2022 x64)
         run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64
@@ -47,8 +60,19 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Cache VST3 SDK
+        id: cache-vst3
+        uses: actions/cache@v4
+        with:
+          path: third_party/iPlug2/Dependencies/IPlug/VST3_SDK
+          key: vst3sdk-v3.8.1_build_84-${{ runner.os }}
+
       - name: VST3 SDK
-        run: sh scripts/get_vst3_sdk.sh
+        # 同 Windows: 子模块带出的 README.md 会让克隆失败, 先清理再获取
+        if: steps.cache-vst3.outputs.cache-hit != 'true'
+        run: |
+          rm -rf third_party/iPlug2/Dependencies/IPlug/VST3_SDK
+          sh scripts/get_vst3_sdk.sh
 
       - name: Configure
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
