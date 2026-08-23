@@ -210,6 +210,10 @@ public:
             mParams.freqR    = mParams.freqL;
             mParams.bwR      = mParams.bwL;
             mParams.slopeDbR = mParams.slopeDbL;
+            mParams.gainR    = mParams.gainL;
+            mParams.agEnableFreqR = mParams.agEnableFreqL; mParams.agColorFreqR = mParams.agColorFreqL;
+            mParams.agEnableBwR   = mParams.agEnableBwL;   mParams.agColorBwR   = mParams.agColorBwL;
+            mParams.agEnableGainR = mParams.agEnableGainL; mParams.agColorGainR = mParams.agColorGainL;
         }
         const struct { bool en; std::uint8_t color; } maps[kNumAgStreams] = {
             { p.agEnableFreqL, p.agColorFreqL }, { p.agEnableBwL, p.agColorBwL }, { p.agEnableGainL, p.agColorGainL },
@@ -383,14 +387,24 @@ private:
             }
             if (numCh > 1)
             {
-                if (mAgStream[kAgFreqR].active)
-                    freqOct[1] = mAgStream[kAgFreqR].walk.tick() * mAgStream[kAgFreqR].amount * (float) kAgFreqModOct;
-                if (mAgStream[kAgBwR].active)
-                    bwOct[1]   = mAgStream[kAgBwR].walk.tick() * mAgStream[kAgBwR].amount * (float) kAgBwModOct;
-                if (mAgStream[kAgGainR].active)
+                if (mParams.linked)
                 {
-                    gainDb[1]  = mAgStream[kAgGainR].walk.tick() * mAgStream[kAgGainR].amount * kAgGainModDb;
-                    gainLin[1] = std::exp(gainDb[1] * kDbToLin);
+                    freqOct[1] = freqOct[0];
+                    bwOct[1]   = bwOct[0];
+                    gainDb[1]  = gainDb[0];
+                    gainLin[1] = gainLin[0];
+                }
+                else
+                {
+                    if (mAgStream[kAgFreqR].active)
+                        freqOct[1] = mAgStream[kAgFreqR].walk.tick() * mAgStream[kAgFreqR].amount * (float) kAgFreqModOct;
+                    if (mAgStream[kAgBwR].active)
+                        bwOct[1]   = mAgStream[kAgBwR].walk.tick() * mAgStream[kAgBwR].amount * (float) kAgBwModOct;
+                    if (mAgStream[kAgGainR].active)
+                    {
+                        gainDb[1]  = mAgStream[kAgGainR].walk.tick() * mAgStream[kAgGainR].amount * kAgGainModDb;
+                        gainLin[1] = std::exp(gainDb[1] * kDbToLin);
+                    }
                 }
             }
             if (mixMod)

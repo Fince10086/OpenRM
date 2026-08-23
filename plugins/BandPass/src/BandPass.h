@@ -199,6 +199,8 @@ private:
   void CopyLtoR();
   void CopyRtoL();
   void FlipLR();
+  void ApplyLtoRParams();
+  void ApplyRtoLParams();
 
   void MirrorLinkedParams(int paramIdx);
 

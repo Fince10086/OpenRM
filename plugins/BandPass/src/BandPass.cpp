@@ -1612,6 +1612,29 @@ void ORMBandPass::RefreshAfterEdit()
   MarkStateStable();
 }
 
+namespace {
+const std::pair<int, int> kLRParamPairs[] = {
+  { kFreqL, kFreqR }, { kBwL, kBwR }, { kGainL, kGainR }, { kSlopeL, kSlopeR },
+  { kAgEnableFreqL, kAgEnableFreqR }, { kAgColorFreqL, kAgColorFreqR },
+  { kAgEnableBwL,   kAgEnableBwR },   { kAgColorBwL,   kAgColorBwR },
+  { kAgEnableGainL, kAgEnableGainR }, { kAgColorGainL, kAgColorGainR },
+};
+
+int LeftMirrorOf(int idx)
+{
+  for (const auto& pr : kLRParamPairs)
+    if (pr.second == idx) return pr.first;
+  return -1;
+}
+
+int RightMirrorOf(int idx)
+{
+  for (const auto& pr : kLRParamPairs)
+    if (pr.first == idx) return pr.second;
+  return -1;
+}
+} // namespace
+
 void ORMBandPass::EditCorner(int kFreq, int kBw, int cornerId, double value)
 {
   mFading = false;
@@ -1653,6 +1676,8 @@ void ORMBandPass::ClampAndSet(int kFreq, int kBw, double centerHz, double bw)
   if (highHz > 20000.) { highHz = 20000.; centerHz = lowHz * bw; }
   SetParamFromEditor(kFreq, centerHz);
   SetParamFromEditor(kBw, bw);
+  MirrorLinkedParams(kFreq);
+  MirrorLinkedParams(kBw);
   RefreshAfterEdit();
 }
 
@@ -1661,10 +1686,14 @@ void ORMBandPass::SetSlopeFromMenu(int slopeParamIdx, int slopeDb)
   int idx = kSlopeDefaultIdx;
   for (int i = 0; i < 4; ++i)
     if (kSlopeDb[i] == slopeDb) { idx = i; break; }
-  if (GetParam(slopeParamIdx)->Int() == idx) return;
+  const bool changed = GetParam(slopeParamIdx)->Int() != idx;
+  const int mirrorIdx = LeftMirrorOf(slopeParamIdx);
+  const bool mirrorNeeds = mirrorIdx >= 0 && GetParam(mirrorIdx)->Int() != idx;
+  if (!changed && !mirrorNeeds) return;
   mFading = false;
   MaybePushGestureUndo();
-  SetParamFromEditor(slopeParamIdx, (double) idx);
+  if (changed)
+    SetParamFromEditor(slopeParamIdx, (double) idx);
   MirrorLinkedParams(slopeParamIdx);
   RefreshAfterEdit();
 }
@@ -1674,15 +1703,23 @@ void ORMBandPass::ToggleAgMap(int enableParamIdx)
   mFading = false;
   MaybePushGestureUndo();
   SetParamFromEditor(enableParamIdx, GetParam(enableParamIdx)->Value() > 0.5 ? 0. : 1.);
+  MirrorLinkedParams(enableParamIdx);
   RefreshAfterEdit();
 }
 
 void ORMBandPass::SetAgMapColor(int colorParamIdx, int colorIdx)
 {
-  if (GetParam(colorParamIdx)->Int() == colorIdx) return;
+  const bool changed = GetParam(colorParamIdx)->Int() != colorIdx;
+  // While linked, the left channel is the source of truth: even if this
+  // (right-channel) color already matches, its left counterpart may not.
+  const int mirrorIdx = LeftMirrorOf(colorParamIdx);
+  const bool mirrorNeeds = mirrorIdx >= 0 && GetParam(mirrorIdx)->Int() != colorIdx;
+  if (!changed && !mirrorNeeds) return;
   mFading = false;
   MaybePushGestureUndo();
-  SetParamFromEditor(colorParamIdx, (double) colorIdx);
+  if (changed)
+    SetParamFromEditor(colorParamIdx, (double) colorIdx);
+  MirrorLinkedParams(colorParamIdx);
   RefreshAfterEdit();
 }
 
@@ -2128,14 +2165,35 @@ void ORMBandPass::OnDragDrop(int src, float x, float y)
     SwapSlots(src, target);
 }
 
+void ORMBandPass::ApplyLtoRParams()
+{
+  for (const auto& pr : kLRParamPairs)
+  {
+    SetParamFromEditor(pr.second, GetParam(pr.first)->Value());
+#if IPLUG_EDITOR
+    if (GetUI())
+      SendParameterValueFromDelegate(pr.second, GetParam(pr.second)->GetNormalized(), true);
+#endif
+  }
+}
+
+void ORMBandPass::ApplyRtoLParams()
+{
+  for (const auto& pr : kLRParamPairs)
+  {
+    SetParamFromEditor(pr.first, GetParam(pr.second)->Value());
+#if IPLUG_EDITOR
+    if (GetUI())
+      SendParameterValueFromDelegate(pr.first, GetParam(pr.first)->GetNormalized(), true);
+#endif
+  }
+}
+
 void ORMBandPass::CopyLtoR()
 {
   mFading = false;
   PushUndo();
-  SetParamFromEditor(kFreqR, GetParam(kFreqL)->Value());
-  SetParamFromEditor(kBwR,   GetParam(kBwL)->Value());
-  SetParamFromEditor(kGainR, GetParam(kGainL)->Value());
-  SetParamFromEditor(kSlopeR, GetParam(kSlopeL)->Value());
+  ApplyLtoRParams();
   RefreshAfterEdit();
 }
 
@@ -2143,10 +2201,7 @@ void ORMBandPass::CopyRtoL()
 {
   mFading = false;
   PushUndo();
-  SetParamFromEditor(kFreqL, GetParam(kFreqR)->Value());
-  SetParamFromEditor(kBwL,   GetParam(kBwR)->Value());
-  SetParamFromEditor(kGainL, GetParam(kGainR)->Value());
-  SetParamFromEditor(kSlopeL, GetParam(kSlopeR)->Value());
+  ApplyRtoLParams();
   RefreshAfterEdit();
 }
 
@@ -2170,27 +2225,31 @@ void ORMBandPass::MirrorLinkedParams(int paramIdx)
 {
   if (GetParam(kLink)->Value() < 0.5) return;
 
-  int mirror;
-  switch (paramIdx)
+  if (paramIdx == kLink)
   {
-    case kFreqL: mirror = kFreqR; break;
-    case kBwL:   mirror = kBwR;   break;
-    case kGainL: mirror = kGainR; break;
-    case kSlopeL: mirror = kSlopeR; break;
-    case kFreqR: mirror = kFreqL; break;
-    case kBwR:   mirror = kBwL;   break;
-    case kGainR: mirror = kGainL; break;
-    case kSlopeR: mirror = kSlopeL; break;
-    default: return;
+    ApplyLtoRParams();
+    return;
   }
 
-  if (std::fabs(GetParam(mirror)->Value() - GetParam(paramIdx)->Value()) < 1e-9) return;
-
-  SetParamFromEditor(mirror, GetParam(paramIdx)->Value());
+  const int toLeft = LeftMirrorOf(paramIdx);
+  if (toLeft >= 0 && std::fabs(GetParam(toLeft)->Value() - GetParam(paramIdx)->Value()) >= 1e-9)
+  {
+    SetParamFromEditor(toLeft, GetParam(paramIdx)->Value());
 #if IPLUG_EDITOR
-  if (GetUI())
-    SendParameterValueFromDelegate(mirror, GetParam(mirror)->GetNormalized(), true);
+    if (GetUI())
+      SendParameterValueFromDelegate(toLeft, GetParam(toLeft)->GetNormalized(), true);
 #endif
+  }
+
+  const int mirror = RightMirrorOf(paramIdx);
+  if (mirror >= 0 && std::fabs(GetParam(mirror)->Value() - GetParam(paramIdx)->Value()) >= 1e-9)
+  {
+    SetParamFromEditor(mirror, GetParam(paramIdx)->Value());
+#if IPLUG_EDITOR
+    if (GetUI())
+      SendParameterValueFromDelegate(mirror, GetParam(mirror)->GetNormalized(), true);
+#endif
+  }
 }
 
 ParamSnapshot ORMBandPass::MixSnapshots(const ParamSnapshot& a, const ParamSnapshot& b, double t) const
