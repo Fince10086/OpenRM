@@ -26,17 +26,14 @@ ctest --test-dir build       # 或直接运行 build/dsp_test
 
 APP / AU / VST3。
 
-## macOS 打开说明（网络下载的构建产物）
+## macOS 打开说明
 
-从 GitHub Actions / 网盘下载的 app 会带 macOS 的 quarantine 标记。当前产物为链接器自动签名（未做 Developer ID 公证），macOS 15+ 首次打开可能提示"无法验证开发者"或"已损坏"，任选一种方式解除：
+macOS 15+ 首次打开APP可能提示"无法验证开发者"或"已损坏"，用以下方式解除：
 
 ```sh
-# 方式一: 右键点击 app -> 打开 (仅需一次)
-# 方式二: 终端去除 quarantine 标记 (推荐, 一劳永逸)
-sudo xattr -cr /Applications/ORMBandPass.app
+sudo xattr -r -d com.apple.quarantine /Applications/ORMBandPass.app
 ```
-
-> 原因：macOS 15 (Sequoia) 起 Gatekeeper 对"ad-hoc 签名 + 网络下载"的 app 一律拦截；正式签名 + Apple 公证可彻底消除该提示（需 Apple Developer 账号）。AU/VST3 插件已做 ad-hoc 签名，装入 `~/Library/Audio/Plug-Ins/` 后可在 Logic 等宿主中加载。
+（或替换为app所在的目录）
 
 ## 参考与致谢
 
