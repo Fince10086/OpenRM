@@ -7,6 +7,7 @@
 #include "IGraphicsPopupMenu.h"
 
 #include <array>
+#include <atomic>
 #include <deque>
 #include <functional>
 #include <string>
@@ -109,6 +110,11 @@ private:
   SpectrumSTFT<2> mSpectrumL;
   SpectrumSTFT<2> mSpectrumR;
 
+  // Output channel count as last seen by the audio thread; the UI switches to
+  // a mono display (right channel ghosted) when it drops below 2.
+  std::atomic<int> mObservedNOuts {2};
+  bool mMonoDisplay = false;
+
   static constexpr int kMaxBlock = 16384;
   std::array<sample, kMaxBlock> mSpecInL {};
   std::array<sample, kMaxBlock> mSpecInR {};
@@ -206,6 +212,7 @@ private:
   void SetAgSelectedColor(int colorIdx);
   void UpdateAgMaps();
   void AgDisplayPush();
+  void ApplyMonoDisplay(bool mono);
   void ApplyLanguage();
   void ApplyTooltips();
   void ApplyTheme();

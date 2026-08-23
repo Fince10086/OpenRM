@@ -32,14 +32,30 @@ public:
   void SetLowPrefix(const char* s) { mLowPrefix.Set(s); SetDirty(false); }
   void SetHighPrefix(const char* s) { mHighPrefix.Set(s); SetDirty(false); }
 
+  // Mono-output mode: keep only a washed-out track, hide texts and handles
+  void SetGhost(bool ghost)
+  {
+    if (mGhost == ghost) return;
+    mGhost = ghost;
+    SetDirty(false);
+  }
+
   void Draw(IGraphics& g) override
   {
+    if (mGhost)
+    {
+      DrawTrackOnly(g);
+      const IColor base = COL_100();
+      g.FillRect(IColor(150, base.R, base.G, base.B), mRECT);
+      return;
+    }
     DrawHeader(g);
     DrawBand(g);
   }
 
   void OnMouseDown(float x, float y, const IMouseMod& mod) override
   {
+    if (mGhost) return;
     for (int id : { kCornerLow, kCornerHigh })
     {
       if (CutValueRect(id).Contains(x, y))
@@ -178,6 +194,14 @@ private:
     g.DrawText(tf, value.Get(), mCutValueRect[1]);
   }
 
+  void DrawTrackOnly(IGraphics& g)
+  {
+    const IRECT s = TrackRect();
+    const float y = s.MH();
+    g.FillRect(COL_300(), IRECT(mRECT.L, y - 2.f, mRECT.R, y + 2.f));
+    g.FillRect(COL_500(), IRECT(NormToX(LowNorm()), y - 2.f, NormToX(HighNorm()), y + 2.f));
+  }
+
   void DrawBand(IGraphics& g)
   {
     const IRECT s = TrackRect();
@@ -231,6 +255,7 @@ private:
   WDL_String mLowPrefix { "LOWCUT" };
   WDL_String mHighPrefix { "HIGHCUT" };
   IRECT mCutValueRect[2];
+  bool mGhost = false;
   int   mEditingCorner = -1;
   int   mActiveHandle = -1;
   float mStartX = 0.f, mStartLow = 0.f, mStartHigh = 1.f;

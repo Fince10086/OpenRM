@@ -161,6 +161,14 @@ public:
   void SetValueFormatter(std::function<void(WDL_String&)> f) { mValueFormatter = std::move(f); }
   void SetHeaderLabel(const char* s) { mHeaderLabel.Set(s); SetDirty(false); }
 
+  // Mono-output mode: only a washed-out slider track remains, no handle/text/swatch
+  void SetGhost(bool ghost)
+  {
+    if (mGhost == ghost) return;
+    mGhost = ghost;
+    SetDirty(false);
+  }
+
   struct AgHooks
   {
     std::function<void()> agToggle;
@@ -214,11 +222,18 @@ public:
   {
     g.FillRect(COL_100(), mRECT);
     DrawWidget(g);
+    if (mGhost)
+    {
+      const IColor base = COL_100();
+      g.FillRect(IColor(150, base.R, base.G, base.B), mRECT);
+      return;
+    }
     DrawHeader(g, mDirection == EDirection::Vertical ? -90.f : 0.f);
   }
 
   void OnMouseDown(float x, float y, const IMouseMod& mod) override
   {
+    if (mGhost) return;
     if (mAgHooks.agToggle && mAgSwatchRect.Contains(x, y))
     {
       if (mod.R) OpenAgColorMenu();
@@ -236,6 +251,12 @@ public:
     IVSliderControl::OnMouseDown(x, y, mod);
   }
 
+  void OnMouseDblClick(float x, float y, const IMouseMod& mod) override
+  {
+    if (mGhost) return;
+    IVSliderControl::OnMouseDblClick(x, y, mod);
+  }
+
   void DrawTrack(IGraphics& g, const IRECT& filledArea) override
   {
     const bool horiz = (mDirection == EDirection::Horizontal);
@@ -251,6 +272,7 @@ public:
 
   void DrawHandle(IGraphics& g, const IRECT& bounds) override
   {
+    if (mGhost) return;
     if (mAgMapOn && mAgGhostNorm >= 0.f)
     {
       const IRECT tb = mTrackBounds;
@@ -392,6 +414,7 @@ protected:
   WDL_String mHeaderLabel;
   const char* mHeaderFont = kFontSemiBold;
   std::function<void(WDL_String&)> mValueFormatter;
+  bool mGhost = false;
   int mHeaderSwatchColor = -1;
   bool mAgMapOn = false;
   int mAgMapColor = 0;
@@ -1134,7 +1157,9 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
     mPadL = new FilterNodePad(IRECT(20, 30, 668, 210), { kFreqL, kBwL }, "LEFT", style,
                               padHooks(kFreqL, kBwL, kSlopeL, kAgEnableFreqL, kAgColorFreqL, kAgEnableBwL, kAgColorBwL));
     pGraphics->AttachControl(mPadL, kCtrlTagPadL);
-    bindText(orm::kTxtLeft, [this](const char* s) { mPadL->SetSideLabel(s); });
+    bindText(orm::kTxtLeft, [this](const char* s) {
+      mPadL->SetSideLabel(mMonoDisplay ? orm::Tr(orm::kTxtMono, orm::UILang()) : s);
+    });
     bindText(orm::kTxtCenter, [this](const char* s) { mPadL->SetCenterPrefix(s); });
     bindText(orm::kTxtBandwidth, [this](const char* s) { mPadL->SetBwPrefix(s); });
     bindText(orm::kTxtSlope, [this](const char* s) { mPadL->SetSlopePrefix(s); });
@@ -1413,6 +1438,7 @@ void ORMBandPass::ProcessBlock(sample** inputs, sample** outputs, int nFrames)
 
   const int nOuts = NOutChansConnected();
   const int nIns = NInChansConnected();
+  mObservedNOuts.store(nOuts, std::memory_order_relaxed);
 
   const int nSpec = std::min(nFrames, kMaxBlock);
   if (nIns >= 2)
@@ -1684,6 +1710,18 @@ void ORMBandPass::AgDisplayPush()
 #endif
 }
 
+void ORMBandPass::ApplyMonoDisplay(bool mono)
+{
+  mMonoDisplay = mono;
+#if IPLUG_EDITOR
+  if (mPadR) mPadR->SetGhost(mono);
+  if (mGainSliderR) mGainSliderR->SetGhost(mono);
+  if (mBandR) mBandR->SetGhost(mono);
+  if (mPadL)
+    mPadL->SetSideLabel(orm::Tr(mono ? orm::kTxtMono : orm::kTxtLeft, orm::UILang()));
+#endif
+}
+
 void ORMBandPass::MigrateLegacySnapshot(ParamSnapshot& s)
 {
   if (s[kAgOn] <= 0.5) return;
@@ -1794,6 +1832,10 @@ void ORMBandPass::OnIdle()
 #if IPLUG_EDITOR
   if (mAgDeltaMailbox.consume(mAgDeltas))
     AgDisplayPush();
+
+  const int nOuts = mObservedNOuts.load(std::memory_order_relaxed);
+  if ((nOuts < 2) != mMonoDisplay)
+    ApplyMonoDisplay(nOuts < 2);
 #endif
 
   using namespace std::chrono;

@@ -27,6 +27,7 @@ enum EText
   kTxtHighCut,
   kTxtLeft,
   kTxtRight,
+  kTxtMono,
   kTxtLink,
   kTxtFlip,
   kTxtCopyLR,
@@ -82,7 +83,7 @@ inline const char* Tr(int id, int lang)
     {
       "PRESETS", "RANDOM", "MORPH", "RANGE", "SPEED", "MIX",
       "GAIN L", "GAIN R", "CENTER", "BANDWIDTH", "SLOPE", "LOWCUT", "HIGHCUT",
-      "LEFT", "RIGHT", "LINK", "FLIP", "L->R", "R->L",
+      "LEFT", "RIGHT", "MONO", "LINK", "FLIP", "L->R", "R->L",
       "UNDO", "REDO", "SAVE", "LOAD",
       "LANGUAGE", "DARK", "LIGHT", "Theme Color", "SETTINGS",
       "THEME", "HUE", "SATURATION", "NONE", "LOW", "MED", "HIGH", "中文",
@@ -109,7 +110,7 @@ inline const char* Tr(int id, int lang)
     {
       "预设", "随机", "渐变", "范围", "速度", "混合",
       "增益 L", "增益 R", "中心", "带宽", "滚降", "低切", "高切",
-      "LEFT", "RIGHT", "同步", "翻转", "左→右", "右→左",
+      "LEFT", "RIGHT", "MONO", "同步", "翻转", "左→右", "右→左",
       "撤销", "重做", "保存", "读取",
       "语言", "深色", "浅色", "主题色", "设置",
       "主题", "色相", "饱和度", "无", "低", "中", "高", "中文",

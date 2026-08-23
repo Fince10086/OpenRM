@@ -93,6 +93,15 @@ public:
   }
 
   void SetSideLabel(const char* s) { mSideLabel.Set(s); SetDirty(false); }
+
+  // Mono-output mode: only a washed-out gradient background remains, everything
+  // else (spectrum, nodes, corner texts, swatches, label) is hidden and inert.
+  void SetGhost(bool ghost)
+  {
+    if (mGhost == ghost) return;
+    mGhost = ghost;
+    SetDirty(false);
+  }
   void SetCenterPrefix(const char* s) { mCenterPrefix.Set(s); SetDirty(false); }
   void SetBwPrefix(const char* s) { mBwPrefix.Set(s); SetDirty(false); }
   void SetSlopePrefix(const char* s) { mSlopePrefix.Set(s); SetDirty(false); }
@@ -114,6 +123,13 @@ public:
   void Draw(IGraphics& g) override
   {
     g.FillRect(COL_100(), mRECT);
+    if (mGhost)
+    {
+      DrawTrack(g);
+      const IColor base = COL_100();
+      g.FillRect(IColor(150, base.R, base.G, base.B), mRECT);
+      return;
+    }
     DrawWidget(g);
     DrawCorner(g, kCornerCenter);
     DrawCorner(g, kCornerBw);
@@ -123,6 +139,7 @@ public:
 
   void OnMouseDown(float x, float y, const IMouseMod& mod) override
   {
+    if (mGhost) return;
     if (mSlopeRect.Contains(x, y))
     {
       if (!mod.R) OpenSlopeMenu();
@@ -544,6 +561,7 @@ private:
 
   Hooks mHooks;
   WDL_String mSideLabel;
+  bool mGhost = false;
   WDL_String mCenterPrefix { "CENTER" };
   WDL_String mBwPrefix { "BANDWIDTH" };
   WDL_String mSlopePrefix { "SLOPE" };
