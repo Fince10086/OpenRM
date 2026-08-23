@@ -21,32 +21,60 @@ iplug_add_plugin(${PROJECT_NAME}
     src/controls/PresetSlotControl.h
     src/PresetFileIO.h
     ${IPLUG2_DIR}/WDL/fft.c
-  RESOURCES
-    resources/fonts/Mixed-Regular.ttf
-    resources/fonts/Mixed-SemiBold.ttf
-    resources/fonts/Mixed-Bold.ttf
   FORMATS APP AU VST3
   DEFINES SAMPLE_TYPE_FLOAT
 )
+
+# 注意：字体故意不通过 iPlug2 的 RESOURCES 参数打包。iPlug2 用 CMake 的
+# MACOSX_PACKAGE_LOCATION 机制拷贝资源，实测该拷贝发生在所有 POST_BUILD 之后，
+# 会破坏 ad-hoc 签名的 SealedResources（Live 12 因此拒绝加载 VST3）。
+# 因此在下方 POST_BUILD 中按“拷字体 -> 签名 -> 部署”顺序手动处理。
 
 target_include_directories(_${PROJECT_NAME}-base INTERFACE "${IPLUG2_DIR}/Dependencies/Extras")
 
 if(APPLE)
   find_program(IPLUG2_CODESIGN_EXEC codesign)
+  set(_font_src_dir "${CMAKE_CURRENT_SOURCE_DIR}/resources/fonts")
+
   if(IPLUG2_CODESIGN_EXEC AND TARGET ${PROJECT_NAME}-au AND TARGET ${PROJECT_NAME}-vst3)
     set(_sig_src_au  "${CMAKE_BINARY_DIR}/out/${PROJECT_NAME}.component")
     set(_sig_dst_au  "$ENV{HOME}/Library/Audio/Plug-Ins/Components/${PROJECT_NAME}.component")
     set(_sig_src_v3  "${CMAKE_BINARY_DIR}/out/${PROJECT_NAME}.vst3")
     set(_sig_dst_v3  "$ENV{HOME}/Library/Audio/Plug-Ins/VST3/${PROJECT_NAME}.vst3")
-    add_custom_target(${PROJECT_NAME}-final-sign ALL
-      COMMAND ${IPLUG2_CODESIGN_EXEC} --force --deep --sign - "${_sig_src_au}"
-      COMMAND ${CMAKE_COMMAND} -E rm -rf "${_sig_dst_au}"
-      COMMAND ${CMAKE_COMMAND} -E copy_directory "${_sig_src_au}" "${_sig_dst_au}"
-      COMMAND ${IPLUG2_CODESIGN_EXEC} --force --deep --sign - "${_sig_src_v3}"
-      COMMAND ${CMAKE_COMMAND} -E rm -rf "${_sig_dst_v3}"
-      COMMAND ${CMAKE_COMMAND} -E copy_directory "${_sig_src_v3}" "${_sig_dst_v3}"
-      DEPENDS ${PROJECT_NAME}-au ${PROJECT_NAME}-vst3
-      COMMENT "Final ad-hoc sign + deploy AU/VST3 bundles"
+
+    # 1) AU / VST3: copy fonts -> ad-hoc sign -> redeploy.
+    #    Attached as POST_BUILD so single-target (`--target ...`) builds sign too.
+    foreach(_sig_tgt ${PROJECT_NAME}-au ${PROJECT_NAME}-vst3)
+      if(_sig_tgt MATCHES "-au$")
+        set(_sig_src "${_sig_src_au}")
+        set(_sig_dst "${_sig_dst_au}")
+      else()
+        set(_sig_src "${_sig_src_v3}")
+        set(_sig_dst "${_sig_dst_v3}")
+      endif()
+      add_custom_command(TARGET ${_sig_tgt} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E rm -rf "${_sig_src}/Contents/Resources"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${_sig_src}/Contents/Resources"
+        COMMAND ${CMAKE_COMMAND} -E copy "${_font_src_dir}/Mixed-Regular.ttf"    "${_sig_src}/Contents/Resources/Mixed-Regular.ttf"
+        COMMAND ${CMAKE_COMMAND} -E copy "${_font_src_dir}/Mixed-SemiBold.ttf"   "${_sig_src}/Contents/Resources/Mixed-SemiBold.ttf"
+        COMMAND ${CMAKE_COMMAND} -E copy "${_font_src_dir}/Mixed-Bold.ttf"       "${_sig_src}/Contents/Resources/Mixed-Bold.ttf"
+        COMMAND ${IPLUG2_CODESIGN_EXEC} --force --deep --sign - "${_sig_src}"
+        COMMAND ${CMAKE_COMMAND} -E rm -rf "${_sig_dst}"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${_sig_src}" "${_sig_dst}"
+        COMMENT "Copy fonts + ad-hoc sign + deploy ${_sig_src}"
+      )
+    endforeach()
+  endif()
+
+  # 2) Standalone app still needs the fonts bundled.
+  if(TARGET ${PROJECT_NAME}-app)
+    add_custom_command(TARGET ${PROJECT_NAME}-app POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E rm -rf "${CMAKE_BINARY_DIR}/out/${PROJECT_NAME}.app/Contents/Resources"
+      COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/out/${PROJECT_NAME}.app/Contents/Resources"
+      COMMAND ${CMAKE_COMMAND} -E copy "${_font_src_dir}/Mixed-Regular.ttf"    "${CMAKE_BINARY_DIR}/out/${PROJECT_NAME}.app/Contents/Resources/Mixed-Regular.ttf"
+      COMMAND ${CMAKE_COMMAND} -E copy "${_font_src_dir}/Mixed-SemiBold.ttf"   "${CMAKE_BINARY_DIR}/out/${PROJECT_NAME}.app/Contents/Resources/Mixed-SemiBold.ttf"
+      COMMAND ${CMAKE_COMMAND} -E copy "${_font_src_dir}/Mixed-Bold.ttf"       "${CMAKE_BINARY_DIR}/out/${PROJECT_NAME}.app/Contents/Resources/Mixed-Bold.ttf"
+      COMMENT "Copy fonts into ${PROJECT_NAME}.app"
     )
   endif()
 endif()
