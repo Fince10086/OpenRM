@@ -5,6 +5,12 @@ file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/plugins/BandPass/config.h" _orm_versio
 string(REGEX MATCH "\"([0-9.]+)\"" _orm_version_match "${_orm_version}")
 project(OpenRM VERSION ${CMAKE_MATCH_1})
 
+# macOS 最低系统版本: 11.0
+
+if(APPLE)
+  set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Minimum macOS version" FORCE)
+endif()
+
 # 右键留给插件自己的菜单（映射色块换色等），不弹宿主参数菜单
 add_compile_definitions(IGRAPHICS_NO_CONTEXT_MENU)
 
