@@ -143,4 +143,4 @@ inline const char* Tr(int id, int lang)
   return kTable[lang][id];
 }
 
-} // namespace orm
+}

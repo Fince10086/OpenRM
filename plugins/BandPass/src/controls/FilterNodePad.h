@@ -97,12 +97,8 @@ public:
 
   void SetPass(bool pass) { mPass = pass; SetDirty(false); }
 
-  // PASS/REJECT toggle button, laid out dynamically just left of the WIDTH
-  // corner text (updated on each draw from the measured text widths).
   IRECT PassRejectRect() const { return mPassRejectRect; }
 
-  // Mono-output mode: only a washed-out gradient background remains, everything
-  // else (spectrum, nodes, corner texts, swatches, label) is hidden and inert.
   void SetGhost(bool ghost)
   {
     if (mGhost == ghost) return;
@@ -147,8 +143,6 @@ public:
 
   void OnMouseOver(float x, float y, const IMouseMod& mod) override
   {
-    // Hover highlight for the PASS/REJECT button must track only the button's
-    // own rect - the control-level mouse-over covers the whole pad.
     const bool over = mPassRejectRect.Contains(x, y);
     if (over != mPassBtnHover)
     {
@@ -204,8 +198,6 @@ public:
           return;
         }
       }
-      // Only start pad dragging when the press lands on the gradient plot area;
-      // the corner-text band above it belongs to the texts, not the pad.
       if (PlotRect().Contains(x, y))
         IVXYPadControl::OnMouseDown(x, y, mod);
     }
@@ -213,9 +205,6 @@ public:
 
   void OnMouseDrag(float x, float y, float dX, float dY, const IMouseMod& mod) override
   {
-    // Map position against the gradient plot area, not the full control rect
-    // (which includes the corner-text band at the top). Ignores stray drags
-    // from presses that never started on the plot.
     if (!mMouseDown) return;
     const IRECT tb = PlotRect();
     x = std::clamp(x, tb.L, tb.R);
@@ -259,9 +248,6 @@ public:
       const float gy = tb.B - (float) pb->ToNormalized(actBw) * tb.H();
       if (mAgMapOn[0] && mAgMapOn[1])
       {
-        // Both center and bandwidth randoms are on: the ghost indicator
-        // splits into an outer ring (bandwidth color, translucent) and an
-        // inner circle (center color).
         g.FillCircle(AgColorGhost(mAgMapColor[1]), gx, gy, mHandleRadius);
         g.FillCircle(AgColor(mAgMapColor[0]), gx, gy, mHandleRadius * 0.6f);
         g.FillCircle(COL_100(), gx, gy, mHandleRadius * 0.25f);
@@ -514,10 +500,6 @@ private:
     g.DrawText(t, value.Get(), IRECT(x0 + m1.W() + LABEL_VALUE_GAP, r.T, x0 + totalW, r.B));
   }
 
-  // PASS/REJECT flat toggle: placed dynamically just left of the WIDTH corner
-  // text with a fixed gap (not a fixed x position), width fits its own label,
-  // and the label uses the same 20px font as the text outside the button.
-  // Styled like the LINK button (flat fill block + centered text).
   void DrawPassToggle(IGraphics& g)
   {
     const IText t(20, COL_900(), kFontSemiBold, EAlign::Center, EVAlign::Middle);
@@ -527,9 +509,6 @@ private:
     g.MeasureText(t, label, m);
     const float btnW = m.W() + kPassBtnPad * 2.f;
 
-    // The WIDTH prefix text is right-aligned to end at
-    // valueLeft - LABEL_VALUE_GAP (see DrawCorner); the button sits kPassGap
-    // px to the left of that prefix's measured left edge.
     const float prefixRight = mCornerValueRect[1].L - LABEL_VALUE_GAP;
     g.MeasureText(t, mBwPrefix.Get(), m);
     const float prefixLeft = prefixRight - m.W();
@@ -537,8 +516,6 @@ private:
                   prefixLeft - kPassGap, mWidgetBounds.T + kCornerTextH);
     mPassRejectRect = b;
 
-    // PASS (band-pass) = flat gray block, REJECT (band-reject) = filled dark.
-    // Hover uses the button's own hit rect, not the whole pad.
     const bool hover = mPassBtnHover;
     const IColor fill = mPass ? (hover ? COL_500() : COL_300()) : COL_900();
     g.FillRect(fill, b.GetPadded(-1.f));
@@ -609,7 +586,6 @@ private:
 
   static void FormatFreq(char* b, int n, double hz, bool withUnit)
   {
-    // Always show hertz with 1 Hz precision, never switch to kHz.
     const char* u = withUnit ? "Hz" : "";
     std::snprintf(b, n, "%.0f%s", hz, u);
   }
@@ -627,8 +603,8 @@ private:
 
   static constexpr float kCornerW = 170.f;
   static constexpr float kCornerTextH = 22.f;
-  static constexpr float kPassGap   = 8.f;   // fixed gap between button and WIDTH text
-  static constexpr float kPassBtnPad = 6.f;  // horizontal padding inside the button
+  static constexpr float kPassGap   = 8.f;
+  static constexpr float kPassBtnPad = 6.f;
   static constexpr float kSideW    = 24.f;
   static constexpr float kSideH    = 0.f;
   static constexpr float kTopPad   = 30.f;
@@ -655,9 +631,9 @@ private:
   int   mSlopeIndex = kSlopeDefaultIdx;
   bool  mAgMapOn[2] = { false, false };
   int   mAgMapColor[2] = { 0, 0 };
-  bool  mPass = true;  // true = PASS (band-pass), false = REJECT (band-reject)
-  bool  mPassBtnHover = false;  // hover over the button rect only, not the pad
-  IRECT mPassRejectRect;  // updated on draw, used for hit testing
+  bool  mPass = true;
+  bool  mPassBtnHover = false;
+  IRECT mPassRejectRect;
   IRECT mAgSwatchRect[2];
   float mAgFreqOct = 0.f;
   float mAgBwOct = 0.f;

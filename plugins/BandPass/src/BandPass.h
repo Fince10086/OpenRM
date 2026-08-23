@@ -113,8 +113,6 @@ private:
   SpectrumSTFT<2> mSpectrumL;
   SpectrumSTFT<2> mSpectrumR;
 
-  // Output channel count as last seen by the audio thread; the UI switches to
-  // a mono display (right channel ghosted) when it drops below 2.
   std::atomic<int> mObservedNOuts {2};
   bool mMonoDisplay = false;
 
@@ -123,7 +121,7 @@ private:
   std::array<sample, kMaxBlock> mSpecInR {};
   std::array<sample, kMaxBlock> mWetL {};
   std::array<sample, kMaxBlock> mWetR {};
-  std::array<sample, kMaxBlock> mMonoIn {}; // mono input duplicated to feed the right channel
+  std::array<sample, kMaxBlock> mMonoIn {};
 
   FilterNodePad*  mPadL = nullptr;
   FilterNodePad*  mPadR = nullptr;
@@ -135,7 +133,7 @@ private:
   ORMSlider* mAgRangeSlider[4] = {};
   ORMSlider* mAgSpeedSlider[4] = {};
   AgColorPickerControl* mAgPicker = nullptr;
-  int mAgSelColor = 0; // session state: which color RANGE/SPEED edit
+  int mAgSelColor = 0;
 
   std::array<ParamSnapshot, kNumPresets> mPresets;
   std::array<int, kNumPresets> mSlotNumber;

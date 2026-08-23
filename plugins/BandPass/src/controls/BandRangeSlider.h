@@ -32,7 +32,6 @@ public:
   void SetLowPrefix(const char* s) { mLowPrefix.Set(s); SetDirty(false); }
   void SetHighPrefix(const char* s) { mHighPrefix.Set(s); SetDirty(false); }
 
-  // Mono-output mode: keep only a washed-out track, hide texts and handles
   void SetGhost(bool ghost)
   {
     if (mGhost == ghost) return;
@@ -234,7 +233,6 @@ private:
 
   static void FormatFreq(char* b, int n, double hz, bool withUnit)
   {
-    // Always show hertz with 1 Hz precision, never switch to kHz.
     const char* u = withUnit ? "Hz" : "";
     std::snprintf(b, n, "%.0f%s", hz, u);
   }

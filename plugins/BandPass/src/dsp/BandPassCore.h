@@ -107,8 +107,6 @@ public:
                 mLp[k].reset();
             }
         }
-        // PASS: high-pass(lowHz) in series with low-pass(highHz)  -> band-pass.
-        // REJECT: low-pass(lowHz) in parallel with high-pass(highHz) -> band-reject.
         const double hpFreq = reject ? highHz : lowHz;
         const double lpFreq = reject ? lowHz   : highHz;
         for (int k = 0; k < sections; ++k)
@@ -135,9 +133,6 @@ public:
         return x;
     }
 
-    // Band-reject: low-pass branch (passes below lowHz) added to a high-pass
-    // branch (passes above highHz). The two branches share the same section
-    // filters (already parameterised for reject mode), each cascaded per pole.
     inline float processReject(float x) noexcept
     {
         float lpAcc = x;
@@ -178,29 +173,27 @@ public:
         float  gainR = 1.0f;
 
         bool   linked   = false;
-        bool   rejectL  = false;  // true = REJECT (band-reject), false = PASS (band-pass)
+        bool   rejectL  = false;
         bool   rejectR  = false;
         float  mix      = 1.0f;
-        float  agAmount[4]    = { 0.1f, 0.1f, 0.1f, 0.1f }; // per color, 0..1
-        double agPeriodSec[4] = { 1.0, 1.0, 1.0, 1.0 };     // per color, seconds per random step
+        float  agAmount[4]    = { 0.1f, 0.1f, 0.1f, 0.1f };
+        double agPeriodSec[4] = { 1.0, 1.0, 1.0, 1.0 };
         bool   agEnableFreqL = false, agEnableBwL = false, agEnableGainL = false;
         bool   agEnableFreqR = false, agEnableBwR = false, agEnableGainR = false;
         bool   agEnableMix   = false;
-        std::uint8_t agColorFreqL = 0, agColorBwL = 0, agColorGainL = 0;   // 0=red 1=yellow 2=blue 3=green
+        std::uint8_t agColorFreqL = 0, agColorBwL = 0, agColorGainL = 0;
         std::uint8_t agColorFreqR = 0, agColorBwR = 0, agColorGainR = 0;
         std::uint8_t agColorMix   = 0;
         double slopeDbL = 96.0;
         double slopeDbR = 96.0;
     };
 
-    // Per-sample random modulation actually applied in run(); published to the UI
-    // so pads/sliders can display the modulated ("actual") values and ghost handles.
     struct AgDeltas
     {
-        float freqOct[2] = { 0.f, 0.f }; // center shift in octaves
-        float bwOct[2]   = { 0.f, 0.f }; // full-bandwidth shift in octaves
-        float gainDb[2]  = { 0.f, 0.f }; // gain shift in dB
-        float mix        = 0.f;          // mix shift (pre-clamp)
+        float freqOct[2] = { 0.f, 0.f };
+        float bwOct[2]   = { 0.f, 0.f };
+        float gainDb[2]  = { 0.f, 0.f };
+        float mix        = 0.f;
     };
 
     const AgDeltas& agDeltas() const noexcept { return mAgDeltas; }
@@ -287,17 +280,14 @@ public:
     }
 
 private:
-    // Full-scale random modulation depths (amount slider = 1)
-    static constexpr double kAgFreqModOct  = 4.90689059560852;  // log2(30): center x30 / /30
-    static constexpr double kAgBwModOct    = 4.64385618977472;  // 2*log2(5): bandwidth mult x5 / /5
+    static constexpr double kAgFreqModOct  = 4.90689059560852;
+    static constexpr double kAgBwModOct    = 4.64385618977472;
     static constexpr float  kAgGainModDb   = 48.f;
     static constexpr float  kAgMixMod      = 0.5f;
-    static constexpr float  kDbToLin       = 0.115129254649702f; // ln(10)/20
+    static constexpr float  kDbToLin       = 0.115129254649702f;
 
     enum { kAgFreqL = 0, kAgBwL, kAgGainL, kAgFreqR, kAgBwR, kAgGainR, kAgMix, kNumAgStreams };
 
-    // Smooth random walk in [-1, 1]: each period a new random target is chosen and
-    // reached on a cosine ease (zero velocity at the segment joins).
     class RandomWalk
     {
     public:

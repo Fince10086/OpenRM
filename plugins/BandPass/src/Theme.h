@@ -11,8 +11,6 @@ namespace iplug { namespace igraphics {
 constexpr const char* kFontRegular  = "Mixed";
 constexpr const char* kFontSemiBold = "Mixed-SemiBold";
 constexpr const char* kFontBold     = "Mixed-Bold";
-// System sans-serif fallback for dynamic text (e.g. audio device names) whose
-// characters can't be known at build time and may be missing from Mixed fonts.
 constexpr const char* kFontSystem = "System";
 
 inline int& ThemeMode()   { static int mode = 0; return mode; }
@@ -22,7 +20,6 @@ inline int& ThemeSatMax() { static int satMax = 15; return satMax; }
 constexpr int kLightB[5] = { 10, 40, 60, 90, 95 };
 constexpr int kDarkB[5]  = { 90, 60, 40, 20, 10 };
 
-// Saturation = satMax * ((100 - B) / 100)^1.0
 inline float SatForB(int B)
 {
   return (float) ThemeSatMax() * std::pow((100.f - (float) B) / 100.f, 1.0f);
@@ -67,8 +64,7 @@ static constexpr float HANDLE_R = 7.f;
 static constexpr float HANDLE_RING = 1.5f;
 static constexpr float LABEL_VALUE_GAP = 12.f;
 
-// RANDOM mapping swatches (fixed functional colors, independent of theme hue)
-constexpr float AG_SWATCH = 14.f;       // all mapping swatches
+constexpr float AG_SWATCH = 14.f;
 constexpr float AG_SWATCH_GAP = 8.f;
 
 constexpr int kNumAgColors = 4;
@@ -76,10 +72,10 @@ constexpr int kNumAgColors = 4;
 inline IColor AgColor(int idx)
 {
   static const IColor kColors[kNumAgColors] = {
-    IColor(255, 224, 66, 61),    // red
-    IColor(255, 240, 184, 40),   // yellow
-    IColor(255, 72, 138, 255),   // blue
-    IColor(255, 80, 190, 96),    // green
+    IColor(255, 224, 66, 61),
+    IColor(255, 240, 184, 40),
+    IColor(255, 72, 138, 255),
+    IColor(255, 80, 190, 96),
   };
   return kColors[std::clamp(idx, 0, kNumAgColors - 1)];
 }
@@ -105,6 +101,6 @@ enum EPadCorner : int
 };
 
 constexpr int kSlopeDb[4] = { 12, 24, 48, 96 };
-constexpr int kSlopeDefaultIdx = 3; // 96 dB/oct
+constexpr int kSlopeDefaultIdx = 3;
 
 } }

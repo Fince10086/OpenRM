@@ -199,7 +199,6 @@ public:
   void SetValueFormatter(std::function<void(WDL_String&)> f) { mValueFormatter = std::move(f); }
   void SetHeaderLabel(const char* s) { mHeaderLabel.Set(s); SetDirty(false); }
 
-  // Mono-output mode: only a washed-out slider track remains, no handle/text/swatch
   void SetGhost(bool ghost)
   {
     if (mGhost == ghost) return;
@@ -336,7 +335,6 @@ protected:
   static constexpr float kHeaderH = 26.f;
   static constexpr float kHeaderW = 26.f;
 
-  // Normalized ghost-handle position for the active random mapping (-1 = hidden).
   void UpdateAgGhost()
   {
     const IParam* p = GetParam();
@@ -532,15 +530,10 @@ protected:
 
     const IRECT hdr = TextRect();
 
-    // Random swatch sits directly above the GAIN title. The title is drawn
-    // rotated 90deg and bottom-aligned, so its on-screen height equals the
-    // unrotated text width (ZH vs EN labels differ). Measure unrotated and
-    // derive the top edge manually - the framework's rotated MeasureText is
-    // unreliable for anchoring.
     IRECT m;
     g.MeasureText(IText(20, COL_900(), kFontSemiBold, EAlign::Center, EVAlign::Middle),
                   mHeaderLabel.Get(), m);
-    const float titleH = m.W();  // rotated 90deg: on-screen height = unrotated width
+    const float titleH = m.W();
     const float swatchCY = hdr.B - titleH - AG_SWATCH_GAP - AG_SWATCH * 0.5f;
     mAgSwatchRect = IRECT(hdr.MW() - AG_SWATCH * 0.5f, swatchCY - AG_SWATCH * 0.5f,
                           hdr.MW() + AG_SWATCH * 0.5f, swatchCY + AG_SWATCH * 0.5f);
@@ -698,7 +691,6 @@ public:
     std::function<void(int themeMode)> onTheme;
     std::function<void(int hue)> onHue;
     std::function<void(int satMax)> onSat;
-    // Audio device selection (standalone app only; empty in plug-in builds)
     std::function<std::vector<std::string>(bool input)> listAudioDevices;
     std::function<const char*(bool input)> currentAudioDevice;
     std::function<void(bool input, const char* name)> onAudioDevice;
@@ -752,8 +744,6 @@ public:
     DrawButton(g, mThemeBtns[1], orm::Tr(orm::kTxtLight, lang), theme == 0, mHover == kHoverThemeLight);
 
     const float sw = AG_SWATCH;
-    // Hue swatch: solid color of the current hue, slightly desaturated so it
-    // is not overpoweringly bright.
     const IRECT hueSw(mSliderHeader[0].L, mSliderHeader[0].MH() - sw * 0.5f,
                       mSliderHeader[0].L + sw, mSliderHeader[0].MH() + sw * 0.5f);
     g.FillRect(HSBToIColor(ThemeHue(), 0.85f, 1.f), hueSw.GetPadded(-1.f));
@@ -761,15 +751,13 @@ public:
                      mSliderHeader[0].L + sw + AG_SWATCH_GAP);
     DrawSlider(g, mSliderTrack[0], HueNorm());
 
-    // Saturation swatch: stacked bands showing the current saturation level at
-    // different brightness values (bright -> dark).
     const IRECT satSw(mSliderHeader[1].L, mSliderHeader[1].MH() - sw * 0.5f,
                       mSliderHeader[1].L + sw, mSliderHeader[1].MH() + sw * 0.5f);
     for (int i = 0; i < kNumSat; ++i)
     {
       const float segH = satSw.H() / kNumSat;
       const IRECT seg(satSw.L, satSw.T + i * segH, satSw.R, satSw.T + (i + 1.f) * segH);
-      const float b = 1.f - 0.25f * (float) i;  // 1.0, 0.75, 0.5, 0.25
+      const float b = 1.f - 0.25f * (float) i;
       g.FillRect(HSBToIColor(ThemeHue(), ThemeSatMax() / 100.f, b), seg);
     }
     DrawSliderHeader(g, mSliderHeader[1], orm::Tr(orm::kTxtSaturation, lang), SatLabel(lang),
@@ -958,8 +946,6 @@ private:
     g.DrawText(labelTxt, label, r);
     IRECT labelBox = r;
     g.MeasureText(labelTxt, label, labelBox);
-    // Device names are dynamic and may contain glyphs missing from the subset
-    // Mixed fonts - render them with the system sans-serif fallback font.
     const IText valTxt(20, COL_700(), kFontSystem, EAlign::Far, EVAlign::Middle);
     const IRECT valRect(labelBox.R + 12.f, r.T, r.R, r.B);
     WDL_String fitted;
@@ -976,7 +962,6 @@ private:
     int len = out.GetLength();
     while (len > 0)
     {
-      // drop the trailing UTF-8 code point, then retry with an ellipsis
       do { --len; } while (len > 0 && ((unsigned char) out.Get()[len] & 0xC0) == 0x80);
       out.SetLen(len);
       out.Append("\xE2\x80\xA6");
@@ -1072,8 +1057,8 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
       { kAgAmountB, kAgRateB, "Ag Amount Blue",   "Ag Speed Blue" },
       { kAgAmountG, kAgRateG, "Ag Amount Green",  "Ag Speed Green" },
     };
-    const double kDefaultAmount[3] = { 0.3, 0.6, 0.4 };  // Yellow 30%, Blue 60%, Green 40%
-    const double kDefaultRate[3]   = { 1.0, 0.75, 2.0 }; // Yellow 1.0s, Blue 0.75s, Green 2.0s
+    const double kDefaultAmount[3] = { 0.3, 0.6, 0.4 };
+    const double kDefaultRate[3]   = { 1.0, 0.75, 2.0 };
     for (int i = 0; i < 3; ++i)
     {
       const RateDef& r = rates[i];
@@ -1105,76 +1090,75 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
 
   {
     ParamSnapshot s = Snapshot();
-    setBand(s, 300., 4000., 300., 4000.);            // 1
+    setBand(s, 300., 4000., 300., 4000.);
     mPresets[0] = s;
   }
   {
     ParamSnapshot s = Snapshot();
-    setBand(s, 23., 200., 23., 200.);                // 2
+    setBand(s, 23., 200., 23., 200.);
     mPresets[1] = s;
   }
   {
     ParamSnapshot s = Snapshot();
-    setBand(s, 23., 1000., 1000., 22050.);           // 3
+    setBand(s, 23., 1000., 1000., 22050.);
     mPresets[2] = s;
   }
   {
     ParamSnapshot s = Snapshot();
-    setBand(s, 1000., 22050., 23., 1000.);           // 4
+    setBand(s, 1000., 22050., 23., 1000.);
     mPresets[3] = s;
   }
   {
     ParamSnapshot s = Snapshot();
-    setBand(s, 5000., 22050., 5000., 22050.);        // 5
+    setBand(s, 5000., 22050., 5000., 22050.);
     mPresets[4] = s;
   }
   {
     ParamSnapshot s = Snapshot();
-    setBand(s, 400., 4000., 400., 4000.);            // 6
+    setBand(s, 400., 4000., 400., 4000.);
     mPresets[5] = s;
   }
   {
     ParamSnapshot s = Snapshot();
-    setBand(s, 300., 300., 300., 300.);              // 7
+    setBand(s, 300., 300., 300., 300.);
     mPresets[6] = s;
   }
   {
     ParamSnapshot s = Snapshot();
-    setBand(s, 6000., 6000., 6000., 6000.);          // 8
+    setBand(s, 6000., 6000., 6000., 6000.);
     mPresets[7] = s;
   }
   {
     ParamSnapshot s = Snapshot();
-    setBand(s, 6102., 22050., 6102., 22050.);        // 9
+    setBand(s, 6102., 22050., 6102., 22050.);
     mPresets[8] = s;
   }
   {
     ParamSnapshot s = Snapshot();
-    setBand(s, 467., 557., 467., 557.);              // 10
+    setBand(s, 467., 557., 467., 557.);
     mPresets[9] = s;
   }
   {
     ParamSnapshot s = Snapshot();
-    setBand(s, 77., 5626., 77., 5626.);              // 11
+    setBand(s, 77., 5626., 77., 5626.);
     mPresets[10] = s;
   }
   {
     ParamSnapshot s = Snapshot();
-    setBand(s, 7784., 9155., 7784., 9155.);          // 12
+    setBand(s, 7784., 9155., 7784., 9155.);
     mPresets[11] = s;
   }
   {
     ParamSnapshot s = Snapshot();
-    setBand(s, 4982., 12327., 4982., 12327.);        // 13
+    setBand(s, 4982., 12327., 4982., 12327.);
     mPresets[12] = s;
   }
   {
     ParamSnapshot s = Snapshot();
-    setBand(s, 254., 329., 254., 329.);              // 14
+    setBand(s, 254., 329., 254., 329.);
     mPresets[13] = s;
   }
 
-  // Agitation and Link are always off in the factory presets.
   for (int i = 0; i < kNumPresets; ++i)
   {
     mPresets[i][kAgOn] = 0.;
@@ -1196,14 +1180,6 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
     pGraphics->LoadFont(kFontSemiBold, MIXED_SB_FN);
     pGraphics->LoadFont(kFontBold, MIXED_BD_FN);
 
-    // System sans-serif fallback for dynamic text (e.g. audio device names)
-    // whose glyphs may be missing from the subset Mixed fonts.
-    // NOTE: IGraphics::LoadFont(fontName, style) is unreliable on macOS here -
-    // PingFang.ttc cannot be parsed by NanoVG's stb_truetype and the ttc face
-    // style matching in GetFaceIdx fails, so LoadFont returns false and any
-    // DrawText/MeasureText with that font ID asserts. Instead we read system
-    // font files directly and load from memory, with a Mixed-font fallback so
-    // kFontSystem is ALWAYS bound (never crashes).
     auto loadFontFile = [](IGraphics* g, const char* id, const char* path) -> bool {
       FILE* f = std::fopen(path, "rb");
       if (!f) return false;
@@ -1219,9 +1195,9 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
     bool sysFontOk = false;
 #if defined(OS_MAC)
     static const char* kSysFontCandidates[] = {
-      "/System/Library/Fonts/Supplemental/Arial Unicode.ttf", // single ttf, full CJK
-      "/System/Library/Fonts/STHeiti Medium.ttc",             // Chinese systems
-      "/System/Library/Fonts/HelveticaNeue.ttc",              // any macOS (latin only)
+      "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+      "/System/Library/Fonts/STHeiti Medium.ttc",
+      "/System/Library/Fonts/HelveticaNeue.ttc",
     };
     for (const char* p : kSysFontCandidates)
       if ((sysFontOk = loadFontFile(pGraphics, kFontSystem, p))) break;
@@ -1576,7 +1552,6 @@ void ORMBandPass::ProcessBlock(sample** inputs, sample** outputs, int nFrames)
   }
   else if (nOuts >= 2)
   {
-    // Mono input, stereo output: duplicate the input so both channels are filtered independently
     std::memcpy(mMonoIn.data(), inputs[0], nFrames * sizeof(sample));
     mCore.process(inputs[0], mMonoIn.data(), outputs[0], outputs[1], nFrames, mWetL.data(), mWetR.data());
     for (int c = 2; c < nOuts; ++c)
@@ -1598,7 +1573,6 @@ void ORMBandPass::ProcessBlock(sample** inputs, sample** outputs, int nFrames)
   }
   else if (nOuts >= 2)
   {
-    // Duplicated mono input: both pads show the same input spectrum but their own wet signal
     sample* specL[2] = { mSpecInL.data(), mWetL.data() };
     sample* specR[2] = { mSpecInL.data(), mWetR.data() };
     mSpectrumL.ProcessBlock(specL, nSpec, kCtrlTagPadL, 2);
@@ -1650,7 +1624,6 @@ void ORMBandPass::OnParamChangeUI(int paramIdx, EParamSource source)
     MirrorLinkedParams(paramIdx);
   }
 #if IPLUG_EDITOR
-  // May fire from host automation while the editor is closed
   if (GetUI())
   {
     UpdatePads();
@@ -1744,7 +1717,7 @@ int RightMirrorOf(int idx)
     if (pr.first == idx) return pr.second;
   return -1;
 }
-} // namespace
+}
 
 void ORMBandPass::EditCorner(int kFreq, int kBw, int cornerId, double value)
 {
@@ -1830,8 +1803,6 @@ void ORMBandPass::TogglePass(int passIdx)
 void ORMBandPass::SetAgMapColor(int colorParamIdx, int colorIdx)
 {
   const bool changed = GetParam(colorParamIdx)->Int() != colorIdx;
-  // While linked, the left channel is the source of truth: even if this
-  // (right-channel) color already matches, its left counterpart may not.
   const int mirrorIdx = LeftMirrorOf(colorParamIdx);
   const bool mirrorNeeds = mirrorIdx >= 0 && GetParam(mirrorIdx)->Int() != colorIdx;
   if (!changed && !mirrorNeeds) return;
@@ -1876,8 +1847,6 @@ void ORMBandPass::UpdateAgMaps()
 void ORMBandPass::AgDisplayPush()
 {
 #if IPLUG_EDITOR
-  // OnIdle keeps firing after the editor closes; every stored control pointer
-  // is dangling once IGraphics is destroyed (see OnUIClose)
   if (!GetUI()) return;
   if (mPadL) mPadL->SetAgDeltas(mAgDeltas.freqOct[0], mAgDeltas.bwOct[0]);
   if (mPadR) mPadR->SetAgDeltas(mAgDeltas.freqOct[1], mAgDeltas.bwOct[1]);
@@ -1907,10 +1876,10 @@ void ORMBandPass::MigrateLegacySnapshot(ParamSnapshot& s)
     kAgEnableFreqR, kAgEnableBwR, kAgEnableGainR, kAgEnableMix,
   };
   for (int i = 0; i < 7; ++i)
-    if (s[kEnableParams[i]] > 0.5) return; // already uses the new mapping system
+    if (s[kEnableParams[i]] > 0.5) return;
   s[kAgEnableFreqL] = 1.;
   s[kAgEnableFreqR] = 1.;
-  s[kAgColorFreqL] = 0.; // red
+  s[kAgColorFreqL] = 0.;
   s[kAgColorFreqR] = 0.;
 }
 
@@ -2041,8 +2010,6 @@ void ORMBandPass::OnIdle()
 
 void ORMBandPass::OnUIClose()
 {
-  // The delegate destroys IGraphics and every attached control when the editor
-  // closes, while OnIdle/automation callbacks keep running: drop all references.
   mPadL = mPadR = nullptr;
   mBandL = mBandR = nullptr;
   mMixSlider = nullptr;
@@ -2055,7 +2022,6 @@ void ORMBandPass::OnUIClose()
   mSettingsPanel = nullptr;
   mTextBindings.clear();
   mTooltipBindings.clear();
-  // let OnIdle re-apply mono display to the freshly created controls on reopen
   mMonoDisplay = false;
 }
 

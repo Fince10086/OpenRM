@@ -1,6 +1,3 @@
-//{{NO_DEPENDENCIES}}
-// Microsoft Visual C++ generated include file.
-// Used by main.rc
 
 #define IDR_ACCELERATOR1                40000
 #define IDD_DIALOG_MAIN                 40001
@@ -33,8 +30,6 @@
 #define ID_SHOW_BOUNDS                  40028
 #define ID_SCREENSHOT                   40029
 
-// Next default values for new objects
-//
 #ifdef APSTUDIO_INVOKED
 #ifndef APSTUDIO_READONLY_SYMBOLS
 #define _APS_NEXT_RESOURCE_VALUE        105
