@@ -329,6 +329,9 @@ protected:
     switch (GetParamIdx())
     {
       case kAgAmount:
+      case kAgAmountY:
+      case kAgAmountB:
+      case kAgAmountG:
         std::snprintf(buf, sizeof(buf), "%.0f%%", p->Value() * 100.);
         ds.Set(buf);
         break;
@@ -341,6 +344,9 @@ protected:
         break;
       }
       case kAgRate:
+      case kAgRateY:
+      case kAgRateB:
+      case kAgRateG:
         std::snprintf(buf, sizeof(buf), p->Value() < 10. ? "%.2fs" : "%.1fs", p->Value());
         ds.Set(buf);
         break;
@@ -957,16 +963,16 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
 : Plugin(info, MakeConfig(kNumParams, 1))
 {
   GetParam(kFreqL)->InitDouble("FreqL", std::sqrt(300. * 4000.), 20., 20000., 0.01, "Hz", 0, "", IParam::ShapeExp());
-  GetParam(kBwL)  ->InitDouble("BW L", 1.41, 1., 31., 0.01, "x", 0, "", IParam::ShapeExp());
+  GetParam(kBwL)  ->InitDouble("BW L", 3.65, 1., 31., 0.01, "x", 0, "", IParam::ShapeExp());
   GetParam(kGainL)->InitDouble("Gain L", 0., -96., 12., 0.01, "");
   GetParam(kFreqR)->InitDouble("FreqR", std::sqrt(300. * 4000.), 20., 20000., 0.01, "Hz", 0, "", IParam::ShapeExp());
-  GetParam(kBwR)  ->InitDouble("BW R", 1.41, 1., 31., 0.01, "x", 0, "", IParam::ShapeExp());
+  GetParam(kBwR)  ->InitDouble("BW R", 3.65, 1., 31., 0.01, "x", 0, "", IParam::ShapeExp());
   GetParam(kGainR)->InitDouble("Gain R", 0., -96., 12., 0.01, "");
   GetParam(kLink) ->InitBool("Link", false);
   GetParam(kMix)  ->InitDouble("Mix", 1., 0., 1., 0.01, "");
   GetParam(kAgOn) ->InitBool("Agitation", false);
-  GetParam(kAgAmount)->InitDouble("Ag Amount", 0.1, 0., 1., 0.01, "");
-  GetParam(kAgRate)->InitDouble("Ag Speed", 1., 0.01, 60., 0.01, "", 0, "", IParam::ShapeExp());
+  GetParam(kAgAmount)->InitDouble("Ag Amount", 0.5, 0., 1., 0.01, "");
+  GetParam(kAgRate)->InitDouble("Ag Speed", 0.5, 0.01, 60., 0.01, "", 0, "", IParam::ShapeExp());
   GetParam(kSlopeL)->InitEnum("Slope L", kSlopeDefaultIdx,
     { "12 dB/oct", "24 dB/oct", "48 dB/oct", "96 dB/oct" });
   GetParam(kSlopeR)->InitEnum("Slope R", kSlopeDefaultIdx,
@@ -995,10 +1001,13 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
       { kAgAmountB, kAgRateB, "Ag Amount Blue",   "Ag Speed Blue" },
       { kAgAmountG, kAgRateG, "Ag Amount Green",  "Ag Speed Green" },
     };
-    for (const RateDef& r : rates)
+    const double kDefaultAmount[3] = { 0.3, 0.6, 0.4 };  // Yellow 30%, Blue 60%, Green 40%
+    const double kDefaultRate[3]   = { 1.0, 0.75, 2.0 }; // Yellow 1.0s, Blue 0.75s, Green 2.0s
+    for (int i = 0; i < 3; ++i)
     {
-      GetParam(r.amountIdx)->InitDouble(r.amountName, 0.1, 0., 1., 0.01, "");
-      GetParam(r.rateIdx)->InitDouble(r.rateName, 1., 0.01, 60., 0.01, "", 0, "", IParam::ShapeExp());
+      const RateDef& r = rates[i];
+      GetParam(r.amountIdx)->InitDouble(r.amountName, kDefaultAmount[i], 0., 1., 0.01, "");
+      GetParam(r.rateIdx)->InitDouble(r.rateName, kDefaultRate[i], 0.01, 60., 0.01, "", 0, "", IParam::ShapeExp());
     }
   }
 
