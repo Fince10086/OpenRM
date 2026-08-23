@@ -9,6 +9,7 @@
 #include <array>
 #include <deque>
 #include <functional>
+#include <string>
 #include <utility>
 #include <vector>
 

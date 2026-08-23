@@ -69,6 +69,9 @@ enum EText
   kTxtGreen,
   kTxtTipAgSwatch,
   kTxtTipAgPicker,
+  kTxtAudio,
+  kTxtAudioInput,
+  kTxtAudioOutput,
   kNumTexts
 };
 
@@ -101,6 +104,7 @@ inline const char* Tr(int id, int lang)
       "Red", "Yellow", "Blue", "Green",
       "Click: toggle random / Right-click: color",
       "Choose the random color to edit",
+      "AUDIO", "Input", "Output",
     },
     {
       "预设", "随机", "渐变", "范围", "速度", "混合",
@@ -127,6 +131,7 @@ inline const char* Tr(int id, int lang)
       "红", "黄", "蓝", "绿",
       "点击：开关随机 / 右键：选颜色",
       "选择要编辑的随机颜色",
+      "音频", "输入", "输出",
     },
   };
   return kTable[lang][id];

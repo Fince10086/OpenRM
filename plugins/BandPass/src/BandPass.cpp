@@ -620,14 +620,20 @@ public:
     std::function<void(int themeMode)> onTheme;
     std::function<void(int hue)> onHue;
     std::function<void(int satMax)> onSat;
+    // Audio device selection (standalone app only; empty in plug-in builds)
+    std::function<std::vector<std::string>(bool input)> listAudioDevices;
+    std::function<const char*(bool input)> currentAudioDevice;
+    std::function<void(bool input, const char* name)> onAudioDevice;
   };
 
   SettingsPanelControl(const IRECT& bounds, Hooks hooks)
   : IControl(bounds)
   , mHooks(std::move(hooks))
   {
-    mCard = IRECT(bounds.MW() - kCardW * 0.5f, bounds.MH() - kCardH * 0.5f,
-                  bounds.MW() + kCardW * 0.5f, bounds.MH() + kCardH * 0.5f);
+    mHasAudio = (bool) (mHooks.listAudioDevices && mHooks.currentAudioDevice && mHooks.onAudioDevice);
+    const float cardH = mHasAudio ? kCardHAudio : kCardH;
+    mCard = IRECT(bounds.MW() - kCardW * 0.5f, bounds.MH() - cardH * 0.5f,
+                  bounds.MW() + kCardW * 0.5f, bounds.MH() + cardH * 0.5f);
     const float bw = (kCardW - 2.f * kPad - kBtnGap) * 0.5f;
     mLangBtns[0]  = IRECT(mCard.L + kPad, mCard.T + kLangBtnY, mCard.L + kPad + bw, mCard.T + kLangBtnY + kBtnH);
     mLangBtns[1]  = IRECT(mCard.L + kPad + bw + kBtnGap, mCard.T + kLangBtnY, mCard.L + kPad + 2.f * bw + kBtnGap, mCard.T + kLangBtnY + kBtnH);
@@ -640,6 +646,8 @@ public:
       mSliderHeader[i] = IRECT(mCard.L + kPad, headerY, mCard.R - kPad, headerY + kHeaderH);
       const float trackY = mCard.T + (i == 0 ? kHueY : kSatY);
       mSliderTrack[i] = IRECT(mCard.L + kPad, trackY, mCard.L + kPad + rowW, trackY + kTrackH);
+      const float devY = mCard.T + (i == 0 ? kAudioRow1Y : kAudioRow2Y);
+      mAudioRow[i] = IRECT(mCard.L + kPad, devY, mCard.R - kPad, devY + kAudioRowH);
     }
     mHover = kHoverNone;
   }
@@ -669,6 +677,15 @@ public:
     DrawSlider(g, mSliderTrack[0], HueNorm());
     DrawSliderHeader(g, mSliderHeader[1], orm::Tr(orm::kTxtSaturation, lang), SatLabel(lang));
     DrawSlider(g, mSliderTrack[1], SatNorm());
+
+    if (mHasAudio)
+    {
+      g.DrawText(IText(kTitleSize, COL_900(), kFontBold, EAlign::Near, EVAlign::Middle),
+                 orm::Tr(orm::kTxtAudio, lang), IRECT(L, mCard.T + kAudioTitleY, mCard.R - kPad, mCard.T + kAudioTitleY + kTitleSize));
+      for (int i = 0; i < 2; ++i)
+        DrawDeviceRow(g, mAudioRow[i], orm::Tr(i == 0 ? orm::kTxtAudioInput : orm::kTxtAudioOutput, lang),
+                      mHooks.currentAudioDevice(i == 0), mHover == (i == 0 ? kHoverAudioIn : kHoverAudioOut));
+    }
   }
 
   void OnMouseDown(float x, float y, const IMouseMod& mod) override
@@ -693,6 +710,11 @@ public:
     }
     if (mSliderTrack[0].Contains(x, y)) { mDrag = kDragHue; DragTo(x, y); return; }
     if (mSliderTrack[1].Contains(x, y)) { mDrag = kDragSat; DragTo(x, y); return; }
+    if (mHasAudio)
+    {
+      if (mAudioRow[0].Contains(x, y)) { OpenDeviceMenu(true); return; }
+      if (mAudioRow[1].Contains(x, y)) { OpenDeviceMenu(false); return; }
+    }
   }
 
   void OnMouseDrag(float x, float y, float dX, float dY, const IMouseMod& mod) override
@@ -725,7 +747,7 @@ public:
   }
 
 private:
-  enum EHover { kHoverNone, kHoverLangZh, kHoverLangEn, kHoverThemeDark, kHoverThemeLight };
+  enum EHover { kHoverNone, kHoverLangZh, kHoverLangEn, kHoverThemeDark, kHoverThemeLight, kHoverAudioIn, kHoverAudioOut };
   enum EDrag  { kDragNone, kDragHue, kDragSat };
 
   float HueNorm() const { const int h = ThemeHue(); return (h - kHueMin) / (float) (kHueMax - kHueMin); }
@@ -761,6 +783,8 @@ private:
     if (mLangBtns[1].Contains(x, y)) return kHoverLangEn;
     if (mThemeBtns[0].Contains(x, y)) return kHoverThemeDark;
     if (mThemeBtns[1].Contains(x, y)) return kHoverThemeLight;
+    if (mHasAudio && mAudioRow[0].Contains(x, y)) return kHoverAudioIn;
+    if (mHasAudio && mAudioRow[1].Contains(x, y)) return kHoverAudioOut;
     return kHoverNone;
   }
 
@@ -809,8 +833,62 @@ private:
     return orm::Tr(kIds[idx], lang);
   }
 
+  void OpenDeviceMenu(bool isInput)
+  {
+    if (!GetUI() || !mHooks.onAudioDevice) return;
+    const std::vector<std::string> names = mHooks.listAudioDevices(isInput);
+    const char* current = mHooks.currentAudioDevice(isInput);
+    mMenu.Clear();
+    mMenu.SetFunction([this, isInput, names](IPopupMenu* menu) {
+      const int idx = menu ? menu->GetChosenItemIdx() : -1;
+      if (idx < 0 || idx >= (int) names.size()) return;
+      mHooks.onAudioDevice(isInput, names[idx].c_str());
+      SetDirty(false);
+    });
+    for (const std::string& n : names)
+      mMenu.AddItem(n.c_str());
+    for (int i = 0; i < (int) names.size(); ++i)
+      if (names[i] == current) { mMenu.CheckItemAlone(i); break; }
+    GetUI()->CreatePopupMenu(*this, mMenu, isInput ? mAudioRow[0] : mAudioRow[1], kNoValIdx);
+  }
+
+  void DrawDeviceRow(IGraphics& g, const IRECT& r, const char* label, const char* device, bool hover)
+  {
+    if (hover)
+      g.FillRect(COL_300(), r);
+    const IText labelTxt(16, COL_900(), kFontSemiBold, EAlign::Near, EVAlign::Middle);
+    g.DrawText(labelTxt, label, r);
+    IRECT labelBox = r;
+    g.MeasureText(labelTxt, label, labelBox);
+    const IText valTxt(16, COL_700(), kFontRegular, EAlign::Far, EVAlign::Middle);
+    const IRECT valRect(labelBox.R + 12.f, r.T, r.R, r.B);
+    WDL_String fitted;
+    FitText(g, valTxt, device, valRect.W(), fitted);
+    g.DrawText(valTxt, fitted.Get(), valRect);
+  }
+
+  static void FitText(IGraphics& g, const IText& t, const char* str, float maxW, WDL_String& out)
+  {
+    out.Set(str);
+    IRECT m;
+    g.MeasureText(t, out.Get(), m);
+    if (m.W() <= maxW) return;
+    int len = out.GetLength();
+    while (len > 0)
+    {
+      // drop the trailing UTF-8 code point, then retry with an ellipsis
+      do { --len; } while (len > 0 && ((unsigned char) out.Get()[len] & 0xC0) == 0x80);
+      out.SetLen(len);
+      out.Append("\xE2\x80\xA6");
+      g.MeasureText(t, out.Get(), m);
+      if (m.W() <= maxW) return;
+      out.SetLen(len);
+    }
+  }
+
   static constexpr float kCardW = 380.f;
   static constexpr float kCardH = 270.f;
+  static constexpr float kCardHAudio = 360.f;
   static constexpr float kPad = 20.f;
   static constexpr float kBtnH = 30.f;
   static constexpr float kBtnGap = 0.f;
@@ -826,6 +904,10 @@ private:
   static constexpr float kHueY = 174.f;
   static constexpr float kSatTitleY = 206.f;
   static constexpr float kSatY = 232.f;
+  static constexpr float kAudioTitleY = 262.f;
+  static constexpr float kAudioRow1Y = 288.f;
+  static constexpr float kAudioRow2Y = 320.f;
+  static constexpr float kAudioRowH = 28.f;
 
   static constexpr int kHueMin = 15;
   static constexpr int kHueMax = 360;
@@ -841,6 +923,9 @@ private:
   IRECT mThemeBtns[2];
   IRECT mSliderHeader[2];
   IRECT mSliderTrack[2];
+  IRECT mAudioRow[2];
+  IPopupMenu mMenu;
+  bool mHasAudio = false;
   EHover mHover = kHoverNone;
   EDrag mDrag = kDragNone;
 };
@@ -1268,28 +1353,44 @@ ORMBandPass::ORMBandPass(const InstanceInfo& info)
     pGraphics->AttachControl(new SectionTitleControl(IRECT(gearR + 8.f, 541, 1060, 575), "v" PLUG_VERSION_STR,
       IText(20, COL_500(), kFontRegular, EAlign::Near, EVAlign::Bottom), 1, 0));
 
+    SettingsPanelControl::Hooks settingsHooks;
+    settingsHooks.onLanguage = [this](int lang) {
+      if (lang != orm::UILang())
+      {
+        orm::UILang() = lang;
+        ApplyLanguage();
+      }
+    };
+    settingsHooks.onTheme = [this](int themeMode) {
+      mThemeMode = themeMode;
+      ApplyTheme();
+    };
+    settingsHooks.onHue = [this](int hue) {
+      ThemeHue() = hue;
+      RefreshThemeColors();
+    };
+    settingsHooks.onSat = [this](int satMax) {
+      ThemeSatMax() = satMax;
+      RefreshThemeColors();
+    };
+#ifdef APP_API
+    settingsHooks.listAudioDevices = [this](bool input) {
+      std::vector<std::string> names;
+      GetAPPAudioDeviceNames(input ? ERoute::kInput : ERoute::kOutput, names);
+      return names;
+    };
+    settingsHooks.currentAudioDevice = [this](bool input) {
+      return GetAPPCurrentAudioDeviceName(input ? ERoute::kInput : ERoute::kOutput);
+    };
+    settingsHooks.onAudioDevice = [this](bool input, const char* name) {
+      if (input)
+        SetAPPAudioDevices(name, nullptr);
+      else
+        SetAPPAudioDevices(nullptr, name);
+    };
+#endif
     mSettingsPanel = new SettingsPanelControl(IRECT(0.f, 0.f, (float) PLUG_WIDTH, (float) PLUG_HEIGHT),
-    {
-      [this](int lang) {
-        if (lang != orm::UILang())
-        {
-          orm::UILang() = lang;
-          ApplyLanguage();
-        }
-      },
-      [this](int themeMode) {
-        mThemeMode = themeMode;
-        ApplyTheme();
-      },
-      [this](int hue) {
-        ThemeHue() = hue;
-        RefreshThemeColors();
-      },
-      [this](int satMax) {
-        ThemeSatMax() = satMax;
-        RefreshThemeColors();
-      },
-    });
+      settingsHooks);
     mSettingsPanel->SetVisible(false);
     pGraphics->AttachControl(mSettingsPanel);
 
