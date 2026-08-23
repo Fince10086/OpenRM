@@ -1431,6 +1431,14 @@ void ORMBandPass::ProcessBlock(sample** inputs, sample** outputs, int nFrames)
     for (int c = 2; c < nOuts; ++c)
       std::memcpy(outputs[c], inputs[c], nFrames * sizeof(sample));
   }
+  else if (nOuts >= 2)
+  {
+    // Mono input, stereo output: duplicate the input so both channels are filtered independently
+    std::memcpy(mMonoIn.data(), inputs[0], nFrames * sizeof(sample));
+    mCore.process(inputs[0], mMonoIn.data(), outputs[0], outputs[1], nFrames, mWetL.data(), mWetR.data());
+    for (int c = 2; c < nOuts; ++c)
+      std::memcpy(outputs[c], outputs[0], nFrames * sizeof(sample));
+  }
   else
   {
     mCore.process(inputs[0], outputs[0], nFrames, mWetL.data());
@@ -1442,6 +1450,14 @@ void ORMBandPass::ProcessBlock(sample** inputs, sample** outputs, int nFrames)
   {
     sample* specL[2] = { mSpecInL.data(), mWetL.data() };
     sample* specR[2] = { mSpecInR.data(), mWetR.data() };
+    mSpectrumL.ProcessBlock(specL, nSpec, kCtrlTagPadL, 2);
+    mSpectrumR.ProcessBlock(specR, nSpec, kCtrlTagPadR, 2);
+  }
+  else if (nOuts >= 2)
+  {
+    // Duplicated mono input: both pads show the same input spectrum but their own wet signal
+    sample* specL[2] = { mSpecInL.data(), mWetL.data() };
+    sample* specR[2] = { mSpecInL.data(), mWetR.data() };
     mSpectrumL.ProcessBlock(specL, nSpec, kCtrlTagPadL, 2);
     mSpectrumR.ProcessBlock(specR, nSpec, kCtrlTagPadR, 2);
   }

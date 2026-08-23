@@ -114,6 +114,7 @@ private:
   std::array<sample, kMaxBlock> mSpecInR {};
   std::array<sample, kMaxBlock> mWetL {};
   std::array<sample, kMaxBlock> mWetR {};
+  std::array<sample, kMaxBlock> mMonoIn {}; // mono input duplicated to feed the right channel
 
   FilterNodePad*  mPadL = nullptr;
   FilterNodePad*  mPadR = nullptr;
