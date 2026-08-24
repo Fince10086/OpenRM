@@ -9,6 +9,13 @@
 //         随机映射色块、L/R 侧标、Ghost 层 —— 即"空 pad"。
 // 频率->x 映射与 BandPass 的 ShapeExp 参数 (20..20000) 归一化一致:
 //   x = L + W * ln(f/20)/ln(1000), 保证频段边界位置与 BandPass 完全对齐。
+//
+// L/R 双声道配色 (色环等边三角, 仅色相不同):
+//   L = 主题色相 - 120° (超过 0/360 循环), R = 主题色相 + 120°
+//   两条曲线之下、较低一条到框底的"重合区"用当前主题色相填充
+//   饱和度跟随主题档位 (0/15/30/50): 重合区 = 主题档位; L/R 区域保底 15
+// 渐变规则 (方案2): 锚定到填充块自身, 曲线最高点满不透明度,
+//   向下衰减到 kGradientMinAlpha, 弱信号贴底时仍清晰可见。
 
 #include "IControls.h"
 #include "ISender.h"
@@ -33,9 +40,10 @@ public:
   };
 
   SpectrumPad(const IRECT &bounds) : IControl(bounds) {
-    mBandMax.assign(kSpectrumBands, 0.f);
-    mBandUsed.assign(kSpectrumBands, 0);
-    mSpecPts.reserve(kSpectrumBands);
+    mBandAcc.assign(kSpectrumBands, BandAcc{});
+    mSpecPtsL.reserve(kSpectrumBands);
+    mSpecPtsR.reserve(kSpectrumBands);
+    mSpecPtsO.reserve(kSpectrumBands);
   }
 
   void OnMsgFromDelegate(int msgTag, int dataSize, const void *pData) override {
@@ -50,15 +58,17 @@ public:
 
       const double updatePeriod = (double)nBins * 2.0 / 4.0 / std::max(mSampleRate, 1.0);
       mAttackCoeff = (float)std::exp(-updatePeriod / 0.003);
-      mReleaseCoeff = (float)std::exp(-updatePeriod / 0.08);
+      mReleaseCoeff = (float)std::exp(-updatePeriod / 0.2);
 
-      if (mSpectrum.size() != (size_t)nBins)
-        mSpectrum.assign(nBins, 0.f);
       const float a = mAttackCoeff, r = mReleaseCoeff;
-      for (int i = 0; i < nBins; ++i) {
-        const float raw = d.vals[0][i], prev = mSpectrum[i];
-        const float coef = (raw > prev) ? a : r;
-        mSpectrum[i] = coef * prev + (1.f - coef) * raw;
+      for (int c = 0; c < 2; ++c) {
+        if (mSpectrum[c].size() != (size_t)nBins)
+          mSpectrum[c].assign(nBins, 0.f);
+        for (int i = 0; i < nBins; ++i) {
+          const float raw = d.vals[c][i], prev = mSpectrum[c][i];
+          const float coef = (raw > prev) ? a : r;
+          mSpectrum[c][i] = coef * prev + (1.f - coef) * raw;
+        }
       }
       SetDirty(false);
     } else if (msgTag == kMsgTagSampleRate) {
@@ -79,12 +89,26 @@ public:
   }
 
 private:
+  struct Pt {
+    float x, y;
+  };
+  struct BandAcc {
+    float max[2] = {0.f, 0.f}; // 每 band 每通道峰值
+    char used[2] = {0, 0};     // 每 band 每通道是否有数据
+  };
+
   // 频率(Hz) -> 归一化 x (0..1), 与 BandPass Freq 参数 (20..20000, ShapeExp) 一致
   static float FreqNorm(double hz) {
     return (float)(std::log(std::clamp(hz, 20.0, 20000.0) / 20.0) / std::log(20000.0 / 20.0));
   }
 
   float XOf(IGraphics &, double f) const { return mRECT.L + FreqNorm(f) * mRECT.W(); }
+
+  // 色相循环: 超出 0..360 时折回
+  static int WrapHue(int h) {
+    h %= 360;
+    return h < 0 ? h + 360 : h;
+  }
 
   void DrawTrack(IGraphics &g) {
     struct Band {
@@ -124,49 +148,75 @@ private:
   }
 
   void DrawSpectrum(IGraphics &g) {
-    if (mSpectrum.empty() || mNumBins <= 0)
+    if (mSpectrum[0].empty() || mSpectrum[1].empty() || mNumBins <= 0)
       return;
     if (mRECT.W() <= 0.f || mRECT.H() <= 0.f)
       return;
 
-    // 输入频谱填充色: 与 BandPass 中"输入"曲线的配色一致 (COL_500 渐变)。
-    // 每帧取色, 保证设置面板改主题/色相后立即刷新。
-    const IColor cIn = COL_500();
+    // 通道色: L/R/重合 = 色环等边三角, 色相分别是 主题-120 / 主题 / 主题+120
+    // 饱和度跟随主题档位: 重合区 = 主题档位 (0 时即中性灰);
+    // L/R 区域 = 主题档位但保底 15, 保证 ±120° 色相偏移至少隐约可见。
+    // 亮度沿用 COL_500 档, 随主题明暗自动跟随
+    const int hue = ThemeHue();
+    const float b = (ThemeMode() ? kDarkB[2] : kLightB[2]) / 100.f;
+    const float sO = std::max(ThemeSatMax(), 0) / 100.f;
+    const float sL = std::max(ThemeSatMax(), 15) / 100.f;
+    const IColor cL = HSBToIColor(WrapHue(hue - 120), sL, b);
+    const IColor cR = HSBToIColor(WrapHue(hue + 120), sL, b);
+    const IColor cO = HSBToIColor(hue, sO, b);
 
     const double binHz = mSampleRate / std::max((double)mNumBins * 2.0, 1.0);
+    const double logLo = std::log2(kSpecFreqLo);
+    const double logHi = std::log2(kSpecFreqHi);
+    const double logBand = (logHi - logLo) / kSpectrumBands;
 
-    mSpecPts.clear();
-    std::fill(mBandMax.begin(), mBandMax.end(), 0.f);
-    std::fill(mBandUsed.begin(), mBandUsed.end(), 0);
-    {
-      const double logLo = std::log2(kSpecFreqLo);
-      const double logHi = std::log2(kSpecFreqHi);
-      const double logBand = (logHi - logLo) / kSpectrumBands;
-      for (int i = 0; i < mNumBins && i < (int)mSpectrum.size(); ++i) {
-        const double f = (double)i * binHz;
-        if (f < kSpecFreqLo || f > kSpecFreqHi)
-          continue;
-        const int b = (int)((std::log2(f) - logLo) / logBand);
-        if (b < 0 || b >= kSpectrumBands)
-          continue;
-        const float amp = mSpectrum[i];
-        if (amp > mBandMax[b])
-          mBandMax[b] = amp;
-        mBandUsed[b] = 1;
-      }
-      for (int b = 0; b < kSpectrumBands; ++b) {
-        if (!mBandUsed[b])
-          continue;
-        const double fCenter = kSpecFreqLo * std::exp2(logBand * (b + 0.5));
-        const float x = mRECT.L + FreqNorm(fCenter) * mRECT.W();
-        const float amp = mBandMax[b];
-        const float db =
-            (amp > 1e-6f) ? std::clamp(20.f * std::log10(amp), kSpectrumBottomDb, 0.f) : kSpectrumBottomDb;
-        const float y = mRECT.B - (db - kSpectrumBottomDb) / (0.f - kSpectrumBottomDb) * mRECT.H();
-        mSpecPts.push_back({x, y});
+    auto ampToY = [&](float amp) -> float {
+      const float db =
+          (amp > 1e-6f) ? std::clamp(20.f * std::log10(amp), kSpectrumBottomDb, 0.f) : kSpectrumBottomDb;
+      return mRECT.B - (db - kSpectrumBottomDb) / (0.f - kSpectrumBottomDb) * mRECT.H();
+    };
+
+    mSpecPtsL.clear();
+    mSpecPtsR.clear();
+    mSpecPtsO.clear();
+    for (auto &acc : mBandAcc)
+      acc = BandAcc{};
+
+    for (int i = 0; i < mNumBins && i < (int)mSpectrum[0].size(); ++i) {
+      const double f = (double)i * binHz;
+      if (f < kSpecFreqLo || f > kSpecFreqHi)
+        continue;
+      const int b = (int)((std::log2(f) - logLo) / logBand);
+      if (b < 0 || b >= kSpectrumBands)
+        continue;
+      for (int c = 0; c < 2; ++c) {
+        const float amp = mSpectrum[c][i];
+        if (amp > mBandAcc[b].max[c])
+          mBandAcc[b].max[c] = amp;
+        if (amp > 1e-6f)
+          mBandAcc[b].used[c] = 1;
       }
     }
-    std::vector<Pt> &pts = mSpecPts;
+
+    for (int b = 0; b < kSpectrumBands; ++b) {
+      const BandAcc &acc = mBandAcc[b];
+      const double fCenter = kSpecFreqLo * std::exp2(logBand * (b + 0.5));
+      const float x = mRECT.L + FreqNorm(fCenter) * mRECT.W();
+      if (acc.used[0])
+        mSpecPtsL.push_back({x, ampToY(acc.max[0])});
+      if (acc.used[1])
+        mSpecPtsR.push_back({x, ampToY(acc.max[1])});
+      // 重合区: 两条曲线之下、较低一条(y 较大)到框底, 用主题色相压在最上层
+      if (acc.used[0] && acc.used[1])
+        mSpecPtsO.push_back({x, std::max(ampToY(acc.max[0]), ampToY(acc.max[1]))});
+    }
+
+    DrawFill(g, mSpecPtsL, cL);
+    DrawFill(g, mSpecPtsR, cR);
+    DrawFill(g, mSpecPtsO, cO);
+  }
+
+  void DrawFill(IGraphics &g, std::vector<Pt> &pts, const IColor &color) {
     if (pts.size() < 2)
       return;
 
@@ -197,29 +247,35 @@ private:
     g.PathLineTo(pts[0].x, mRECT.B);
     g.PathClose();
 
-    IPattern fill = IPattern::CreateLinearGradient(mRECT, EDirection::Vertical,
-                                                   {IColorStop(cIn, 0.f),
-                                                    IColorStop(IColor(0, cIn.R, cIn.G, cIn.B), 1.f)});
+    // 渐变锚定到填充块自身 (方案2): 曲线最高点 = 满不透明度,
+    // 向下衰减到框底的最小不透明度。弱信号曲线即使贴底也保持清晰,
+    // 不再受"绝对位置越靠下越透明"影响。
+    float topY = mRECT.B;
+    for (const Pt &p : pts)
+      topY = std::min(topY, p.y);
+    const IRECT gradRect(mRECT.L, topY, mRECT.R, mRECT.B);
+    IPattern fill = IPattern::CreateLinearGradient(
+        gradRect, EDirection::Vertical,
+        {IColorStop(color, 0.f), IColorStop(IColor(kGradientMinAlpha, color.R, color.G, color.B), 1.f)});
     g.PathFill(fill);
   }
 
   static constexpr float kSpectrumBottomDb = -85.f;
+  static constexpr int kGradientMinAlpha = 40; // 填充底部最小不透明度 (方案2 下限)
   static constexpr int kSpectrumBands = 256;
   static constexpr float kSpecFreqLo = 20.f;
   static constexpr float kSpecFreqHi = 20000.f;
 
-  struct Pt {
-    float x, y;
-  };
-  std::vector<float> mSpectrum; // 平滑后的输入频谱幅度 (幅度, 非 dB)
+  std::vector<float> mSpectrum[2]; // 平滑后的 L/R 频谱幅度 (幅度, 非 dB)
   float mAttackCoeff = 0.2f;
   float mReleaseCoeff = 0.9f;
   int mNumBins = 2048;
   double mSampleRate = 48000.0;
 
-  std::vector<Pt> mSpecPts;    // 预分配: 频谱填充点
-  std::vector<float> mBandMax; // 预分配: 每 band 峰值
-  std::vector<char> mBandUsed; // 预分配: band 是否有数据
+  std::vector<Pt> mSpecPtsL;    // 预分配: L 填充点
+  std::vector<Pt> mSpecPtsR;    // 预分配: R 填充点
+  std::vector<Pt> mSpecPtsO;    // 预分配: 重合区填充点 (主题色)
+  std::vector<BandAcc> mBandAcc; // 预分配: 每 band 双通道峰值
 };
 
 END_IGRAPHICS_NAMESPACE
