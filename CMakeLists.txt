@@ -15,6 +15,7 @@ endif()
 add_compile_definitions(IGRAPHICS_NO_CONTEXT_MENU)
 
 add_subdirectory(plugins/BandPass)
+add_subdirectory(plugins/Analyzer)
 
 # VST3 SDK 缺失时 iPlug2 只会静默跳过目标, 这里给出明确提示
 if(TARGET ORMBandPass-vst3)
