@@ -140,3 +140,12 @@ BEGIN
         VALUE "Translation", 0x409, 1200
     END
 END
+
+/////////////////////////////////////////////////////////////////////////////
+// Fonts
+//
+
+#include "..\config.h"
+MIXED_FN TTF MIXED_FN
+MIXED_SB_FN TTF MIXED_SB_FN
+MIXED_BD_FN TTF MIXED_BD_FN

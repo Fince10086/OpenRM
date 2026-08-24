@@ -52,7 +52,15 @@ function(openrm_add_plugin NAME)
   # nlohmann/json 等第三方工具头 (PresetFileIO 使用)
   target_include_directories(_${NAME}-base INTERFACE "${IPLUG2_DIR}/Dependencies/Extras")
 
-  if(NOT APPLE)
+  if(WIN32)
+    # Windows: 让 VST3 dll 也编译 main.rc 以嵌入字体与资源。
+    set(_rc_file "${CMAKE_CURRENT_SOURCE_DIR}/resources/main.rc")
+    if(EXISTS "${_rc_file}" AND TARGET ${NAME}-vst3)
+      target_sources(${NAME}-vst3 PRIVATE "${_rc_file}")
+      set_source_files_properties("${_rc_file}" PROPERTIES
+        COMPILE_FLAGS "/I\"${CMAKE_CURRENT_SOURCE_DIR}/resources/fonts\" /I\"${CMAKE_CURRENT_SOURCE_DIR}/resources/img\" /I\"${CMAKE_CURRENT_SOURCE_DIR}/resources\""
+      )
+    endif()
     return()
   endif()
 
