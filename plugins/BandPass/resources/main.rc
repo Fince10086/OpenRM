@@ -127,12 +127,12 @@ BEGIN
         BEGIN
             VALUE "CompanyName", "OpenRM"
             VALUE "FileDescription", "ORM BandPass - Dynamically controllable stereo bandpass filter"
-            VALUE "FileVersion", "0.5.0"
+            VALUE "FileVersion", "0.5.1"
             VALUE "InternalName", "ORMBandPass"
             VALUE "LegalCopyright", "Copyright 2026 OpenRM"
             VALUE "OriginalFilename", "ORMBandPass-app.exe"
             VALUE "ProductName", "ORM BandPass"
-            VALUE "ProductVersion", "0.5.0"
+            VALUE "ProductVersion", "0.5.1"
         END
     END
     BLOCK "VarFileInfo"
