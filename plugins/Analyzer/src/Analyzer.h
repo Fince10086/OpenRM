@@ -50,8 +50,10 @@ private:
   double mSentSampleRate = 0.0;
   int mSentFFTSize = 0;
   double mSentRelease = -1.0;
+  double mSentRange = -1.0;
 
   SpectrumPad *mSpectrumPad = nullptr;
+  ORMSlider *mRangeSlider = nullptr;
   ORMSlider *mReleaseSlider = nullptr;
   ORMSlider *mMixSlider = nullptr;
 

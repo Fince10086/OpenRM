@@ -13,6 +13,7 @@ inline int &UILang() {
 enum EText {
   kTxtMix,
   kTxtRelease,
+  kTxtRange,
   kTxtUndo,
   kTxtRedo,
   kTxtSave,
@@ -32,6 +33,7 @@ enum EText {
   kTxtChinese,
   kTxtTipMix,
   kTxtTipRelease,
+  kTxtTipRange,
   kTxtAudio,
   kTxtAudioInput,
   kTxtAudioOutput,
@@ -44,6 +46,7 @@ inline const char *Tr(int id, int lang) {
       {
           "MIX",
           "RELEASE",
+          "RANGE",
           "UNDO",
           "REDO",
           "SAVE",
@@ -63,6 +66,7 @@ inline const char *Tr(int id, int lang) {
           "中文",
           "Dry/wet mix",
           "Spectrum display release time",
+          "Spectrum display bottom (dBFS)",
           "AUDIO",
           "Input",
           "Output",
@@ -71,6 +75,7 @@ inline const char *Tr(int id, int lang) {
       {
           "混合",
           "释放",
+          "范围",
           "撤销",
           "重做",
           "保存",
@@ -90,6 +95,7 @@ inline const char *Tr(int id, int lang) {
           "中文",
           "干湿混合",
           "频谱显示释放时间",
+          "频谱显示下限（dBFS）",
           "音频",
           "输入",
           "输出",

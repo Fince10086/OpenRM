@@ -38,6 +38,7 @@ public:
     kMsgTagSampleRate = 1,
     kMsgTagFFTSize,
     kMsgTagRelease,
+    kMsgTagRange,
   };
 
   SpectrumPad(const IRECT &bounds) : IControl(bounds) {
@@ -84,6 +85,10 @@ public:
       float releaseSec;
       stream.Get(&releaseSec, 0);
       mReleaseSec = std::clamp(releaseSec, 0.01f, 1.f);
+    } else if (msgTag == kMsgTagRange) {
+      float rangeDb;
+      stream.Get(&rangeDb, 0);
+      mBottomDb = -std::clamp(rangeDb, 80.f, 120.f);
     }
   }
 
@@ -177,8 +182,8 @@ private:
 
     auto ampToY = [&](float amp) -> float {
       const float db =
-          (amp > 1e-6f) ? std::clamp(20.f * std::log10(amp), kSpectrumBottomDb, 0.f) : kSpectrumBottomDb;
-      return mRECT.B - (db - kSpectrumBottomDb) / (0.f - kSpectrumBottomDb) * mRECT.H();
+          (amp > 1e-6f) ? std::clamp(20.f * std::log10(amp), mBottomDb, 0.f) : mBottomDb;
+      return mRECT.B - (db - mBottomDb) / (0.f - mBottomDb) * mRECT.H();
     };
 
     mSpecPtsL.clear();
@@ -265,7 +270,6 @@ private:
     g.PathFill(fill);
   }
 
-  static constexpr float kSpectrumBottomDb = -85.f;
   static constexpr int kGradientMinAlpha = 40; // 填充底部最小不透明度 (方案2 下限)
   static constexpr int kSpectrumBands = 256;
   static constexpr float kSpecFreqLo = 20.f;
@@ -275,6 +279,7 @@ private:
   float mAttackCoeff = 0.2f;
   float mReleaseCoeff = 0.9f;
   float mReleaseSec = 0.2f; // 释放时间常数 (s), 由插件 Release 参数下发
+  float mBottomDb = -90.f;  // 频谱显示下限 (dBFS), 由插件 Range 参数下发 (-80..-120)
   int mNumBins = 2048;
   double mSampleRate = 48000.0;
 
