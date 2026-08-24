@@ -1160,15 +1160,15 @@ void ORMBandPass::RefreshSlotLabels() {
 void ORMBandPass::SaveFile() {
   if (!GetUI())
     return;
-  mDialogFileName.Set("ORMBandPass Presets");
+  mDialogFileName.Set("ORM BandPass Presets");
   mDialogPath.Set("");
-  GetUI()->PromptForFile(mDialogFileName, mDialogPath, EFileAction::Save, "json",
+  GetUI()->PromptForFile(mDialogFileName, mDialogPath, EFileAction::Save, "orm",
                          [this](const WDL_String &fileName, const WDL_String &path) {
                            if (fileName.GetLength() == 0)
                              return;
                            std::string full = fileName.Get();
-                           if (full.size() < 5 || full.compare(full.size() - 5, 5, ".json") != 0)
-                             full += ".json";
+                           if (full.size() < 4 || full.compare(full.size() - 4, 4, ".orm") != 0)
+                             full += ".orm";
                            std::string err;
                            WritePresetFileTo(full, err);
                            if (!err.empty() && GetUI())
@@ -1180,7 +1180,7 @@ void ORMBandPass::LoadFile() {
   if (!GetUI())
     return;
   mDialogFileName.Set("");
-  GetUI()->PromptForFile(mDialogFileName, mDialogPath, EFileAction::Open, "json",
+  GetUI()->PromptForFile(mDialogFileName, mDialogPath, EFileAction::Open, "orm",
                          [this](const WDL_String &fileName, const WDL_String &path) {
                            if (fileName.GetLength() == 0)
                              return;

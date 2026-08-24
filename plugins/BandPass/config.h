@@ -1,4 +1,4 @@
-#define PLUG_NAME "ORMBandPass"
+#define PLUG_NAME "ORM BandPass"  // 显示名 (DAW 列表 / app 标题), 允许空格
 #define PLUG_MFR "OpenRM"
 #define PLUG_VERSION_HEX 0x00000400
 #define PLUG_VERSION_STR "0.4.0"

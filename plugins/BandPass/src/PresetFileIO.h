@@ -2,9 +2,15 @@
 #include <nlohmann/json.hpp>
 
 #include <fstream>
+#include <cstring>
+#include <iterator>
 #include <string>
 #include <utility>
 #include <vector>
+
+// ORM 系列预设统一 .orm 后缀; 文件头 magic 标识插件类型,
+// 不同插件 magic 不同 (BandPass = "bandpass"), 防止预设跨插件误载。
+constexpr const char *kPresetMagic = "bandpass";
 
 struct PresetFileData {
   std::vector<std::vector<double>> presets;
@@ -27,7 +33,7 @@ inline bool WritePresetFile(const std::string &path, const PresetFileData &data,
       err = "Cannot open file for writing: " + path;
       return false;
     }
-    f << j.dump(2);
+    f << kPresetMagic << "\n" << j.dump(2);
     return true;
   } catch (const std::exception &e) {
     err = std::string("JSON write error: ") + e.what();
@@ -41,10 +47,20 @@ inline bool ReadPresetFile(const std::string &path, PresetFileData &out, std::st
     err = "Cannot open file: " + path;
     return false;
   }
+  const std::string content((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+
+  // 校验识别头, 拒绝其他插件/非 ORM 预设
+  if (content.rfind(kPresetMagic, 0) != 0) {
+    err = std::string("Not an ORM BandPass preset file (missing '") + kPresetMagic + "' header)";
+    return false;
+  }
+  std::size_t pos = std::strlen(kPresetMagic);
+  while (pos < content.size() && (content[pos] == '\n' || content[pos] == '\r'))
+    ++pos;
 
   nlohmann::json j;
   try {
-    f >> j;
+    j = nlohmann::json::parse(content.substr(pos));
   } catch (const std::exception &e) {
     err = std::string("JSON parse error: ") + e.what();
     return false;

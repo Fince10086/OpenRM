@@ -7,13 +7,13 @@
 	<key>CFBundleExecutable</key>
 	<string>ORMBandPass</string>
 	<key>CFBundleGetInfoString</key>
-	<string>ORMBandPass v0.4.0 Copyright 2026 OpenRM</string>
+	<string>ORM BandPass v0.4.0 Copyright 2026 OpenRM</string>
 	<key>CFBundleIdentifier</key>
 	<string>com.OpenRM.vst3.ORMBandPass</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>ORMBandPass</string>
+	<string>ORM BandPass</string>
 	<key>CFBundlePackageType</key>
 	<string>BNDL</string>
 	<key>CFBundleShortVersionString</key>

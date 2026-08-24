@@ -6,13 +6,13 @@
 	<array>
 		<dict>
 			<key>description</key>
-			<string>ORMBandPass</string>
+			<string>ORM BandPass</string>
 			<key>factoryFunction</key>
 			<string>ORMBandPass_Factory</string>
 			<key>manufacturer</key>
 			<string>OpRM</string>
 			<key>name</key>
-			<string>OpenRM: ORMBandPass</string>
+			<string>OpenRM: ORM BandPass</string>
 			<key>sandboxSafe</key>
 			<true/>
 			<key>subtype</key>
@@ -20,23 +20,23 @@
 			<key>type</key>
 			<string>aufx</string>
 			<key>version</key>
-			<integer>768</integer>
+			<integer>1024</integer>
 		</dict>
 	</array>
 	<key>AudioUnit Version</key>
-	<string>0x00000300</string>
+	<string>0x00000400</string>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>English</string>
 	<key>CFBundleExecutable</key>
 	<string>ORMBandPass</string>
 	<key>CFBundleGetInfoString</key>
-	<string>ORMBandPass v0.4.0 Copyright 2026 OpenRM</string>
+	<string>ORM BandPass v0.4.0 Copyright 2026 OpenRM</string>
 	<key>CFBundleIdentifier</key>
 	<string>com.OpenRM.audiounit.ORMBandPass</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>ORMBandPass</string>
+	<string>ORM BandPass</string>
 	<key>CFBundlePackageType</key>
 	<string>BNDL</string>
 	<key>CFBundleShortVersionString</key>
