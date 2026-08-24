@@ -6,7 +6,7 @@
 //
 // Analyzer 是从 BandPass 减出来的第一步: mix 参数 (撤销/重做、保存/读取的载体),
 // release/attack 参数 (频谱显示释放/上升时间), range 参数 (频谱显示下限 dBFS 幅度),
-// res 参数 (频谱分析 FFT 尺寸档位), 频谱显示本身为纯展示, 无参数。
+// res/lfRes 参数 (FFT 尺寸 / CQT 低频分辨率档位), mode 参数 (分析引擎选择)。
 
 #include <array>
 
@@ -16,6 +16,8 @@ enum EParams {
   kRange,
   kAttack,
   kRes,
+  kLfRes,
+  kMode,
   kNumParams
 };
 
@@ -24,5 +26,10 @@ using ParamSnapshot = std::array<double, kNumParams>;
 // 分析档位: 参数存档位索引, 经下表映射为实际值 (默认 = 最高档)
 constexpr int kResOptions[] = {1024, 2048, 4096};
 constexpr int kNumResOptions = 3;
+constexpr int kLfResOptions[] = {40, 20, 10};
+constexpr int kNumLfResOptions = 3;
+
+// 分析引擎
+enum EAnalyzerMode { kModeFFT = 0, kModeCQT = 1 };
 
 enum EControlTags { kCtrlTagPad = 100, kCtrlTagCpu = 101 };

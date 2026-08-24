@@ -75,12 +75,15 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
   // Analyzer 目前为纯分析器: mix 参数保留自 BandPass, 作为撤销/重做、保存/读取的
   // 载体 (DSP 直通, 暂不参与处理); release/attack 参数控制频谱显示的释放/上升
   // 时间 (s); range 参数控制频谱显示下限 (-80..-120 dBFS, 存正数幅度);
-  // res 参数为分析 FFT 尺寸档位索引 (映射见 Params.h), 默认最高档 (4096)。
+  // res/lfRes 为 FFT 尺寸 / CQT 低频分辨率档位索引 (映射见 Params.h);
+  // mode 选择分析引擎 (FFT / CQT)。
   GetParam(kMix)->InitDouble("Mix", 1., 0., 1., 0.01, "");
   GetParam(kRelease)->InitDouble("Release", 0.2, 0.05, 0.5, 0.01, "s");
   GetParam(kRange)->InitDouble("Range", 90, 80, 120, 10, "");
   GetParam(kAttack)->InitDouble("Attack", 0.05, 0.001, 0.1, 0.001, "s");
   GetParam(kRes)->InitInt("Res", kNumResOptions - 1, 0, kNumResOptions - 1, "");
+  GetParam(kLfRes)->InitInt("LfRes", 0, 0, kNumLfResOptions - 1, "");
+  GetParam(kMode)->InitInt("Mode", kModeFFT, 0, 1, "");
 
   mDefaultSnapshot = Snapshot();
   mStableSnapshot = Snapshot();
@@ -169,11 +172,22 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     mCpuMeter = new CpuMeterControl(IRECT(kCol1X, 30, kPanelR, 60));
     pGraphics->AttachControl(mCpuMeter, kCtrlTagCpu);
 
-    // RES (频谱分析 FFT 尺寸档位 1024/2048/4096, 位于 RANGE 上方)
+    // 分析引擎切换按钮 (FFT / CQT, 与 CPU 框同宽; CQT 时黑底白字,
+    // 样式参考 BandPass 的 LINK 按钮 = FlatToggleControl)
+    IVStyle toggleStyle = btnStyle;
+    toggleStyle.showLabel = false;
+    toggleStyle.showValue = false;
+    mModeToggle = new FlatToggleControl(IRECT(kCol1X, 192, kPanelR, 222), kMode, " ", toggleStyle, "FFT",
+                                        "CQT");
+    pGraphics->AttachControl(mModeToggle);
+    bindTip(mModeToggle, orm::kTxtTipMode);
+
+    // RES / LF RES 滑块 (FFT 模式为 FFT 尺寸档位, CQT 模式切换为低频分辨率档位)
     mResSlider =
-        new ORMSlider(IRECT(kCol1X, 192, kPanelR, 234), kRes, "RES", style, EDirection::Horizontal);
+        new ORMSlider(IRECT(kCol1X, 234, kPanelR, 276), kRes, "RES", style, EDirection::Horizontal);
     pGraphics->AttachControl(mResSlider);
-    bindText(orm::kTxtRes, [this](const char *s) { mResSlider->SetHeaderLabel(s); });
+    bindText(orm::kTxtRes, [this](const char *) { UpdateResHeader(); });
+    bindText(orm::kTxtLfRes, [this](const char *) { UpdateResHeader(); });
     bindTip(mResSlider, orm::kTxtTipRes);
 
     // RANGE (频谱显示下限 dBFS, 列顶)
@@ -335,16 +349,23 @@ void ORMAnalyzer::ProcessBlock(sample **inputs, sample **outputs, int nFrames) {
       std::memcpy(outputs[c], outputs[0], nFrames * sizeof(sample));
   }
 
-  // 频谱: 先快照输入再交给 STFT (输入/输出可能别名, 与 BandPass 一致)
+  // 频谱: 先快照输入再交给分析引擎 (输入/输出可能别名, 与 BandPass 一致)
+  const bool cqt = GetParam(kMode)->Value() > 0.5;
   if (nIns >= 2) {
     std::memcpy(mSpecInL.data(), inputs[0], nFrames * sizeof(sample));
     std::memcpy(mSpecInR.data(), inputs[1], nFrames * sizeof(sample));
     sample *spec[2] = {mSpecInL.data(), mSpecInR.data()};
-    mSpectrum.ProcessBlock(spec, nFrames, kCtrlTagPad, 2);
+    if (cqt)
+      mCQT.ProcessBlock(spec, nFrames, kCtrlTagPad, 2);
+    else
+      mSpectrum.ProcessBlock(spec, nFrames, kCtrlTagPad, 2);
   } else {
     std::memcpy(mSpecInL.data(), inputs[0], nFrames * sizeof(sample));
     sample *spec[1] = {mSpecInL.data()};
-    mSpectrum.ProcessBlock(spec, nFrames, kCtrlTagPad, 1);
+    if (cqt)
+      mCQT.ProcessBlock(spec, nFrames, kCtrlTagPad, 1);
+    else
+      mSpectrum.ProcessBlock(spec, nFrames, kCtrlTagPad, 1);
   }
 
   // CPU 占用率结算: 处理耗时 / 块时长, 一阶平滑 (0.1 → 约 150ms 时间常数 @60Hz 推送)
@@ -359,6 +380,8 @@ void ORMAnalyzer::ProcessBlock(sample **inputs, sample **outputs, int nFrames) {
 
 void ORMAnalyzer::OnReset() {
   mSpectrum.SetFFTSizeAndOverlap(CurrentFFTSize(), 4);
+  mCQT.SetSampleRate(GetSampleRate());
+  mCQT.SetLfRes(CurrentLfRes());
 
   SendSpectrumConfig();
   mSentSampleRate = GetSampleRate();
@@ -376,12 +399,36 @@ void ORMAnalyzer::SendSpectrumConfig() {
   SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagRelease, sizeof(float), &release);
   SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagRange, sizeof(float), &range);
   SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagAttack, sizeof(float), &attack);
+  const int mode = (int)GetParam(kMode)->Value();
+  SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagMode, sizeof(int), &mode);
+  if (mode == kModeCQT)
+    SendCQTBandFreqs();
+}
+
+void ORMAnalyzer::SendCQTBandFreqs() {
+  const auto &freqs = mCQT.BandFreqs();
+  if (freqs.empty())
+    return;
+  std::vector<float> buf(freqs.begin(), freqs.end());
+  SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagCQTBands,
+                             (int)(buf.size() * sizeof(float)), buf.data());
+}
+
+void ORMAnalyzer::UpdateResHeader() {
+  if (!mResSlider)
+    return;
+  const bool cqt = GetParam(kMode)->Value() > 0.5;
+  mResSlider->SetHeaderLabel(
+      cqt ? orm::Tr(orm::kTxtLfRes, orm::UILang()) : orm::Tr(orm::kTxtRes, orm::UILang()));
 }
 
 void ORMAnalyzer::OnParamChange(int paramIdx, EParamSource source, int sampleOffset) {
-  // 分析档位变化时在音频线程重配 STFT (窗口/重叠/历史缓存重建, 频谱短暂清零)
+  // 分析配置变化时在音频线程重配对应引擎 (重建会清空频谱历史, 显示短暂清零)
   if (paramIdx == kRes)
     mSpectrum.SetFFTSizeAndOverlap(CurrentFFTSize(), 4);
+  else if (paramIdx == kLfRes)
+    mCQT.SetLfRes(CurrentLfRes());
+  // kMode: DSP 路由在 ProcessBlock 按参数分支, 无需额外动作
 }
 
 void ORMAnalyzer::OnParamChangeUI(int paramIdx, EParamSource source) {
@@ -407,6 +454,20 @@ void ORMAnalyzer::RefreshAfterEdit() {
 
 void ORMAnalyzer::OnIdle() {
   mSpectrum.TransmitData(*this);
+  mCQT.TransmitData(*this);
+
+  // 分析模式变化: 切换滑块参数 (RES<->LF RES)、重发 pad 模式消息与 band 频率表
+  const int mode = (int)GetParam(kMode)->Value();
+  if (mode != mSentMode) {
+    mSentMode = mode;
+    if (mResSlider) {
+      mResSlider->SetParamIdx(mode == kModeCQT ? kLfRes : kRes);
+      UpdateResHeader();
+    }
+    SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagMode, sizeof(int), &mode);
+    if (mode == kModeCQT)
+      SendCQTBandFreqs();
+  }
 
   // 仅在采样率/FFT 尺寸/释放/下限/上升时间变化时重发 (如 UI 在 OnReset 之后才打开)
   const double sr = GetSampleRate();
@@ -443,14 +504,15 @@ void ORMAnalyzer::OnUIClose() {
   mReleaseSlider = nullptr;
   mMixSlider = nullptr;
   mCpuMeter = nullptr;
+  mModeToggle = nullptr;
   mSettingsPanel = nullptr;
   mTextBindings.clear();
   mTooltipBindings.clear();
-  // 重开 UI 后 pad 是新控件, 重置去重标记让下一次 OnIdle 重发完整频谱配置
-  // (采样率/FFT 尺寸/释放/下限/上升时间), 避免新 pad 停留在默认值上。
+  // 重开 UI 后控件是新的, 重置去重标记让下一次 OnIdle 重发完整配置与模式同步
   mSentSampleRate = 0.0;
   mSentFFTSize = 0;
   mSentRelease = -1.0;
+  mSentMode = -1;
   mSentRange = -1.0;
   mSentAttack = -1.0;
 }

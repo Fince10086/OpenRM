@@ -3,6 +3,7 @@
 #include "IPlug_include_in_plug_hdr.h"
 #include "Params.h"
 #include "dsp/SpectrumSTFT.h"
+#include "dsp/CQTAnalyzer.h"
 #include "Strings.h"
 
 #include <algorithm>
@@ -24,6 +25,7 @@ class SpectrumPad;
 class ORMSlider;
 class SettingsPanelControl;
 class CpuMeterControl;
+class FlatToggleControl;
 } // namespace igraphics
 } // namespace iplug
 
@@ -44,6 +46,7 @@ public:
 
 private:
   SpectrumSTFT<2> mSpectrum;
+  CQTAnalyzer<2> mCQT;
 
   static constexpr int kMaxBlock = 16384;
   std::array<sample, kMaxBlock> mSpecInL{};
@@ -63,6 +66,10 @@ private:
   ORMSlider *mReleaseSlider = nullptr;
   ORMSlider *mMixSlider = nullptr;
   CpuMeterControl *mCpuMeter = nullptr;
+  FlatToggleControl *mModeToggle = nullptr;
+
+  // 分析模式去重: 模式变化时切换滑块参数 (RES<->LF RES) 并重发 pad 配置
+  int mSentMode = -1;
 
   // CPU 占用率: 音频线程在 ProcessBlock 内测量 处理耗时/块时长, 一阶平滑后
   // 由 OnIdle 推送给 UI (0.0 ~ 1.0+, 显示为两位小数, 不带 %)。
@@ -88,6 +95,12 @@ private:
     const int idx = (int)std::clamp(GetParam(kRes)->Value(), 0.0, (double)kNumResOptions - 1);
     return kResOptions[idx];
   }
+  int CurrentLfRes() const {
+    const int idx = (int)std::clamp(GetParam(kLfRes)->Value(), 0.0, (double)kNumLfResOptions - 1);
+    return kLfResOptions[idx];
+  }
+  void SendCQTBandFreqs();
+  void UpdateResHeader();
 
   void SetParamFromEditor(int idx, double value);
   void RefreshAfterEdit();

@@ -40,6 +40,8 @@ public:
     kMsgTagRelease,
     kMsgTagRange,
     kMsgTagAttack,
+    kMsgTagMode,
+    kMsgTagCQTBands,
   };
 
   SpectrumPad(const IRECT &bounds) : IControl(bounds) {
@@ -56,19 +58,21 @@ public:
     if (msgTag == ISender<>::kUpdateMessage) {
       ISenderData<2, TDataPacket> d;
       stream.Get(&d, 0);
-      const int nBins = std::min((int)d.vals[0].size(), std::max(mNumBins, 0));
-      if (nBins <= 0)
+      // FFT: 数据 = bins (nBins 个); CQT: 数据 = band 幅度 (nBands 个)
+      const int nVals = (mMode == 0) ? std::max(mNumBins, 0) : (int)mCQTFreqs.size();
+      if (nVals <= 0)
         return;
 
-      const double updatePeriod = (double)nBins * 2.0 / 4.0 / std::max(mSampleRate, 1.0);
+      const double hop = (mMode == 0) ? (double)nVals * 2.0 / 4.0 : 1024.0;
+      const double updatePeriod = hop / std::max(mSampleRate, 1.0);
       mAttackCoeff = (float)std::exp(-updatePeriod / mAttackSec);
       mReleaseCoeff = (float)std::exp(-updatePeriod / mReleaseSec);
 
       const float a = mAttackCoeff, r = mReleaseCoeff;
       for (int c = 0; c < 2; ++c) {
-        if (mSpectrum[c].size() != (size_t)nBins)
-          mSpectrum[c].assign(nBins, 0.f);
-        for (int i = 0; i < nBins; ++i) {
+        if (mSpectrum[c].size() != (size_t)nVals)
+          mSpectrum[c].assign(nVals, 0.f);
+        for (int i = 0; i < nVals; ++i) {
           const float raw = d.vals[c][i], prev = mSpectrum[c][i];
           const float coef = (raw > prev) ? a : r;
           mSpectrum[c][i] = coef * prev + (1.f - coef) * raw;
@@ -97,6 +101,17 @@ public:
       float attackSec;
       stream.Get(&attackSec, 0);
       mAttackSec = std::clamp(attackSec, 0.001f, 0.1f);
+    } else if (msgTag == kMsgTagMode) {
+      int mode;
+      stream.Get(&mode, 0);
+      mMode = (mode == 1) ? 1 : 0;
+      SetDirty(false);
+    } else if (msgTag == kMsgTagCQTBands) {
+      const int n = dataSize / (int)sizeof(float);
+      mCQTFreqs.resize(n);
+      if (n > 0)
+        std::memcpy(mCQTFreqs.data(), pData, (size_t)n * sizeof(float));
+      SetDirty(false);
     }
   }
 
@@ -192,6 +207,30 @@ private:
           (amp > 1e-6f) ? std::clamp(20.f * std::log10(amp), mBottomDb, 0.f) : mBottomDb;
       return mRECT.B - (db - mBottomDb) / (0.f - mBottomDb) * mRECT.H();
     };
+
+    // CQT 模式: 数据 = band 幅度, 按 band 中心频率的原始对数位置直接绘制 (不做 256 band 聚合)
+    if (mMode == 1) {
+      mSpecPtsL.clear();
+      mSpecPtsR.clear();
+      mSpecPtsO.clear();
+      const int nb = (int)mCQTFreqs.size();
+      const int have = std::min(nb, (int)mSpectrum[0].size());
+      for (int b = 0; b < have; ++b) {
+        const float x = mRECT.L + FreqNorm(mCQTFreqs[b]) * mRECT.W();
+        const float yL = ampToY(mSpectrum[0][b]);
+        const float yR = ampToY(mSpectrum[1][b]);
+        if (mSpectrum[0][b] > 1e-6f)
+          mSpecPtsL.push_back({x, yL});
+        if (mSpectrum[1][b] > 1e-6f)
+          mSpecPtsR.push_back({x, yR});
+        if (mSpectrum[0][b] > 1e-6f && mSpectrum[1][b] > 1e-6f)
+          mSpecPtsO.push_back({x, std::max(yL, yR)});
+      }
+      DrawFill(g, mSpecPtsL, cL);
+      DrawFill(g, mSpecPtsR, cR);
+      DrawFill(g, mSpecPtsO, cO);
+      return;
+    }
 
     mSpecPtsL.clear();
     mSpecPtsR.clear();
@@ -306,6 +345,8 @@ private:
 
   std::vector<float> mSpectrum[2]; // 平滑后的 L/R 频谱幅度 (幅度, 非 dB)
   std::vector<int> mBinToBand;     // 预计算: bin -> band 映射 (-1 = 频段外)
+  int mMode = 0;                   // 分析模式: 0=FFT, 1=CQT
+  std::vector<float> mCQTFreqs; // CQT band 中心频率 (Hz), 由插件下发
   float mAttackCoeff = 0.2f;
   float mReleaseCoeff = 0.9f;
   float mAttackSec = 0.05f; // 上升时间常数 (s), 由插件 Attack 参数下发
