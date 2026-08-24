@@ -49,17 +49,15 @@ private:
   std::array<sample, kMaxBlock> mSpecInL{};
   std::array<sample, kMaxBlock> mSpecInR{};
 
-  // 频谱配置去重: 仅当采样率/FFT 尺寸/重叠/释放/下限/上升时间变化时才向 UI 控件重发 (OnIdle 节流)
+  // 频谱配置去重: 仅当采样率/FFT 尺寸/释放/下限/上升时间变化时才向 UI 控件重发 (OnIdle 节流)
   double mSentSampleRate = 0.0;
   int mSentFFTSize = 0;
-  int mSentOverlap = 0;
   double mSentRelease = -1.0;
   double mSentRange = -1.0;
   double mSentAttack = -1.0;
 
   SpectrumPad *mSpectrumPad = nullptr;
   ORMSlider *mResSlider = nullptr;
-  ORMSlider *mOverlapSlider = nullptr;
   ORMSlider *mRangeSlider = nullptr;
   ORMSlider *mAttackSlider = nullptr;
   ORMSlider *mReleaseSlider = nullptr;
@@ -89,10 +87,6 @@ private:
   int CurrentFFTSize() const {
     const int idx = (int)std::clamp(GetParam(kRes)->Value(), 0.0, (double)kNumResOptions - 1);
     return kResOptions[idx];
-  }
-  int CurrentOverlap() const {
-    const int idx = (int)std::clamp(GetParam(kOverlap)->Value(), 0.0, (double)kNumOverlapOptions - 1);
-    return kOverlapOptions[idx];
   }
 
   void SetParamFromEditor(int idx, double value);

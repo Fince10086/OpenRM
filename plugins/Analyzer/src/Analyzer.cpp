@@ -75,12 +75,11 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
   // Analyzer 目前为纯分析器: mix 参数保留自 BandPass, 作为撤销/重做、保存/读取的
   // 载体 (DSP 直通, 暂不参与处理); release/attack 参数控制频谱显示的释放/上升
   // 时间 (s); range 参数控制频谱显示下限 (-80..-120 dBFS, 存正数幅度);
-  // overlap/res 参数为分析档位索引 (映射见 Params.h), 默认最高档 (4 / 4096)。
+  // res 参数为分析 FFT 尺寸档位索引 (映射见 Params.h), 默认最高档 (4096)。
   GetParam(kMix)->InitDouble("Mix", 1., 0., 1., 0.01, "");
   GetParam(kRelease)->InitDouble("Release", 0.2, 0.05, 0.5, 0.01, "s");
   GetParam(kRange)->InitDouble("Range", 90, 80, 120, 10, "");
   GetParam(kAttack)->InitDouble("Attack", 0.05, 0.001, 0.1, 0.001, "s");
-  GetParam(kOverlap)->InitInt("Overlap", kNumOverlapOptions - 1, 0, kNumOverlapOptions - 1, "");
   GetParam(kRes)->InitInt("Res", kNumResOptions - 1, 0, kNumResOptions - 1, "");
 
   mDefaultSnapshot = Snapshot();
@@ -170,19 +169,12 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     mCpuMeter = new CpuMeterControl(IRECT(kCol1X, 30, kPanelR, 60));
     pGraphics->AttachControl(mCpuMeter, kCtrlTagCpu);
 
-    // RES (频谱分析 FFT 尺寸档位 1024/2048/4096, 位于 OVERLAP 上方)
+    // RES (频谱分析 FFT 尺寸档位 1024/2048/4096, 位于 RANGE 上方)
     mResSlider =
         new ORMSlider(IRECT(kCol1X, 192, kPanelR, 234), kRes, "RES", style, EDirection::Horizontal);
     pGraphics->AttachControl(mResSlider);
     bindText(orm::kTxtRes, [this](const char *s) { mResSlider->SetHeaderLabel(s); });
     bindTip(mResSlider, orm::kTxtTipRes);
-
-    // OVERLAP (频谱分析重叠倍数档位 0/1/2/4, 位于 RANGE 上方)
-    mOverlapSlider =
-        new ORMSlider(IRECT(kCol1X, 234, kPanelR, 276), kOverlap, "OVERLAP", style, EDirection::Horizontal);
-    pGraphics->AttachControl(mOverlapSlider);
-    bindText(orm::kTxtOverlap, [this](const char *s) { mOverlapSlider->SetHeaderLabel(s); });
-    bindTip(mOverlapSlider, orm::kTxtTipOverlap);
 
     // RANGE (频谱显示下限 dBFS, 列顶)
     mRangeSlider =
@@ -366,24 +358,21 @@ void ORMAnalyzer::ProcessBlock(sample **inputs, sample **outputs, int nFrames) {
 }
 
 void ORMAnalyzer::OnReset() {
-  mSpectrum.SetFFTSizeAndOverlap(CurrentFFTSize(), CurrentOverlap());
+  mSpectrum.SetFFTSizeAndOverlap(CurrentFFTSize(), 4);
 
   SendSpectrumConfig();
   mSentSampleRate = GetSampleRate();
   mSentFFTSize = CurrentFFTSize();
-  mSentOverlap = CurrentOverlap();
 }
 
 void ORMAnalyzer::SendSpectrumConfig() {
   const double sr = GetSampleRate();
   const int fftSize = CurrentFFTSize();
-  const int overlap = CurrentOverlap();
   const float release = (float)GetParam(kRelease)->Value();
   const float range = (float)GetParam(kRange)->Value();
   const float attack = (float)GetParam(kAttack)->Value();
   SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagSampleRate, sizeof(double), &sr);
   SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagFFTSize, sizeof(int), &fftSize);
-  SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagOverlap, sizeof(int), &overlap);
   SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagRelease, sizeof(float), &release);
   SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagRange, sizeof(float), &range);
   SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagAttack, sizeof(float), &attack);
@@ -391,8 +380,8 @@ void ORMAnalyzer::SendSpectrumConfig() {
 
 void ORMAnalyzer::OnParamChange(int paramIdx, EParamSource source, int sampleOffset) {
   // 分析档位变化时在音频线程重配 STFT (窗口/重叠/历史缓存重建, 频谱短暂清零)
-  if (paramIdx == kOverlap || paramIdx == kRes)
-    mSpectrum.SetFFTSizeAndOverlap(CurrentFFTSize(), CurrentOverlap());
+  if (paramIdx == kRes)
+    mSpectrum.SetFFTSizeAndOverlap(CurrentFFTSize(), 4);
 }
 
 void ORMAnalyzer::OnParamChangeUI(int paramIdx, EParamSource source) {
@@ -419,18 +408,16 @@ void ORMAnalyzer::RefreshAfterEdit() {
 void ORMAnalyzer::OnIdle() {
   mSpectrum.TransmitData(*this);
 
-  // 仅在采样率/FFT 尺寸/重叠/释放/下限/上升时间变化时重发 (如 UI 在 OnReset 之后才打开)
+  // 仅在采样率/FFT 尺寸/释放/下限/上升时间变化时重发 (如 UI 在 OnReset 之后才打开)
   const double sr = GetSampleRate();
   const int fftSize = CurrentFFTSize();
-  const int overlap = CurrentOverlap();
   const double release = GetParam(kRelease)->Value();
   const double range = GetParam(kRange)->Value();
   const double attack = GetParam(kAttack)->Value();
-  if (sr != mSentSampleRate || fftSize != mSentFFTSize || overlap != mSentOverlap ||
-      release != mSentRelease || range != mSentRange || attack != mSentAttack) {
+  if (sr != mSentSampleRate || fftSize != mSentFFTSize || release != mSentRelease ||
+      range != mSentRange || attack != mSentAttack) {
     mSentSampleRate = sr;
     mSentFFTSize = fftSize;
-    mSentOverlap = overlap;
     mSentRelease = release;
     mSentRange = range;
     mSentAttack = attack;
@@ -451,7 +438,6 @@ void ORMAnalyzer::OnIdle() {
 void ORMAnalyzer::OnUIClose() {
   mSpectrumPad = nullptr;
   mResSlider = nullptr;
-  mOverlapSlider = nullptr;
   mRangeSlider = nullptr;
   mAttackSlider = nullptr;
   mReleaseSlider = nullptr;
@@ -461,10 +447,9 @@ void ORMAnalyzer::OnUIClose() {
   mTextBindings.clear();
   mTooltipBindings.clear();
   // 重开 UI 后 pad 是新控件, 重置去重标记让下一次 OnIdle 重发完整频谱配置
-  // (采样率/FFT 尺寸/重叠/释放/下限/上升时间), 避免新 pad 停留在默认值上。
+  // (采样率/FFT 尺寸/释放/下限/上升时间), 避免新 pad 停留在默认值上。
   mSentSampleRate = 0.0;
   mSentFFTSize = 0;
-  mSentOverlap = 0;
   mSentRelease = -1.0;
   mSentRange = -1.0;
   mSentAttack = -1.0;
