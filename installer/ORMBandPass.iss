@@ -4,7 +4,7 @@
 ; 注意: 版本号需与 plugins/BandPass/config.h (PLUG_VERSION_STR) 同步。
 
 #define MyAppName "ORMBandPass"
-#define MyAppVersion "0.4.0"
+#define MyAppVersion "0.5.0"
 #define MyAppExe "ORMBandPass-app.exe"
 
 [Setup]

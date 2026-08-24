@@ -53,7 +53,6 @@ hr()   { printf "${DIM}───────────────────
 title(){ printf "${BOLD}%s${NC}\n" "$*"; }
 
 # ---- 版本比较: ver_cmp A B → 0(A=B) 1(A<B) 2(A>B) ----
-# 缺省段补 0 再比较 (0.4 == 0.4.0), 段内数值比较 (0.10 > 0.9)
 ver_cmp() {
   local a="$1" b="$2" pa pb na nb i n
   IFS='.' read -r -a pa <<< "$a"
