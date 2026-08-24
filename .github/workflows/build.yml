@@ -89,6 +89,84 @@ jobs:
           cmake --build build --target dsp_test
           ./build/dsp_test
 
+      - name: 打包安装脚本与说明文档
+        # zip 内扁平布局: install_mac.sh 与产物同目录 (脚本支持该布局)
+        run: |
+          cp scripts/install_mac.sh build/out/
+          cat > build/out/README.md <<'EOF'
+          # ORM BandPass - macOS Installer
+
+          ## What's inside
+          - ORMBandPass.app          Standalone app
+          - ORMBandPass.vst3         VST3 plugin
+          - ORMBandPass.component    Audio Unit (AU) plugin
+          - install_mac.sh           Interactive install/uninstall script
+
+          ## Quick install (recommended)
+          1. Open Terminal (press Cmd+Space, type "Terminal", press Enter)
+          2. Go to this folder, type:  cd   then drag this folder into the Terminal window and press Enter
+          3. Run the installer:  bash install_mac.sh
+          4. Type 1 to install, or 2 to uninstall.
+
+          The script copies the app and plugins to the correct macOS folders,
+          detects existing versions and asks before overwriting, and clears the
+          download (quarantine) attribute automatically.
+
+          ## Manual install
+          - App:  drag ORMBandPass.app into the Applications folder
+          - VST3: copy ORMBandPass.vst3 to ~/Library/Audio/Plug-Ins/VST3
+          - AU:   copy ORMBandPass.component to ~/Library/Audio/Plug-Ins/Components
+
+          ## First launch on macOS 15+
+          You may see "can't verify the developer" - this is normal for an
+          unsigned app, the software is NOT damaged.
+          Fix: right-click the app -> Open -> Open.
+          Or: System Settings -> Privacy & Security -> "Open Anyway".
+          Restart your DAW after installing the plugins.
+
+          ## Uninstall
+          Run install_mac.sh again and choose 2, or delete the files manually.
+          EOF
+          cat > build/out/先读我.txt <<'EOF'
+          ================ 先读我 ================
+          ORM BandPass - macOS 安装说明
+
+          【包里有什么】
+            ORMBandPass.app        独立运行的程序
+            ORMBandPass.vst3       VST3 插件
+            ORMBandPass.component  AU 插件
+            install_mac.sh         一键安装/卸载脚本
+
+          【如何打开终端执行脚本】(推荐)
+            1. 打开"终端"App:
+               按 Command + 空格 打开聚焦搜索, 输入"终端"或"Terminal", 回车
+               (或: 打开"访达" -> 应用程序 -> 实用工具 -> 终端)
+            2. 进入当前文件夹:
+               在终端里输入 cd 加一个空格, 然后把本文件夹拖进终端窗口, 回车
+               例如: cd /Users/你的名字/Downloads/ORMBandPass-0.4.0-mac
+            3. 运行安装脚本:
+               输入 bash install_mac.sh 然后回车
+            4. 按提示操作: 选 1 = 安装, 2 = 卸载
+               脚本会自动复制 App 和插件到系统目录, 自动检测已装版本,
+               并自动清除下载标记(quarantine)
+
+          【卸载】
+            再次运行 bash install_mac.sh, 选 2 即可
+
+          【手动安装】(不想用脚本时)
+            把 ORMBandPass.app 拖进"应用程序"文件夹;
+            VST3 复制到 ~/Library/Audio/Plug-Ins/VST3
+            AU   复制到 ~/Library/Audio/Plug-Ins/Components
+
+          【macOS 15+ 首次打开提示"无法验证开发者"】
+            这是未签名 App 的正常提示, 不是软件损坏!
+            解决: 右键点 App -> 打开 -> 再点"打开"
+            或在"系统设置 -> 隐私与安全性"里点"仍要打开"
+            装好插件后请重启 DAW 再加载
+
+
+          EOF
+
       - uses: actions/upload-artifact@v4
         with:
           name: ORMBandPass-mac

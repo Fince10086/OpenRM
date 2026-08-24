@@ -52,6 +52,12 @@ function(openrm_add_plugin NAME)
   # nlohmann/json 等第三方工具头 (PresetFileIO 使用)
   target_include_directories(_${NAME}-base INTERFACE "${IPLUG2_DIR}/Dependencies/Extras")
 
+  # 独立 App 链接时不加 ad-hoc 签名 (macOS 15+ Gatekeeper 对"ad-hoc 签名 + 网络下载"
+  # 一律报"已损坏"; 完全无签名才会显示"无法验证开发者", 用户可右键打开)。
+  if(APPLE AND TARGET ${NAME}-app)
+    target_link_options(${NAME}-app PRIVATE "-Wl,-no_adhoc_codesign")
+  endif()
+
   if(WIN32)
     # Windows: 让 VST3 dll 也编译 main.rc 以嵌入字体与资源。
     set(_rc_file "${CMAKE_CURRENT_SOURCE_DIR}/resources/main.rc")
