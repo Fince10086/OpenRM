@@ -110,6 +110,10 @@ protected:
       std::snprintf(buf, sizeof(buf), "%.0f%%", p->Value() * 100.);
       ds.Set(buf);
       break;
+    case kRelease:
+      std::snprintf(buf, sizeof(buf), "%.2fs", p->Value());
+      ds.Set(buf);
+      break;
     default:
       p->GetDisplay(ds, false);
       break;

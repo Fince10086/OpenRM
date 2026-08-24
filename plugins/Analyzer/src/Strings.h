@@ -12,6 +12,7 @@ inline int &UILang() {
 
 enum EText {
   kTxtMix,
+  kTxtRelease,
   kTxtUndo,
   kTxtRedo,
   kTxtSave,
@@ -30,6 +31,7 @@ enum EText {
   kTxtSatHigh,
   kTxtChinese,
   kTxtTipMix,
+  kTxtTipRelease,
   kTxtAudio,
   kTxtAudioInput,
   kTxtAudioOutput,
@@ -41,6 +43,7 @@ inline const char *Tr(int id, int lang) {
   static const char *const kTable[kNumLanguages][kNumTexts] = {
       {
           "MIX",
+          "RELEASE",
           "UNDO",
           "REDO",
           "SAVE",
@@ -59,6 +62,7 @@ inline const char *Tr(int id, int lang) {
           "HIGH",
           "中文",
           "Dry/wet mix",
+          "Spectrum display release time",
           "AUDIO",
           "Input",
           "Output",
@@ -66,6 +70,7 @@ inline const char *Tr(int id, int lang) {
       },
       {
           "混合",
+          "释放",
           "撤销",
           "重做",
           "保存",
@@ -84,6 +89,7 @@ inline const char *Tr(int id, int lang) {
           "高",
           "中文",
           "干湿混合",
+          "频谱显示释放时间",
           "音频",
           "输入",
           "输出",

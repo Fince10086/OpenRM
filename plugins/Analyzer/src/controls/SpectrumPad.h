@@ -37,6 +37,7 @@ public:
   enum MsgTags {
     kMsgTagSampleRate = 1,
     kMsgTagFFTSize,
+    kMsgTagRelease,
   };
 
   SpectrumPad(const IRECT &bounds) : IControl(bounds) {
@@ -58,7 +59,7 @@ public:
 
       const double updatePeriod = (double)nBins * 2.0 / 4.0 / std::max(mSampleRate, 1.0);
       mAttackCoeff = (float)std::exp(-updatePeriod / 0.003);
-      mReleaseCoeff = (float)std::exp(-updatePeriod / 0.2);
+      mReleaseCoeff = (float)std::exp(-updatePeriod / mReleaseSec);
 
       const float a = mAttackCoeff, r = mReleaseCoeff;
       for (int c = 0; c < 2; ++c) {
@@ -79,6 +80,10 @@ public:
       int fftSize;
       stream.Get(&fftSize, 0);
       mNumBins = std::max(fftSize / 2, 1);
+    } else if (msgTag == kMsgTagRelease) {
+      float releaseSec;
+      stream.Get(&releaseSec, 0);
+      mReleaseSec = std::clamp(releaseSec, 0.01f, 1.f);
     }
   }
 
@@ -269,6 +274,7 @@ private:
   std::vector<float> mSpectrum[2]; // 平滑后的 L/R 频谱幅度 (幅度, 非 dB)
   float mAttackCoeff = 0.2f;
   float mReleaseCoeff = 0.9f;
+  float mReleaseSec = 0.2f; // 释放时间常数 (s), 由插件 Release 参数下发
   int mNumBins = 2048;
   double mSampleRate = 48000.0;
 

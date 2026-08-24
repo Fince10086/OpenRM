@@ -71,9 +71,10 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
       ThemeMode() = s.themeMode;
     }
   }
-  // Analyzer 目前为纯分析器: 唯一参数 mix 保留自 BandPass,
-  // 作为撤销/重做、保存/读取的载体 (DSP 直通, 暂不参与处理)。
+  // Analyzer 目前为纯分析器: mix 参数保留自 BandPass, 作为撤销/重做、保存/读取的
+  // 载体 (DSP 直通, 暂不参与处理); release 参数控制频谱显示的释放时间 (s)。
   GetParam(kMix)->InitDouble("Mix", 1., 0., 1., 0.01, "");
+  GetParam(kRelease)->InitDouble("Release", 0.2, 0.05, 0.5, 0.01, "s");
 
   mDefaultSnapshot = Snapshot();
   mStableSnapshot = Snapshot();
@@ -157,6 +158,13 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     // 频谱显示 pad: 空 xypad, 位置 = BandPass 原 LEFT 频谱 (下半部分预留做别的)
     mSpectrumPad = new SpectrumPad(IRECT(20, 30, 668, 210));
     pGraphics->AttachControl(mSpectrumPad, kCtrlTagPad);
+
+    // RELEASE (频谱显示释放时间, 位于 MIX 上方)
+    mReleaseSlider =
+        new ORMSlider(IRECT(kCol1X, 374, kPanelR, 416), kRelease, "RELEASE", style, EDirection::Horizontal);
+    pGraphics->AttachControl(mReleaseSlider);
+    bindText(orm::kTxtRelease, [this](const char *s) { mReleaseSlider->SetHeaderLabel(s); });
+    bindTip(mReleaseSlider, orm::kTxtTipRelease);
 
     // MIX (保留自 BandPass, 位置不变)
     mMixSlider = new ORMSlider(IRECT(kCol1X, 420, kPanelR, 462), kMix, "MIX", style, EDirection::Horizontal);
@@ -317,8 +325,10 @@ void ORMAnalyzer::OnReset() {
 void ORMAnalyzer::SendSpectrumConfig() {
   const double sr = GetSampleRate();
   const int fftSize = kSpectrumFFTSize;
+  const float release = (float)GetParam(kRelease)->Value();
   SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagSampleRate, sizeof(double), &sr);
   SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagFFTSize, sizeof(int), &fftSize);
+  SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagRelease, sizeof(float), &release);
 }
 
 void ORMAnalyzer::OnParamChange(int paramIdx, EParamSource source, int sampleOffset) {
@@ -349,11 +359,13 @@ void ORMAnalyzer::RefreshAfterEdit() {
 void ORMAnalyzer::OnIdle() {
   mSpectrum.TransmitData(*this);
 
-  // 仅在采样率/FFT 尺寸变化时重发 (如 UI 在 OnReset 之后才打开的场景)
+  // 仅在采样率/FFT 尺寸/释放时间变化时重发 (如 UI 在 OnReset 之后才打开的场景)
   const double sr = GetSampleRate();
-  if (sr != mSentSampleRate || kSpectrumFFTSize != mSentFFTSize) {
+  const double release = GetParam(kRelease)->Value();
+  if (sr != mSentSampleRate || kSpectrumFFTSize != mSentFFTSize || release != mSentRelease) {
     mSentSampleRate = sr;
     mSentFFTSize = kSpectrumFFTSize;
+    mSentRelease = release;
     SendSpectrumConfig();
   }
 
@@ -367,10 +379,16 @@ void ORMAnalyzer::OnIdle() {
 
 void ORMAnalyzer::OnUIClose() {
   mSpectrumPad = nullptr;
+  mReleaseSlider = nullptr;
   mMixSlider = nullptr;
   mSettingsPanel = nullptr;
   mTextBindings.clear();
   mTooltipBindings.clear();
+  // 重开 UI 后 pad 是新控件, 重置去重标记让下一次 OnIdle 重发完整频谱配置
+  // (采样率/FFT 尺寸/释放时间), 避免新 pad 停留在默认值上。
+  mSentSampleRate = 0.0;
+  mSentFFTSize = 0;
+  mSentRelease = -1.0;
 }
 
 void ORMAnalyzer::OnParentWindowResize(int width, int height) {

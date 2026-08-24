@@ -49,8 +49,10 @@ private:
   // 频谱配置去重: 仅当采样率/FFT 尺寸变化时才向 UI 控件重发 (OnIdle 节流)
   double mSentSampleRate = 0.0;
   int mSentFFTSize = 0;
+  double mSentRelease = -1.0;
 
   SpectrumPad *mSpectrumPad = nullptr;
+  ORMSlider *mReleaseSlider = nullptr;
   ORMSlider *mMixSlider = nullptr;
 
   ParamSnapshot mDefaultSnapshot{};
