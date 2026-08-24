@@ -137,21 +137,19 @@ jobs:
             ORMBandPass.component  AU 插件
             install_mac.sh         一键安装/卸载脚本
 
-          【如何打开终端执行脚本】(推荐)
+          【如何执行安装脚本】
             1. 打开"终端"App:
                按 Command + 空格 打开聚焦搜索, 输入"终端"或"Terminal", 回车
-               (或: 打开"访达" -> 应用程序 -> 实用工具 -> 终端)
-            2. 进入当前文件夹:
-               在终端里输入 cd 加一个空格, 然后把本文件夹拖进终端窗口, 回车
-               例如: cd /Users/你的名字/Downloads/ORMBandPass-0.4.0-mac
-            3. 运行安装脚本:
-               输入 bash install_mac.sh 然后回车
+               (或: 打开"访达" -> 应用程序 -> 实用工具 -> 终端；或在启动台中找到终端并打开)
+            2. 把install_mac.sh文件拖拽到终端窗口内:
+               会显示出形如 /Users/（你的名字）/Downloads/ORMBandPass-mac/install_mac.sh 的文字
+            3. 按下回车，运行安装脚本
             4. 按提示操作: 选 1 = 安装, 2 = 卸载
                脚本会自动复制 App 和插件到系统目录, 自动检测已装版本,
                并自动清除下载标记(quarantine)
 
           【卸载】
-            再次运行 bash install_mac.sh, 选 2 即可
+            再次运行 install_mac.sh, 选 2 即可
 
           【手动安装】(不想用脚本时)
             把 ORMBandPass.app 拖进"应用程序"文件夹;
