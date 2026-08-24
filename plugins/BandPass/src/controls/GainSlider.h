@@ -77,7 +77,7 @@ protected:
     mRandomSwatchRect = IRECT(hdr.MW() - AG_SWATCH * 0.5f, swatchCY - AG_SWATCH * 0.5f, hdr.MW() + AG_SWATCH * 0.5f,
                               swatchCY + AG_SWATCH * 0.5f);
     g.FillRect(mRandomMapOn ? RandomColor(mRandomMapColor) : RandomColorDim(mRandomMapColor),
-               mRandomSwatchRect.GetPadded(-1.f));
+               mRandomSwatchRect);
     g.DrawText(IText(20, COL_700(), kFontRegular, EAlign::Center, EVAlign::Top, 90.f), ds.Get(),
                IRECT(hdr.L, TrackVisTop(), hdr.R, hdr.B));
     g.DrawText(IText(20, COL_900(), kFontSemiBold, EAlign::Center, EVAlign::Bottom, 90.f), mHeaderLabel.Get(), hdr);

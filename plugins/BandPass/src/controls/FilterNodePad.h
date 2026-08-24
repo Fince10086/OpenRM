@@ -470,7 +470,7 @@ private:
     }
     const int i = isBw ? 1 : 0;
     g.FillRect(mRandomMapOn[i] ? RandomColor(mRandomMapColor[i]) : RandomColorDim(mRandomMapColor[i]),
-               mRandomSwatchRect[i].GetPadded(-1.f));
+               mRandomSwatchRect[i]);
   }
 
   IRECT CornerValueRect(int id) const { return mCornerValueRect[id == kCornerBw]; }

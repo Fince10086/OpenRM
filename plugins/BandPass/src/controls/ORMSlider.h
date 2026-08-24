@@ -232,7 +232,7 @@ protected:
         mRandomSwatchRect =
             IRECT(hdr.R - 1.f - AG_SWATCH, hdr.MH() - AG_SWATCH * 0.5f, hdr.R - 1.f, hdr.MH() + AG_SWATCH * 0.5f);
         g.FillRect(mRandomMapOn ? RandomColor(mRandomMapColor) : RandomColorDim(mRandomMapColor),
-                   mRandomSwatchRect.GetPadded(-1.f));
+                   mRandomSwatchRect);
         valueR = mRandomSwatchRect.L - 6.f;
       }
       g.DrawText(IText(20, COL_900(), mHeaderFont, EAlign::Near, EVAlign::Middle), mHeaderLabel.Get(),

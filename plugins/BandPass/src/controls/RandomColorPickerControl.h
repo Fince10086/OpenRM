@@ -23,7 +23,7 @@ public:
     SetDirty(false);
   }
 
-  void Draw(IGraphics &g) override { g.FillRect(RandomColor(mColorIdx), mRECT.GetPadded(-BLOCK_GAP)); }
+  void Draw(IGraphics &g) override { g.FillRect(RandomColor(mColorIdx), mRECT); }
 
   void OnMouseDown(float x, float y, const IMouseMod &mod) override {
     if (!GetUI() || !mOnPick)

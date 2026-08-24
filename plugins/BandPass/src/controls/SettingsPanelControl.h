@@ -123,7 +123,7 @@ public:
     const float sw = AG_SWATCH;
     const IRECT hueSw(mSliderHeader[0].L, mSliderHeader[0].MH() - sw * 0.5f, mSliderHeader[0].L + sw,
                       mSliderHeader[0].MH() + sw * 0.5f);
-    g.FillRect(HSBToIColor(ThemeHue(), 0.85f, 1.f), hueSw.GetPadded(-1.f));
+    g.FillRect(HSBToIColor(ThemeHue(), 0.85f, 1.f), hueSw);
     DrawSliderHeader(g, mSliderHeader[0], orm::Tr(orm::kTxtHue, lang), HueLabel(lang),
                      mSliderHeader[0].L + sw + AG_SWATCH_GAP);
     DrawSlider(g, mSliderTrack[0], HueNorm());
