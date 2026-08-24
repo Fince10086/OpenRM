@@ -118,6 +118,10 @@ protected:
       std::snprintf(buf, sizeof(buf), "-%.0f dBFS", p->Value());
       ds.Set(buf);
       break;
+    case kAttack:
+      std::snprintf(buf, sizeof(buf), "%.3fs", p->Value());
+      ds.Set(buf);
+      break;
     default:
       p->GetDisplay(ds, false);
       break;

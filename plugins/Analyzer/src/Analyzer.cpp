@@ -72,11 +72,12 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     }
   }
   // Analyzer 目前为纯分析器: mix 参数保留自 BandPass, 作为撤销/重做、保存/读取的
-  // 载体 (DSP 直通, 暂不参与处理); release 参数控制频谱显示的释放时间 (s);
-  // range 参数控制频谱显示下限 (-80..-120 dBFS, 存正数幅度)。
+  // 载体 (DSP 直通, 暂不参与处理); release/attack 参数控制频谱显示的释放/上升
+  // 时间 (s); range 参数控制频谱显示下限 (-80..-120 dBFS, 存正数幅度)。
   GetParam(kMix)->InitDouble("Mix", 1., 0., 1., 0.01, "");
   GetParam(kRelease)->InitDouble("Release", 0.2, 0.05, 0.5, 0.01, "s");
   GetParam(kRange)->InitDouble("Range", 90, 80, 120, 10, "");
+  GetParam(kAttack)->InitDouble("Attack", 0.05, 0.001, 0.1, 0.001, "s");
 
   mDefaultSnapshot = Snapshot();
   mStableSnapshot = Snapshot();
@@ -161,12 +162,19 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     mSpectrumPad = new SpectrumPad(IRECT(20, 30, 668, 210));
     pGraphics->AttachControl(mSpectrumPad, kCtrlTagPad);
 
-    // RANGE (频谱显示下限 dBFS, 位于 RELEASE 上方)
+    // RANGE (频谱显示下限 dBFS, 列顶)
     mRangeSlider =
-        new ORMSlider(IRECT(kCol1X, 328, kPanelR, 370), kRange, "RANGE", style, EDirection::Horizontal);
+        new ORMSlider(IRECT(kCol1X, 282, kPanelR, 324), kRange, "RANGE", style, EDirection::Horizontal);
     pGraphics->AttachControl(mRangeSlider);
     bindText(orm::kTxtRange, [this](const char *s) { mRangeSlider->SetHeaderLabel(s); });
     bindTip(mRangeSlider, orm::kTxtTipRange);
+
+    // ATTACK (频谱显示上升时间, 位于 RELEASE 上方)
+    mAttackSlider =
+        new ORMSlider(IRECT(kCol1X, 328, kPanelR, 370), kAttack, "ATTACK", style, EDirection::Horizontal);
+    pGraphics->AttachControl(mAttackSlider);
+    bindText(orm::kTxtAttack, [this](const char *s) { mAttackSlider->SetHeaderLabel(s); });
+    bindTip(mAttackSlider, orm::kTxtTipAttack);
 
     // RELEASE (频谱显示释放时间, 位于 MIX 上方)
     mReleaseSlider =
@@ -336,10 +344,12 @@ void ORMAnalyzer::SendSpectrumConfig() {
   const int fftSize = kSpectrumFFTSize;
   const float release = (float)GetParam(kRelease)->Value();
   const float range = (float)GetParam(kRange)->Value();
+  const float attack = (float)GetParam(kAttack)->Value();
   SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagSampleRate, sizeof(double), &sr);
   SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagFFTSize, sizeof(int), &fftSize);
   SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagRelease, sizeof(float), &release);
   SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagRange, sizeof(float), &range);
+  SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagAttack, sizeof(float), &attack);
 }
 
 void ORMAnalyzer::OnParamChange(int paramIdx, EParamSource source, int sampleOffset) {
@@ -370,16 +380,18 @@ void ORMAnalyzer::RefreshAfterEdit() {
 void ORMAnalyzer::OnIdle() {
   mSpectrum.TransmitData(*this);
 
-  // 仅在采样率/FFT 尺寸/释放时间/下限变化时重发 (如 UI 在 OnReset 之后才打开的场景)
+  // 仅在采样率/FFT 尺寸/释放/下限/上升时间变化时重发 (如 UI 在 OnReset 之后才打开)
   const double sr = GetSampleRate();
   const double release = GetParam(kRelease)->Value();
   const double range = GetParam(kRange)->Value();
+  const double attack = GetParam(kAttack)->Value();
   if (sr != mSentSampleRate || kSpectrumFFTSize != mSentFFTSize || release != mSentRelease ||
-      range != mSentRange) {
+      range != mSentRange || attack != mSentAttack) {
     mSentSampleRate = sr;
     mSentFFTSize = kSpectrumFFTSize;
     mSentRelease = release;
     mSentRange = range;
+    mSentAttack = attack;
     SendSpectrumConfig();
   }
 
@@ -394,17 +406,19 @@ void ORMAnalyzer::OnIdle() {
 void ORMAnalyzer::OnUIClose() {
   mSpectrumPad = nullptr;
   mRangeSlider = nullptr;
+  mAttackSlider = nullptr;
   mReleaseSlider = nullptr;
   mMixSlider = nullptr;
   mSettingsPanel = nullptr;
   mTextBindings.clear();
   mTooltipBindings.clear();
   // 重开 UI 后 pad 是新控件, 重置去重标记让下一次 OnIdle 重发完整频谱配置
-  // (采样率/FFT 尺寸/释放时间/下限), 避免新 pad 停留在默认值上。
+  // (采样率/FFT 尺寸/释放/下限/上升时间), 避免新 pad 停留在默认值上。
   mSentSampleRate = 0.0;
   mSentFFTSize = 0;
   mSentRelease = -1.0;
   mSentRange = -1.0;
+  mSentAttack = -1.0;
 }
 
 void ORMAnalyzer::OnParentWindowResize(int width, int height) {

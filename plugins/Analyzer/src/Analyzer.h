@@ -51,9 +51,11 @@ private:
   int mSentFFTSize = 0;
   double mSentRelease = -1.0;
   double mSentRange = -1.0;
+  double mSentAttack = -1.0;
 
   SpectrumPad *mSpectrumPad = nullptr;
   ORMSlider *mRangeSlider = nullptr;
+  ORMSlider *mAttackSlider = nullptr;
   ORMSlider *mReleaseSlider = nullptr;
   ORMSlider *mMixSlider = nullptr;
 

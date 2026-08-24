@@ -39,6 +39,7 @@ public:
     kMsgTagFFTSize,
     kMsgTagRelease,
     kMsgTagRange,
+    kMsgTagAttack,
   };
 
   SpectrumPad(const IRECT &bounds) : IControl(bounds) {
@@ -59,7 +60,7 @@ public:
         return;
 
       const double updatePeriod = (double)nBins * 2.0 / 4.0 / std::max(mSampleRate, 1.0);
-      mAttackCoeff = (float)std::exp(-updatePeriod / 0.003);
+      mAttackCoeff = (float)std::exp(-updatePeriod / mAttackSec);
       mReleaseCoeff = (float)std::exp(-updatePeriod / mReleaseSec);
 
       const float a = mAttackCoeff, r = mReleaseCoeff;
@@ -89,6 +90,10 @@ public:
       float rangeDb;
       stream.Get(&rangeDb, 0);
       mBottomDb = -std::clamp(rangeDb, 80.f, 120.f);
+    } else if (msgTag == kMsgTagAttack) {
+      float attackSec;
+      stream.Get(&attackSec, 0);
+      mAttackSec = std::clamp(attackSec, 0.001f, 0.1f);
     }
   }
 
@@ -278,6 +283,7 @@ private:
   std::vector<float> mSpectrum[2]; // 平滑后的 L/R 频谱幅度 (幅度, 非 dB)
   float mAttackCoeff = 0.2f;
   float mReleaseCoeff = 0.9f;
+  float mAttackSec = 0.05f; // 上升时间常数 (s), 由插件 Attack 参数下发
   float mReleaseSec = 0.2f; // 释放时间常数 (s), 由插件 Release 参数下发
   float mBottomDb = -90.f;  // 频谱显示下限 (dBFS), 由插件 Range 参数下发 (-80..-120)
   int mNumBins = 2048;
