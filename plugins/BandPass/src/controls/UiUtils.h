@@ -49,14 +49,17 @@ inline void DrawGhostOverlay(IGraphics &g, const IRECT &r) {
 constexpr int kRandomColorNameIds[kNumRandomColors] = {orm::kTxtRed, orm::kTxtYellow, orm::kTxtBlue, orm::kTxtGreen};
 
 // 统一的随机颜色弹窗: 填充 4 色名称, 勾选当前项, 回调选中索引
+// 注意: onPick 必须按值接收并按值/移动捕获 —— 调用方传入的多是临时 std::function,
+//       若按引用捕获, 本函数返回后临时对象销毁, 菜单关闭时(异步主队列)回调即悬空崩溃。
 inline void OpenColorPopup(IGraphics &g, IControl &host, IPopupMenu &menu, const IRECT &anchor, int selected,
-                           const std::function<void(int)> &onPick) {
+                           std::function<void(int)> onPick) {
   menu.Clear();
-  menu.SetFunction([&onPick](IPopupMenu *m) {
+  menu.SetFunction([onPick = std::move(onPick)](IPopupMenu *m) {
     const int idx = m ? m->GetChosenItemIdx() : -1;
     if (idx < 0 || idx >= kNumRandomColors)
       return;
-    onPick(idx);
+    if (onPick)
+      onPick(idx);
   });
   for (int c = 0; c < kNumRandomColors; ++c)
     menu.AddItem(orm::Tr(kRandomColorNameIds[c], orm::UILang()));
