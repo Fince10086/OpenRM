@@ -196,7 +196,10 @@ ORMBandPass::ORMBandPass(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
       if ((sysFontOk = loadFontFile(pGraphics, kFontSystem, p)))
         break;
 #else
-    sysFontOk = pGraphics->LoadFont(kFontSystem, "Segoe UI", ETextStyle::Normal);
+    // Windows: 优先用微软雅黑(含中文), 设备名等非 ASCII 文本需要中文字形
+    sysFontOk = pGraphics->LoadFont(kFontSystem, "Microsoft YaHei UI", ETextStyle::Normal);
+    if (!sysFontOk)
+      sysFontOk = pGraphics->LoadFont(kFontSystem, "Segoe UI", ETextStyle::Normal);
 #endif
     if (!sysFontOk)
       pGraphics->LoadFont(kFontSystem, MIXED_FN);
@@ -533,6 +536,16 @@ ORMBandPass::ORMBandPass(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
       RefreshThemeColors();
     };
 #ifdef APP_API
+    settingsHooks.listAudioAPIs = [this]() {
+      std::vector<std::string> names;
+      GetAPPAudioAPIs(names);
+      return names;
+    };
+    settingsHooks.currentAudioAPI = [this]() { return GetAPPCurrentAudioAPI(); };
+    settingsHooks.onAudioAPI = [this](const char *name) {
+      if (GetAPPCurrentAudioAPI() && std::strcmp(GetAPPCurrentAudioAPI(), name) != 0)
+        SetAPPAudioAPI(name);
+    };
     settingsHooks.listAudioDevices = [this](bool input) {
       std::vector<std::string> names;
       GetAPPAudioDeviceNames(input ? ERoute::kInput : ERoute::kOutput, names);

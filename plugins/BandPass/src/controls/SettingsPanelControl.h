@@ -63,11 +63,15 @@ public:
     std::function<std::vector<std::string>(bool input)> listAudioDevices;
     std::function<const char *(bool input)> currentAudioDevice;
     std::function<void(bool input, const char *name)> onAudioDevice;
+    std::function<std::vector<std::string>()> listAudioAPIs;
+    std::function<const char *()> currentAudioAPI;
+    std::function<void(const char *name)> onAudioAPI;
   };
 
   SettingsPanelControl(const IRECT &bounds, Hooks hooks) : IControl(bounds), mHooks(std::move(hooks)) {
     mHasAudio = (bool)(mHooks.listAudioDevices && mHooks.currentAudioDevice && mHooks.onAudioDevice);
-    const float cardH = mHasAudio ? kCardHAudio : kCardH;
+    mHasDriver = (bool)(mHooks.listAudioAPIs && mHooks.currentAudioAPI && mHooks.onAudioAPI);
+    const float cardH = (mHasAudio || mHasDriver) ? kCardHAudio : kCardH;
     mCard = IRECT(bounds.MW() - kCardW * 0.5f, bounds.MH() - cardH * 0.5f, bounds.MW() + kCardW * 0.5f,
                   bounds.MH() + cardH * 0.5f);
     const float bw = (kCardW - 2.f * kPad - kBtnGap) * 0.5f;
@@ -85,6 +89,10 @@ public:
       mSliderTrack[i] = IRECT(mCard.L + kPad, trackY, mCard.L + kPad + rowW, trackY + kTrackH);
       const float devY = mCard.T + (i == 0 ? kAudioRow1Y : kAudioRow2Y);
       mAudioRow[i] = IRECT(mCard.L + kPad, devY, mCard.R - kPad, devY + kAudioRowH);
+    }
+    if (mHasDriver) {
+      const float drvY = mCard.T + kDriverRowY;
+      mDriverRow = IRECT(mCard.L + kPad, drvY, mCard.R - kPad, drvY + kAudioRowH);
     }
     mHover = kHoverNone;
   }
@@ -132,10 +140,13 @@ public:
                      mSliderHeader[1].L + sw + AG_SWATCH_GAP);
     DrawSlider(g, mSliderTrack[1], SatNorm());
 
-    if (mHasAudio) {
+    if (mHasAudio || mHasDriver) {
       g.DrawText(IText(kTitleSize, COL_900(), kFontSemiBold, EAlign::Near, EVAlign::Middle),
                  orm::Tr(orm::kTxtAudio, lang),
                  IRECT(L, mCard.T + kAudioTitleY, mCard.R - kPad, mCard.T + kAudioTitleY + kTitleSize));
+      if (mHasDriver)
+        DrawDeviceRow(g, mDriverRow, orm::Tr(orm::kTxtDriver, lang), mHooks.currentAudioAPI(),
+                      mHover == kHoverDriver);
       for (int i = 0; i < 2; ++i)
         DrawDeviceRow(g, mAudioRow[i], orm::Tr(i == 0 ? orm::kTxtAudioInput : orm::kTxtAudioOutput, lang),
                       mHooks.currentAudioDevice(i == 0), mHover == (i == 0 ? kHoverAudioIn : kHoverAudioOut));
@@ -167,14 +178,20 @@ public:
       DragTo(x, y);
       return;
     }
-    if (mHasAudio) {
-      if (mAudioRow[0].Contains(x, y)) {
-        OpenDeviceMenu(true);
+    if (mHasAudio || mHasDriver) {
+      if (mHasDriver && mDriverRow.Contains(x, y)) {
+        OpenDriverMenu();
         return;
       }
-      if (mAudioRow[1].Contains(x, y)) {
-        OpenDeviceMenu(false);
-        return;
+      if (mHasAudio) {
+        if (mAudioRow[0].Contains(x, y)) {
+          OpenDeviceMenu(true);
+          return;
+        }
+        if (mAudioRow[1].Contains(x, y)) {
+          OpenDeviceMenu(false);
+          return;
+        }
       }
     }
   }
@@ -216,7 +233,8 @@ private:
     kHoverThemeDark,
     kHoverThemeLight,
     kHoverAudioIn,
-    kHoverAudioOut
+    kHoverAudioOut,
+    kHoverDriver
   };
   enum EDrag { kDragNone, kDragHue, kDragSat };
 
@@ -266,6 +284,8 @@ private:
       return kHoverThemeDark;
     if (mThemeBtns[1].Contains(x, y))
       return kHoverThemeLight;
+    if (mHasDriver && mDriverRow.Contains(x, y))
+      return kHoverDriver;
     if (mHasAudio && mAudioRow[0].Contains(x, y))
       return kHoverAudioIn;
     if (mHasAudio && mAudioRow[1].Contains(x, y))
@@ -337,6 +357,29 @@ private:
     GetUI()->CreatePopupMenu(*this, mMenu, isInput ? mAudioRow[0] : mAudioRow[1], kNoValIdx);
   }
 
+  void OpenDriverMenu() {
+    if (!GetUI() || !mHooks.onAudioAPI)
+      return;
+    const std::vector<std::string> names = mHooks.listAudioAPIs();
+    const char *current = mHooks.currentAudioAPI();
+    mDriverMenu.Clear();
+    mDriverMenu.SetFunction([this, names](IPopupMenu *menu) {
+      const int idx = menu ? menu->GetChosenItemIdx() : -1;
+      if (idx < 0 || idx >= (int)names.size())
+        return;
+      mHooks.onAudioAPI(names[idx].c_str());
+      SetDirty(false);
+    });
+    for (const std::string &n : names)
+      mDriverMenu.AddItem(n.c_str());
+    for (int i = 0; i < (int)names.size(); ++i)
+      if (names[i] == current) {
+        mDriverMenu.CheckItemAlone(i);
+        break;
+      }
+    GetUI()->CreatePopupMenu(*this, mDriverMenu, mDriverRow, kNoValIdx);
+  }
+
   void DrawDeviceRow(IGraphics &g, const IRECT &r, const char *label, const char *device, bool hover) {
     if (hover)
       g.FillRect(COL_300(), r);
@@ -373,7 +416,7 @@ private:
 
   static constexpr float kCardW = 380.f;
   static constexpr float kCardH = 270.f;
-  static constexpr float kCardHAudio = 360.f;
+  static constexpr float kCardHAudio = 392.f;
   static constexpr float kPad = 20.f;
   static constexpr float kBtnH = 30.f;
   static constexpr float kBtnGap = 0.f;
@@ -390,8 +433,9 @@ private:
   static constexpr float kSatTitleY = 206.f;
   static constexpr float kSatY = 232.f;
   static constexpr float kAudioTitleY = 262.f;
-  static constexpr float kAudioRow1Y = 288.f;
-  static constexpr float kAudioRow2Y = 320.f;
+  static constexpr float kDriverRowY = 288.f;
+  static constexpr float kAudioRow1Y = 320.f;
+  static constexpr float kAudioRow2Y = 352.f;
   static constexpr float kAudioRowH = 28.f;
 
   static constexpr int kHueMin = 15;
@@ -409,8 +453,11 @@ private:
   IRECT mSliderHeader[2];
   IRECT mSliderTrack[2];
   IRECT mAudioRow[2];
+  IRECT mDriverRow;
   IPopupMenu mMenu;
+  IPopupMenu mDriverMenu;
   bool mHasAudio = false;
+  bool mHasDriver = false;
   EHover mHover = kHoverNone;
   EDrag mDrag = kDragNone;
 };
