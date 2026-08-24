@@ -32,10 +32,11 @@ public:
     g.FillRoundRect(COL_500(), fill, cr, &mBlend);
 
     const float x0 = mTrackBounds.L, w = mTrackBounds.W();
+    // 每个槽位画一条连贯刻度线(贯穿轨道上下): 若用轨道同色, 轨道内一段会被填充色盖住,
+    // 只剩上下两小段, 视觉上像"一上一下两个点"; 改用深色整条贯穿即可。
     for (int i = 0; i < kNumQuick; ++i) {
       const float x = x0 + w * i / (kNumQuick - 1.f);
-      g.FillRect(COL_500(), IRECT(x - 1.f, mTrackBounds.T - 3.f, x + 1.f, mTrackBounds.T));
-      g.FillRect(COL_500(), IRECT(x - 1.f, mTrackBounds.B, x + 1.f, mTrackBounds.B + 3.f));
+      g.FillRect(COL_500(), IRECT(x - 1.f, mTrackBounds.T - 3.f, x + 1.f, mTrackBounds.B + 3.f));
     }
   }
   void DrawHandle(IGraphics &g, const IRECT &bounds) override {
