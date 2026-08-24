@@ -74,6 +74,7 @@ ORMBandPass::ORMBandPass(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
       ThemeHue() = s.hue;
       ThemeSatMax() = s.satMax;
       mThemeMode = s.themeMode;
+      ThemeMode() = s.themeMode;
     }
   }
   GetParam(kFreqL)->InitDouble("FreqL", std::sqrt(300. * 4000.), 20., 20000., 0.01, "Hz", 0, "", IParam::ShapeExp());
