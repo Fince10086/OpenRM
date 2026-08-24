@@ -16,6 +16,7 @@
 #include "controls/BandRangeSlider.h"
 #include "controls/PresetSlotControl.h"
 #include "PresetFileIO.h"
+#include "SettingsFileIO.h"
 
 #include <cstring>
 #include <cstdio>
@@ -64,6 +65,17 @@ static double BwMultToOct(double m) {
 }
 
 ORMBandPass::ORMBandPass(const InstanceInfo &info) : Plugin(info, MakeConfig(kNumParams, 1)) {
+  // 读取全局 UI 偏好 (语言/主题), 使界面首次渲染即用用户设置
+  {
+    SettingsData s;
+    if (LoadSettings(s)) {
+      if (s.lang >= 0 && s.lang < orm::kNumLanguages)
+        orm::UILang() = s.lang;
+      ThemeHue() = s.hue;
+      ThemeSatMax() = s.satMax;
+      mThemeMode = s.themeMode;
+    }
+  }
   GetParam(kFreqL)->InitDouble("FreqL", std::sqrt(300. * 4000.), 20., 20000., 0.01, "Hz", 0, "", IParam::ShapeExp());
   GetParam(kBwL)->InitDouble("BW L", 3.65, 1., 31., 0.01, "x", 0, "", IParam::ShapeExp());
   GetParam(kGainL)->InitDouble("Gain L", 0., -96., 12., 0.01, "");
@@ -521,19 +533,23 @@ ORMBandPass::ORMBandPass(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
       if (lang != orm::UILang()) {
         orm::UILang() = lang;
         ApplyLanguage();
+        SaveSettingsToDisk();
       }
     };
     settingsHooks.onTheme = [this](int themeMode) {
       mThemeMode = themeMode;
       ApplyTheme();
+      SaveSettingsToDisk();
     };
     settingsHooks.onHue = [this](int hue) {
       ThemeHue() = hue;
       RefreshThemeColors();
+      SaveSettingsToDisk();
     };
     settingsHooks.onSat = [this](int satMax) {
       ThemeSatMax() = satMax;
       RefreshThemeColors();
+      SaveSettingsToDisk();
     };
 #ifdef APP_API
     settingsHooks.listAudioAPIs = [this]() {
@@ -1449,4 +1465,13 @@ void ORMBandPass::RefreshThemeColors() {
 void ORMBandPass::ToggleSettingsPanel() {
   if (mSettingsPanel)
     mSettingsPanel->SetVisible(mSettingsPanel->IsHidden());
+}
+
+void ORMBandPass::SaveSettingsToDisk() {
+  SettingsData s;
+  s.lang = orm::UILang();
+  s.hue = ThemeHue();
+  s.satMax = ThemeSatMax();
+  s.themeMode = mThemeMode;
+  SaveSettings(s);
 }

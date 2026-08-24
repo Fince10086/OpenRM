@@ -37,6 +37,7 @@ openrm_add_plugin(${PROJECT_NAME}
     src/controls/BandRangeSlider.h
     src/controls/PresetSlotControl.h
     src/PresetFileIO.h
+    src/SettingsFileIO.h
     ${IPLUG2_DIR}/WDL/fft.c
   FORMATS APP AU VST3
   DEFINES SAMPLE_TYPE_FLOAT

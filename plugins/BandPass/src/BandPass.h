@@ -168,4 +168,5 @@ private:
   void ApplyTheme();
   void RefreshThemeColors();
   void ToggleSettingsPanel();
+  void SaveSettingsToDisk();
 };
