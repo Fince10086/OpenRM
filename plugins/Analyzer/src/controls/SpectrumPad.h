@@ -48,6 +48,7 @@ public:
     mSpecPtsL.reserve(kSpectrumBands);
     mSpecPtsR.reserve(kSpectrumBands);
     mSpecPtsO.reserve(kSpectrumBands);
+    RebuildBinToBand();
   }
 
   void OnMsgFromDelegate(int msgTag, int dataSize, const void *pData) override {
@@ -79,10 +80,12 @@ public:
       double sr;
       stream.Get(&sr, 0);
       mSampleRate = sr;
+      RebuildBinToBand();
     } else if (msgTag == kMsgTagFFTSize) {
       int fftSize;
       stream.Get(&fftSize, 0);
       mNumBins = std::max(fftSize / 2, 1);
+      RebuildBinToBand();
     } else if (msgTag == kMsgTagRelease) {
       float releaseSec;
       stream.Get(&releaseSec, 0);
@@ -185,7 +188,6 @@ private:
     const IColor cR = HSBToIColor(WrapHue(hue + 120), sL, b);
     const IColor cO = HSBToIColor(hue, sO, b);
 
-    const double binHz = mSampleRate / std::max((double)mNumBins * 2.0, 1.0);
     const double logLo = std::log2(kSpecFreqLo);
     const double logHi = std::log2(kSpecFreqHi);
     const double logBand = (logHi - logLo) / kSpectrumBands;
@@ -202,12 +204,13 @@ private:
     for (auto &acc : mBandAcc)
       acc = BandAcc{};
 
-    for (int i = 0; i < mNumBins && i < (int)mSpectrum[0].size(); ++i) {
-      const double f = (double)i * binHz;
-      if (f < kSpecFreqLo || f > kSpecFreqHi)
-        continue;
-      const int b = (int)((std::log2(f) - logLo) / logBand);
-      if (b < 0 || b >= kSpectrumBands)
+    // bin -> band 映射查表 (预计算, 见 RebuildBinToBand), 避免每帧 2048*2 次 log2
+    if ((int)mBinToBand.size() != mNumBins)
+      RebuildBinToBand();
+    const int nb = std::min(mNumBins, (int)mSpectrum[0].size());
+    for (int i = 0; i < nb; ++i) {
+      const int b = mBinToBand[i];
+      if (b < 0)
         continue;
       for (int c = 0; c < 2; ++c) {
         const float amp = mSpectrum[c][i];
@@ -285,7 +288,29 @@ private:
   static constexpr float kSpecFreqLo = 20.f;
   static constexpr float kSpecFreqHi = 20000.f;
 
+  // 预计算 bin -> 对数 band 映射表: 只在采样率/FFT 尺寸变化时重建,
+  // 绘制聚合循环直接查表, 省去每帧 2048*2 次 log2。
+  void RebuildBinToBand() {
+    const int nb = mNumBins;
+    mBinToBand.assign(nb, -1);
+    if (nb <= 0)
+      return;
+    const double binHz = mSampleRate / std::max((double)nb * 2.0, 1.0);
+    const double logLo = std::log2(kSpecFreqLo);
+    const double logHi = std::log2(kSpecFreqHi);
+    const double logBand = (logHi - logLo) / kSpectrumBands;
+    for (int i = 0; i < nb; ++i) {
+      const double f = (double)i * binHz;
+      if (f < kSpecFreqLo || f > kSpecFreqHi)
+        continue;
+      const int b = (int)((std::log2(f) - logLo) / logBand);
+      if (b >= 0 && b < kSpectrumBands)
+        mBinToBand[i] = b;
+    }
+  }
+
   std::vector<float> mSpectrum[2]; // 平滑后的 L/R 频谱幅度 (幅度, 非 dB)
+  std::vector<int> mBinToBand;     // 预计算: bin -> band 映射 (-1 = 频段外)
   float mAttackCoeff = 0.2f;
   float mReleaseCoeff = 0.9f;
   float mAttackSec = 0.05f; // 上升时间常数 (s), 由插件 Attack 参数下发
