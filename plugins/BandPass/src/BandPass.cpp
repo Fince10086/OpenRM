@@ -208,13 +208,26 @@ ORMBandPass::ORMBandPass(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
       if ((sysFontOk = loadFontFile(pGraphics, kFontSystem, p)))
         break;
 #else
-    // Windows: 优先用微软雅黑(含中文), 设备名等非 ASCII 文本需要中文字形
-    sysFontOk = pGraphics->LoadFont(kFontSystem, "Microsoft YaHei UI", ETextStyle::Normal);
+    // Windows: 系统字体 fallback 链, 必须落在含完整 CJK 的字体上。
+    sysFontOk = pGraphics->LoadFont(kFontSystem, "Microsoft YaHei", ETextStyle::Normal);
+    if (!sysFontOk)
+      sysFontOk = pGraphics->LoadFont(kFontSystem, "Microsoft YaHei UI", ETextStyle::Normal);
     if (!sysFontOk)
       sysFontOk = pGraphics->LoadFont(kFontSystem, "Segoe UI", ETextStyle::Normal);
+    if (!sysFontOk) {
+      static const char *kSysFontFiles[] = {
+          "C:\\Windows\\Fonts\\msyh.ttc",   // 微软雅黑 (Vista+, TTC 集合)
+          "C:\\Windows\\Fonts\\msyh.ttf",
+          "C:\\Windows\\Fonts\\Deng.ttf",   // 等线 (Win8+, TTF)
+          "C:\\Windows\\Fonts\\Nsimsun.ttf", // 新宋体 (TTF)
+      };
+      for (const char *p : kSysFontFiles)
+        if ((sysFontOk = loadFontFile(pGraphics, kFontSystem, p)))
+          break;
+    }
 #endif
     if (!sysFontOk)
-      pGraphics->LoadFont(kFontSystem, MIXED_FN);
+      sysFontOk = pGraphics->LoadFont(kFontSystem, MIXED_FN);
 
     const IVStyle style = MakeORMStyle();
     const IVStyle btnStyle = MakeButtonStyle();
