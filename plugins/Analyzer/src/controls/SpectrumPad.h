@@ -40,6 +40,7 @@ public:
     kMsgTagRelease,
     kMsgTagRange,
     kMsgTagAttack,
+    kMsgTagOverlap,
   };
 
   SpectrumPad(const IRECT &bounds) : IControl(bounds) {
@@ -59,7 +60,7 @@ public:
       if (nBins <= 0)
         return;
 
-      const double updatePeriod = (double)nBins * 2.0 / 4.0 / std::max(mSampleRate, 1.0);
+      const double updatePeriod = (double)nBins * 2.0 / std::max(mOverlap, 1.0f) / std::max(mSampleRate, 1.0);
       mAttackCoeff = (float)std::exp(-updatePeriod / mAttackSec);
       mReleaseCoeff = (float)std::exp(-updatePeriod / mReleaseSec);
 
@@ -94,6 +95,10 @@ public:
       float attackSec;
       stream.Get(&attackSec, 0);
       mAttackSec = std::clamp(attackSec, 0.001f, 0.1f);
+    } else if (msgTag == kMsgTagOverlap) {
+      int overlap;
+      stream.Get(&overlap, 0);
+      mOverlap = (float)std::clamp(overlap, 1, 8);
     }
   }
 
@@ -285,6 +290,7 @@ private:
   float mReleaseCoeff = 0.9f;
   float mAttackSec = 0.05f; // 上升时间常数 (s), 由插件 Attack 参数下发
   float mReleaseSec = 0.2f; // 释放时间常数 (s), 由插件 Release 参数下发
+  float mOverlap = 4.f;     // 分析重叠 (hop = fftSize/overlap), 由插件 Overlap 参数下发
   float mBottomDb = -90.f;  // 频谱显示下限 (dBFS), 由插件 Range 参数下发 (-80..-120)
   int mNumBins = 2048;
   double mSampleRate = 48000.0;

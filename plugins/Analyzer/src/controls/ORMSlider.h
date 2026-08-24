@@ -122,6 +122,18 @@ protected:
       std::snprintf(buf, sizeof(buf), "%.3fs", p->Value());
       ds.Set(buf);
       break;
+    case kOverlap: {
+      const int idx = (int)std::clamp(p->Value(), 0.0, (double)kNumOverlapOptions - 1);
+      std::snprintf(buf, sizeof(buf), "%d", kOverlapOptions[idx]);
+      ds.Set(buf);
+      break;
+    }
+    case kRes: {
+      const int idx = (int)std::clamp(p->Value(), 0.0, (double)kNumResOptions - 1);
+      std::snprintf(buf, sizeof(buf), "%d", kResOptions[idx]);
+      ds.Set(buf);
+      break;
+    }
     default:
       p->GetDisplay(ds, false);
       break;

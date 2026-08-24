@@ -5,7 +5,9 @@
 #include "dsp/SpectrumSTFT.h"
 #include "Strings.h"
 
+#include <algorithm>
 #include <array>
+#include <chrono>
 #include <deque>
 #include <functional>
 #include <string>
@@ -21,6 +23,7 @@ class IControl;
 class SpectrumPad;
 class ORMSlider;
 class SettingsPanelControl;
+class CpuMeterControl;
 } // namespace igraphics
 } // namespace iplug
 
@@ -46,18 +49,26 @@ private:
   std::array<sample, kMaxBlock> mSpecInL{};
   std::array<sample, kMaxBlock> mSpecInR{};
 
-  // 频谱配置去重: 仅当采样率/FFT 尺寸变化时才向 UI 控件重发 (OnIdle 节流)
+  // 频谱配置去重: 仅当采样率/FFT 尺寸/重叠/释放/下限/上升时间变化时才向 UI 控件重发 (OnIdle 节流)
   double mSentSampleRate = 0.0;
   int mSentFFTSize = 0;
+  int mSentOverlap = 0;
   double mSentRelease = -1.0;
   double mSentRange = -1.0;
   double mSentAttack = -1.0;
 
   SpectrumPad *mSpectrumPad = nullptr;
+  ORMSlider *mResSlider = nullptr;
+  ORMSlider *mOverlapSlider = nullptr;
   ORMSlider *mRangeSlider = nullptr;
   ORMSlider *mAttackSlider = nullptr;
   ORMSlider *mReleaseSlider = nullptr;
   ORMSlider *mMixSlider = nullptr;
+  CpuMeterControl *mCpuMeter = nullptr;
+
+  // CPU 占用率: 音频线程在 ProcessBlock 内测量 处理耗时/块时长, 一阶平滑后
+  // 由 OnIdle 推送给 UI (0.0 ~ 1.0+, 显示为两位小数, 不带 %)。
+  double mCpuPct = 0.0;
 
   ParamSnapshot mDefaultSnapshot{};
   std::deque<ParamSnapshot> mUndoStack, mRedoStack;
@@ -73,6 +84,16 @@ private:
   std::vector<std::pair<IControl *, int>> mTooltipBindings;
 
   void SendSpectrumConfig();
+
+  // 分析档位 -> 实际值 (参数存档位索引)
+  int CurrentFFTSize() const {
+    const int idx = (int)std::clamp(GetParam(kRes)->Value(), 0.0, (double)kNumResOptions - 1);
+    return kResOptions[idx];
+  }
+  int CurrentOverlap() const {
+    const int idx = (int)std::clamp(GetParam(kOverlap)->Value(), 0.0, (double)kNumOverlapOptions - 1);
+    return kOverlapOptions[idx];
+  }
 
   void SetParamFromEditor(int idx, double value);
   void RefreshAfterEdit();
