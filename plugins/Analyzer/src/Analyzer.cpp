@@ -10,6 +10,7 @@
 #include "controls/SectionTitleControl.h"
 #include "controls/SettingsPanelControl.h"
 #include "controls/SpectrumPad.h"
+#include "controls/ChannelLegendControl.h"
 #include "controls/CpuMeterControl.h"
 #include "StateFileIO.h"
 #include "SettingsFileIO.h"
@@ -163,8 +164,11 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     constexpr float kBtnH = 30.f;
     constexpr float kPanelR = kCol2X + kBtnW;
 
+    // 三通道色块图例 (L / R / M, 颜色跟随主题), 频谱区域整体下移让位
+    pGraphics->AttachControl(new ChannelLegendControl(IRECT(20, 32, 668, 54)));
+
     // 主频谱绘制区域
-    mSpectrumPad = new SpectrumPad(IRECT(20, 30, 668, 210));
+    mSpectrumPad = new SpectrumPad(IRECT(20, 58, 668, 238));
     pGraphics->AttachControl(mSpectrumPad, kCtrlTagPad);
 
     // CPU 占用率显示

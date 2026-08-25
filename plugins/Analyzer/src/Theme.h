@@ -145,5 +145,20 @@ inline IVStyle MakeButtonStyle() {
   return IVStyle(true, true, colors, labelText, valueText, true, true, false, false, 0.f, 2.f, 0.f, 1.f, 0.f);
 }
 
+// 频谱三通道颜色: L/R 基于主题色相 ±120°, M 使用主题色相。
+// 与 SpectrumPad 的绘制取色完全一致, 供色块图例等 UI 复用。
+inline void GetChannelColors(IColor &cL, IColor &cR, IColor &cM) {
+  auto wrap = [](int h) {
+    h %= 360;
+    return h < 0 ? h + 360 : h;
+  };
+  const float b = (ThemeMode() ? kDarkB[2] : kLightB[2]) / 100.f;
+  const float sM = std::max(ThemeSatMax(), 0) / 100.f;   // M 跟随主题档位
+  const float sLR = std::max(ThemeSatMax(), 15) / 100.f; // L/R 保底 15
+  cL = HSBToIColor(wrap(ThemeHue() - 120), sLR, b);
+  cR = HSBToIColor(wrap(ThemeHue() + 120), sLR, b);
+  cM = HSBToIColor(ThemeHue(), sM, b);
+}
+
 } // namespace igraphics
 } // namespace iplug

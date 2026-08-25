@@ -4,9 +4,10 @@
 //
 // 视觉特性:
 // 1. 20 Hz ~ 20 kHz 对数频率坐标轴。
-// 2. 双声道色彩区分: 左/右声道基于主题色相做 ±120° 旋转，重合区域采用主题色填充。
-// 3. 动态渐变填充: 渐变锚定于信号峰值自身，弱信号在底部依然清晰。
-// 4. 动力学平滑: 独立支持 Attack（上升响应）与 Release（释放衰减）时间常数平滑。
+// 2. 双声道色彩区分: 左/右声道基于主题色相做 ±120° 旋转，各自保持自身颜色绘制 (不再因重叠切换颜色)。
+// 3. 合并声道 (L+R) 以主题色相绘制在最前图层, 低透明度光晕。
+// 4. 动态渐变填充: 渐变锚定于信号峰值自身，弱信号在底部依然清晰。
+// 5. 动力学平滑: 独立支持 Attack（上升响应）与 Release（释放衰减）时间常数平滑。
 
 #include "IControls.h"
 #include "ISender.h"
@@ -42,7 +43,6 @@ public:
     mBandAcc.assign(kSpectrumBands, BandAcc{});
     mSpecPtsL.reserve(kSpectrumBands);
     mSpecPtsR.reserve(kSpectrumBands);
-    mSpecPtsO.reserve(kSpectrumBands);
     mSpecPtsM.reserve(kSpectrumBands);
     RebuildBinToBand();
   }
@@ -150,12 +150,6 @@ private:
 
   float XOf(IGraphics &, double f) const { return mRECT.L + FreqNorm(f) * mRECT.W(); }
 
-  // 色相循环: 超出 0..360 时折回
-  static int WrapHue(int h) {
-    h %= 360;
-    return h < 0 ? h + 360 : h;
-  }
-
   void DrawTrack(IGraphics &g) {
     struct Band {
       double lo, hi;
@@ -199,17 +193,11 @@ private:
     if (mRECT.W() <= 0.f || mRECT.H() <= 0.f)
       return;
 
-    // 通道色: L/R/重合 = 色环等边三角, 色相分别是 主题-120 / 主题 / 主题+120
-    // 饱和度跟随主题档位: 重合区 = 主题档位 (0 时即中性灰);
-    // L/R 区域 = 主题档位但保底 15, 保证 ±120° 色相偏移至少隐约可见。
-    // 亮度沿用 COL_500 档, 随主题明暗自动跟随
-    const int hue = ThemeHue();
-    const float b = (ThemeMode() ? kDarkB[2] : kLightB[2]) / 100.f;
-    const float sO = std::max(ThemeSatMax(), 0) / 100.f;
-    const float sL = std::max(ThemeSatMax(), 15) / 100.f;
-    const IColor cL = HSBToIColor(WrapHue(hue - 120), sL, b);
-    const IColor cR = HSBToIColor(WrapHue(hue + 120), sL, b);
-    const IColor cO = HSBToIColor(hue, sO, b);
+    // 通道色: L/R 基于主题色相 ±120°, 各自保持自身颜色 (不因重叠切换);
+    // 合并声道 M 使用主题色相, 低透明度绘制在最前图层。
+    // 取色逻辑见 Theme.h GetChannelColors, 与色块图例保持一致。
+    IColor cL, cR, cO;
+    GetChannelColors(cL, cR, cO);
 
     const double logLo = std::log2(kSpecFreqLo);
     const double logHi = std::log2(kSpecFreqHi);
@@ -225,7 +213,6 @@ private:
     if (mMode == 1) {
       mSpecPtsL.clear();
       mSpecPtsR.clear();
-      mSpecPtsO.clear();
       mSpecPtsM.clear();
       const int nb = (int)mVQTFreqs.size();
       const int have = std::min(nb, (int)mSpectrum[0].size());
@@ -240,8 +227,6 @@ private:
           mSpecPtsL.push_back({x, yL});
         if (aR > 1e-6f)
           mSpecPtsR.push_back({x, yR});
-        if (aL > 1e-6f && aR > 1e-6f)
-          mSpecPtsO.push_back({x, std::max(yL, yR)});
 
         const float aM = (mMergeAlgo == 0) ? std::sqrt(aL * aL + aR * aR) : aSum;
         if (aM > 1e-6f)
@@ -249,13 +234,12 @@ private:
       }
 
       if (mChanMode == 0) {
-        DrawFill(g, mSpecPtsL, cL);
-        DrawFill(g, mSpecPtsR, cR);
-        DrawFill(g, mSpecPtsO, cO);
+        DrawFill(g, mSpecPtsL, cL, kGradientMinAlpha, kLayerTopAlpha);
+        DrawFill(g, mSpecPtsR, cR, kGradientMinAlpha, kLayerTopAlpha);
       } else if (mChanMode == 1) {
-        DrawFill(g, mSpecPtsL, cL);
-        DrawFill(g, mSpecPtsR, cR);
-        DrawFill(g, mSpecPtsO, cO);
+        DrawFill(g, mSpecPtsL, cL, kGradientMinAlpha, kLayerTopAlpha);
+        DrawFill(g, mSpecPtsR, cR, kGradientMinAlpha, kLayerTopAlpha);
+        // 合并声道 (L+R) 绘制在 L/R 之后 = 最前图层, 低透明度光晕
         DrawFill(g, mSpecPtsM, cO, kMergedMinAlpha, kMergedTopAlpha);
       } else {
         DrawFill(g, mSpecPtsM, cO);
@@ -265,7 +249,6 @@ private:
 
     mSpecPtsL.clear();
     mSpecPtsR.clear();
-    mSpecPtsO.clear();
     mSpecPtsM.clear();
     for (auto &acc : mBandAcc)
       acc = BandAcc{};
@@ -300,9 +283,6 @@ private:
         mSpecPtsL.push_back({x, yL});
       if (acc.used[1])
         mSpecPtsR.push_back({x, yR});
-      // 重合区: 两条曲线之下、较低一条(y 较大)到框底, 用主题色相压在最上层
-      if (acc.used[0] && acc.used[1])
-        mSpecPtsO.push_back({x, std::max(yL, yR)});
 
       const float aM = (mMergeAlgo == 0) ? std::sqrt(aL * aL + aR * aR) : aSum;
       if (aM > 1e-6f)
@@ -310,13 +290,12 @@ private:
     }
 
     if (mChanMode == 0) {
-      DrawFill(g, mSpecPtsL, cL);
-      DrawFill(g, mSpecPtsR, cR);
-      DrawFill(g, mSpecPtsO, cO);
+      DrawFill(g, mSpecPtsL, cL, kGradientMinAlpha, kLayerTopAlpha);
+      DrawFill(g, mSpecPtsR, cR, kGradientMinAlpha, kLayerTopAlpha);
     } else if (mChanMode == 1) {
-      DrawFill(g, mSpecPtsL, cL);
-      DrawFill(g, mSpecPtsR, cR);
-      DrawFill(g, mSpecPtsO, cO);
+      DrawFill(g, mSpecPtsL, cL, kGradientMinAlpha, kLayerTopAlpha);
+      DrawFill(g, mSpecPtsR, cR, kGradientMinAlpha, kLayerTopAlpha);
+      // 合并声道 (L+R) 绘制在 L/R 之后 = 最前图层, 低透明度光晕
       DrawFill(g, mSpecPtsM, cO, kMergedMinAlpha, kMergedTopAlpha);
     } else {
       DrawFill(g, mSpecPtsM, cO);
@@ -362,17 +341,25 @@ private:
     for (const Pt &p : pts)
       topY = std::min(topY, p.y);
     const IRECT gradRect(mRECT.L, topY, mRECT.R, mRECT.B);
-    const IColor topColor(topAlpha, color.R, color.G, color.B);
-    const IColor botColor(minAlpha, color.R, color.G, color.B);
-    IPattern fill = IPattern::CreateLinearGradient(
-        gradRect, EDirection::Vertical,
-        {IColorStop(topColor, 0.f), IColorStop(botColor, 1.f)});
+    // 指数衰减渐变: 顶部接近实色, 按指数曲线快速向底部透明 (多 stops 近似)
+    constexpr int kGradientStops = 12;
+    constexpr float kGradientDecay = 3.5f;
+    IPattern fill = IPattern::CreateLinearGradient(gradRect, EDirection::Vertical);
+    for (int i = 0; i < kGradientStops; ++i) {
+      const float t = (float)i / (float)(kGradientStops - 1);
+      const float alphaF =
+          (float)minAlpha + (float)(topAlpha - minAlpha) * std::exp(-kGradientDecay * t);
+      fill.AddStop(IColor((int)std::lround(std::clamp(alphaF, 0.f, 255.f)), color.R, color.G,
+                          color.B),
+                   t);
+    }
     g.PathFill(fill);
   }
 
-  static constexpr int kGradientMinAlpha = 40; // 实体填充底部最小不透明度
-  static constexpr int kMergedTopAlpha = 90;   // 总功率光晕顶部不透明度 (约 35%)
-  static constexpr int kMergedMinAlpha = 15;   // 总功率光晕底部不透明度
+  static constexpr int kGradientMinAlpha = 10; // L/R 实体填充底部最小不透明度
+  static constexpr int kLayerTopAlpha = 160;   // L/R 顶部不透明度 (从 255 降低, 更透明)
+  static constexpr int kMergedTopAlpha = 125;  // 合并声道光晕顶部不透明度 (ALL 模式, 从 85 再加深)
+  static constexpr int kMergedMinAlpha = 10;   // 合并声道光晕底部不透明度
   static constexpr int kSpectrumBands = 256;
   static constexpr float kSpecFreqLo = 20.f;
   static constexpr float kSpecFreqHi = 20000.f;
@@ -414,8 +401,7 @@ private:
 
   std::vector<Pt> mSpecPtsL;    // 预分配: L 填充点
   std::vector<Pt> mSpecPtsR;    // 预分配: R 填充点
-  std::vector<Pt> mSpecPtsO;    // 预分配: 重合区填充点 (主题色)
-  std::vector<Pt> mSpecPtsM;    // 预分配: 总功率和 M 填充点
+  std::vector<Pt> mSpecPtsM;    // 预分配: 合并声道 (L+R) 填充点
   std::vector<BandAcc> mBandAcc; // 预分配: 每 band 双通道峰值
 };
 
