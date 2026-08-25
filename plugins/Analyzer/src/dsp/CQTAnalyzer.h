@@ -20,6 +20,11 @@
 // 整条金字塔每帧每通道约 9k 次乘加, 相对全速率 174k 抽头可忽略。流式抽取 == 一次性
 // 参考 (python 逐位验证); 带内音幅度保留 ~1.0, 带外抑制 -40dB+。
 //
+// 逐 band 输出节奏: band 包络带宽 ≈ Bk, 包络奈奎斯特 = 2·Bk。帧周期 kHop/fs ≈ 21.3ms,
+// 帧率 ≈46.9Hz, 因此仅当 2·Bk < 46.9Hz (即 Bk<23.4Hz, 只有 γ=10 的底层 band) 时才有
+// 依奈奎斯特隔帧重算的余地; 默认 γ≥20 下 Bk≥40Hz, 每帧本就必须更新, 该项节省为零。
+// 内层点积使用 4 路 float 累加 (窗长 ≤ 数百样本, float 精度绰绰有余), 便于编译器向量化。
+//
 // 线程模型: 音频线程仅在 ProcessBlock 内采集 hop 样本入队 (与 SpectrumSTFT 一致);
 // band/金字塔/各层历史全部由 UI 线程 PrepareDataForUI 独占 (OnIdle→TransmitData)。
 // γ/BPO/采样率变化时音频线程只写标量并置 mNeedRebuild, 惰性重建在 UI 线程执行。
@@ -206,21 +211,44 @@ protected:
         nin = nout;
       }
 
-      // band 点积: 每 band 从所在层取最近 winLen 个样本
+      // band 点积: 每 band 从所在层取最近 winLen 个样本; 按自身 advance 节奏重算
+      // (其余帧复用上次值), 内层用 4 路 float 累加便于自动向量化。
       for (int b = 0; b < nb; ++b) {
         const Band &bd = mBands[b];
-        const std::vector<float> &buf = mLayers[c][bd.layer];
-        const int wl = bd.winLen;
-        const int have = std::min(wl, (int)buf.size()); // 实际可用样本数
-        const int skip = wl - have;                     // 窗口前补零 (启动阶段)
-        const float *x = buf.data() + (buf.size() - have);
-        double re = 0.0, im = 0.0;
-        for (int n = skip; n < wl; ++n) {
-          const float v = x[n - skip];
-          re += v * bd.kernelRe[n];
-          im += v * bd.kernelIm[n];
+        RunState &rs = mRun[c][b];
+        float mag;
+        if (--rs.phase <= 0) {
+          const std::vector<float> &buf = mLayers[c][bd.layer];
+          const int wl = bd.winLen;
+          const int have = std::min(wl, (int)buf.size()); // 实际可用样本数
+          const int skip = wl - have;                     // 窗口前补零 (启动阶段)
+          const float *x = buf.data() + (buf.size() - have);
+          const float *kr = bd.kernelRe.data() + skip;
+          const float *ki = bd.kernelIm.data() + skip;
+          const int cnt = wl - skip;
+          float re0 = 0.f, re1 = 0.f, re2 = 0.f, re3 = 0.f;
+          float im0 = 0.f, im1 = 0.f, im2 = 0.f, im3 = 0.f;
+          int j = 0;
+          for (; j + 4 <= cnt; j += 4) {
+            const float v0 = x[j], v1 = x[j + 1], v2 = x[j + 2], v3 = x[j + 3];
+            re0 += v0 * kr[j];     im0 += v0 * ki[j];
+            re1 += v1 * kr[j + 1]; im1 += v1 * ki[j + 1];
+            re2 += v2 * kr[j + 2]; im2 += v2 * ki[j + 2];
+            re3 += v3 * kr[j + 3]; im3 += v3 * ki[j + 3];
+          }
+          float re = (re0 + re1) + (re2 + re3);
+          float im = (im0 + im1) + (im2 + im3);
+          for (; j < cnt; ++j) {
+            re += x[j] * kr[j];
+            im += x[j] * ki[j];
+          }
+          mag = std::sqrt(re * re + im * im) * bd.wsumInv * bd.invSqrtBw;
+          rs.last = mag;
+          rs.phase = bd.advance;
+        } else {
+          mag = rs.last;
         }
-        d.vals[c][b] = (float)(std::sqrt(re * re + im * im) * bd.wsumInv * bd.invSqrtBw);
+        d.vals[c][b] = mag;
       }
       for (int b = nb; b < MAX_BANDS; ++b)
         d.vals[c][b] = 0.0f;
@@ -233,7 +261,14 @@ private:
     float wsumInv;                // 4/winLen: 恢复输入幅度
     float invSqrtBw;              // 1/sqrt(Bk): 功率密度归一化
     int winLen;                   // 该层速率下窗长 (样本) = fsL/Bk (下限: ≥~4 个 fc 周期)
+    int advance;                  // 每 advance 帧重算一次 (包络奈奎斯特: 1/(2·Bk)/帧周期)
     std::vector<float> kernelRe, kernelIm; // 在该层速率下计算的 w·cos/w·sin
+  };
+
+  // 逐 band 运行状态 (每通道): 包络更新节奏。phase 递减, <=0 时重算并复位为 advance。
+  struct RunState {
+    int phase = 0;
+    float last = 0.f;
   };
 
   // 往层 l 历史末尾追加 n 个样本, 使缓冲只保留最近 maxKeep 个 (即该层最大窗长)。
@@ -264,6 +299,10 @@ private:
       const double bw = fc / q + mGamma; // Bk: 低频段被 γ 托底, 高频段趋于恒定 Q
       AddBand(fc, bw, fs);
     }
+
+    // 逐 band 运行状态 (每通道) 复位
+    for (int c = 0; c < MAXNC; ++c)
+      mRun[c].assign((size_t)mBands.size(), RunState{0, 0.f});
 
     // 清空金字塔 (层历史 + 各级滤波状态)
     for (int c = 0; c < MAXNC; ++c) {
@@ -296,6 +335,9 @@ private:
     bd.winLen = wl;
     bd.wsumInv = (float)(4.0 / wl);
     bd.invSqrtBw = (float)(1.0 / std::sqrt(bw));
+    // 包络更新节奏: band 输出带宽 ≈ Bk, 包络奈奎斯特 = 2·Bk; 每帧时长 kHop/fs。
+    // 只有 Bk < fs/(2·kHop)(约23Hz@48k) 时才有必要隔帧重算, 否则恒为 1 (默认 γ≥20 全为 1)。
+    bd.advance = std::max(1, (int)std::lround(fs / (2.0 * bw * kHop)));
     bd.kernelRe.resize(wl);
     bd.kernelIm.resize(wl);
     const double step = 2.0 * PI * fc / fsL; // 该层速率的归一化频率
@@ -319,6 +361,7 @@ private:
   std::array<int, kMaxLayers> mMaxWinPerLayer{};      // 每层需保留的最大窗长 (UI 线程独占)
   std::array<std::vector<std::vector<float>>, MAXNC> mLayers; // [c][l] 每层历史 (UI 线程独占)
   std::array<std::array<detail::HalfbandDec2, kMaxLayers>, MAXNC> mDecim; // 每通道每级滤波 (UI 线程独占)
+  std::array<std::vector<RunState>, MAXNC> mRun;     // [c][b] 逐 band 包络更新状态 (UI 线程独占)
   std::array<float, kHop> mScratch[2];    // 级联逐级降采样的交替缓冲 (UI 线程独占)
   int mBufCount = 0;                      // 音频线程独占
   std::array<std::vector<float>, MAXNC> mPending;      // 音频线程独占 (构造时分配, 不再重分配)
