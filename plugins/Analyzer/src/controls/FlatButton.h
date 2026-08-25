@@ -79,5 +79,40 @@ public:
   }
 };
 
+class FlatCycleButton : public IControl {
+public:
+  FlatCycleButton(const IRECT &bounds, int paramIdx, const std::vector<const char *> &labels, const IVStyle &style)
+      : IControl(bounds, paramIdx), mLabels(labels), mStyle(style) {
+    SetActionFunction(EmptyClickActionFunc);
+  }
+
+  void OnMouseDown(float x, float y, const IMouseMod &mod) override {
+    if (mod.L && !mod.A && GetParam() && !mLabels.empty()) {
+      const int num = (int)mLabels.size();
+      const int cur = (int)std::clamp(std::lround(GetParam()->Value()), 0L, (long)num - 1);
+      const int next = (cur + 1) % num;
+      const double norm = (num > 1) ? (double)next / (double)(num - 1) : 0.0;
+      SetValueFromUserInput(norm);
+    }
+  }
+
+  void Draw(IGraphics &g) override {
+    const IRECT b = mRECT;
+    const int num = (int)mLabels.size();
+    const int idx = GetParam() ? (int)std::clamp(std::lround(GetParam()->Value()), 0L, (long)num - 1) : 0;
+    const IColor fill = GetMouseIsOver() ? COL_500() : COL_300();
+    g.FillRect(fill, b.GetPadded(-BLOCK_GAP));
+    IText t = mStyle.valueText;
+    t.mFGColor = COL_900();
+    strcpy(t.mFont, kFontSemiBold);
+    if (idx >= 0 && idx < num)
+      g.DrawText(t, mLabels[idx], b);
+  }
+
+private:
+  std::vector<const char *> mLabels;
+  IVStyle mStyle;
+};
+
 END_IGRAPHICS_NAMESPACE
 END_IPLUG_NAMESPACE

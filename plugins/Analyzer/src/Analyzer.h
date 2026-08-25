@@ -26,6 +26,7 @@ class ORMSlider;
 class SettingsPanelControl;
 class CpuMeterControl;
 class FlatToggleControl;
+class FlatCycleButton;
 } // namespace igraphics
 } // namespace iplug
 
@@ -45,12 +46,13 @@ public:
   bool ConstrainEditorResize(int &w, int &h) const override;
 
 private:
-  SpectrumSTFT<2> mSpectrum;
-  VQTAnalyzer<2> mVQT;
+  SpectrumSTFT<3> mSpectrum;
+  VQTAnalyzer<3> mVQT;
 
   static constexpr int kMaxBlock = 16384;
   std::array<sample, kMaxBlock> mSpecInL{};
   std::array<sample, kMaxBlock> mSpecInR{};
+  std::array<sample, kMaxBlock> mSpecInM{};
 
   // 频谱配置缓存（用于在 OnIdle 中防抖去重）
   double mSentSampleRate = 0.0;
@@ -60,6 +62,8 @@ private:
   double mSentAttack = -1.0;
   double mSentLfRes = -1.0;
   double mSentBpo = -1.0;
+  int mSentChanMode = -1;
+  int mSentMergeAlgo = -1;
 
   SpectrumPad *mSpectrumPad = nullptr;
   ORMSlider *mBpoSlider = nullptr;
@@ -70,6 +74,8 @@ private:
   ORMSlider *mMixSlider = nullptr;
   CpuMeterControl *mCpuMeter = nullptr;
   FlatToggleControl *mModeToggle = nullptr;
+  FlatCycleButton *mChanModeBtn = nullptr;
+  FlatToggleControl *mMergeAlgoToggle = nullptr;
 
   int mSentMode = -1;
 

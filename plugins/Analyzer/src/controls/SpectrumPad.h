@@ -33,7 +33,9 @@ public:
     kMsgTagAttack,
     kMsgTagMode,
     kMsgTagVQTBands,
-    kMsgTagReset, // 清空平滑缓冲, 显示从头加载 (γ/BPO/模式切换时由插件下发)
+    kMsgTagReset,     // 清空平滑缓冲, 显示从头加载 (γ/BPO/模式切换时由插件下发)
+    kMsgTagChanMode,  // 声道显示模式 (0: L/R, 1: ALL, 2: MERGE)
+    kMsgTagMergeAlgo, // 合并算法 (0: PWR 功率和, 1: SUM 单声道和)
   };
 
   SpectrumPad(const IRECT &bounds) : IControl(bounds) {
@@ -41,6 +43,7 @@ public:
     mSpecPtsL.reserve(kSpectrumBands);
     mSpecPtsR.reserve(kSpectrumBands);
     mSpecPtsO.reserve(kSpectrumBands);
+    mSpecPtsM.reserve(kSpectrumBands);
     RebuildBinToBand();
   }
 
@@ -48,7 +51,7 @@ public:
     IByteStream stream(pData, dataSize);
 
     if (msgTag == ISender<>::kUpdateMessage) {
-      ISenderData<2, TDataPacket> d;
+      ISenderData<3, TDataPacket> d;
       stream.Get(&d, 0);
       // FFT: 数据 = bins (nBins 个); VQT: 数据 = band 幅度 (nBands 个)
       const int nVals = (mMode == 0) ? std::max(mNumBins, 0) : (int)mVQTFreqs.size();
@@ -61,7 +64,7 @@ public:
       mReleaseCoeff = (float)std::exp(-updatePeriod / mReleaseSec);
 
       const float a = mAttackCoeff, r = mReleaseCoeff;
-      for (int c = 0; c < 2; ++c) {
+      for (int c = 0; c < 3; ++c) {
         if (mSpectrum[c].size() != (size_t)nVals)
           mSpectrum[c].assign(nVals, 0.f);
         for (int i = 0; i < nVals; ++i) {
@@ -98,12 +101,20 @@ public:
       stream.Get(&mode, 0);
       mMode = (mode == 1) ? 1 : 0;
       SetDirty(false);
+    } else if (msgTag == kMsgTagChanMode) {
+      int chanMode;
+      stream.Get(&chanMode, 0);
+      mChanMode = std::clamp(chanMode, 0, 2);
+      SetDirty(false);
+    } else if (msgTag == kMsgTagMergeAlgo) {
+      int mergeAlgo;
+      stream.Get(&mergeAlgo, 0);
+      mMergeAlgo = std::clamp(mergeAlgo, 0, 1);
+      SetDirty(false);
     } else if (msgTag == kMsgTagVQTBands) {
       const int n = dataSize / (int)sizeof(float);
-      // band 数变化 (如 BPO 12<->24): 旧平滑缓冲与新 band 语义不匹配, 清空重来,
-      // 避免新旧 band 数错位导致的显示错乱。
       if (n != (int)mVQTFreqs.size()) {
-        for (int c = 0; c < 2; ++c)
+        for (int c = 0; c < 3; ++c)
           mSpectrum[c].clear();
       }
       mVQTFreqs.resize(n);
@@ -111,9 +122,7 @@ public:
         std::memcpy(mVQTFreqs.data(), pData, (size_t)n * sizeof(float));
       SetDirty(false);
     } else if (msgTag == kMsgTagReset) {
-      // 引擎配置已重建 (γ/BPO/模式切换): 平滑缓冲中的旧值不再代表当前 band 语义,
-      // 全部清零, 让频谱显示从空重新加载 —— 避免旧频谱与新车窗数据混叠/残影。
-      for (int c = 0; c < 2; ++c)
+      for (int c = 0; c < 3; ++c)
         mSpectrum[c].assign(mSpectrum[c].size(), 0.f);
       SetDirty(false);
     }
@@ -130,8 +139,8 @@ private:
     float x, y;
   };
   struct BandAcc {
-    float max[2] = {0.f, 0.f}; // 每 band 每通道峰值
-    char used[2] = {0, 0};     // 每 band 每通道是否有数据
+    float max[3] = {0.f, 0.f, 0.f}; // 每 band 每通道峰值 (0: L, 1: R, 2: Sum)
+    char used[3] = {0, 0, 0};       // 每 band 每通道是否有数据
   };
 
   // 频率(Hz) -> 归一化 x (0..1), 与 BandPass Freq 参数 (20..20000, ShapeExp) 一致
@@ -217,28 +226,47 @@ private:
       mSpecPtsL.clear();
       mSpecPtsR.clear();
       mSpecPtsO.clear();
+      mSpecPtsM.clear();
       const int nb = (int)mVQTFreqs.size();
       const int have = std::min(nb, (int)mSpectrum[0].size());
       for (int b = 0; b < have; ++b) {
         const float x = mRECT.L + FreqNorm(mVQTFreqs[b]) * mRECT.W();
-        const float yL = ampToY(mSpectrum[0][b]);
-        const float yR = ampToY(mSpectrum[1][b]);
-        if (mSpectrum[0][b] > 1e-6f)
+        const float aL = mSpectrum[0][b];
+        const float aR = mSpectrum[1][b];
+        const float aSum = (mSpectrum[2].size() > (size_t)b) ? mSpectrum[2][b] : 0.f;
+        const float yL = ampToY(aL);
+        const float yR = ampToY(aR);
+        if (aL > 1e-6f)
           mSpecPtsL.push_back({x, yL});
-        if (mSpectrum[1][b] > 1e-6f)
+        if (aR > 1e-6f)
           mSpecPtsR.push_back({x, yR});
-        if (mSpectrum[0][b] > 1e-6f && mSpectrum[1][b] > 1e-6f)
+        if (aL > 1e-6f && aR > 1e-6f)
           mSpecPtsO.push_back({x, std::max(yL, yR)});
+
+        const float aM = (mMergeAlgo == 0) ? std::sqrt(aL * aL + aR * aR) : aSum;
+        if (aM > 1e-6f)
+          mSpecPtsM.push_back({x, ampToY(aM)});
       }
-      DrawFill(g, mSpecPtsL, cL);
-      DrawFill(g, mSpecPtsR, cR);
-      DrawFill(g, mSpecPtsO, cO);
+
+      if (mChanMode == 0) {
+        DrawFill(g, mSpecPtsL, cL);
+        DrawFill(g, mSpecPtsR, cR);
+        DrawFill(g, mSpecPtsO, cO);
+      } else if (mChanMode == 1) {
+        DrawFill(g, mSpecPtsL, cL);
+        DrawFill(g, mSpecPtsR, cR);
+        DrawFill(g, mSpecPtsO, cO);
+        DrawFill(g, mSpecPtsM, cO, kMergedMinAlpha, kMergedTopAlpha);
+      } else {
+        DrawFill(g, mSpecPtsM, cO);
+      }
       return;
     }
 
     mSpecPtsL.clear();
     mSpecPtsR.clear();
     mSpecPtsO.clear();
+    mSpecPtsM.clear();
     for (auto &acc : mBandAcc)
       acc = BandAcc{};
 
@@ -250,12 +278,14 @@ private:
       const int b = mBinToBand[i];
       if (b < 0)
         continue;
-      for (int c = 0; c < 2; ++c) {
-        const float amp = mSpectrum[c][i];
-        if (amp > mBandAcc[b].max[c])
-          mBandAcc[b].max[c] = amp;
-        if (amp > 1e-6f)
-          mBandAcc[b].used[c] = 1;
+      for (int c = 0; c < 3; ++c) {
+        if (i < (int)mSpectrum[c].size()) {
+          const float amp = mSpectrum[c][i];
+          if (amp > mBandAcc[b].max[c])
+            mBandAcc[b].max[c] = amp;
+          if (amp > 1e-6f)
+            mBandAcc[b].used[c] = 1;
+        }
       }
     }
 
@@ -263,21 +293,38 @@ private:
       const BandAcc &acc = mBandAcc[b];
       const double fCenter = kSpecFreqLo * std::exp2(logBand * (b + 0.5));
       const float x = mRECT.L + FreqNorm(fCenter) * mRECT.W();
+      const float aL = acc.max[0], aR = acc.max[1], aSum = acc.max[2];
+      const float yL = ampToY(aL);
+      const float yR = ampToY(aR);
       if (acc.used[0])
-        mSpecPtsL.push_back({x, ampToY(acc.max[0])});
+        mSpecPtsL.push_back({x, yL});
       if (acc.used[1])
-        mSpecPtsR.push_back({x, ampToY(acc.max[1])});
+        mSpecPtsR.push_back({x, yR});
       // 重合区: 两条曲线之下、较低一条(y 较大)到框底, 用主题色相压在最上层
       if (acc.used[0] && acc.used[1])
-        mSpecPtsO.push_back({x, std::max(ampToY(acc.max[0]), ampToY(acc.max[1]))});
+        mSpecPtsO.push_back({x, std::max(yL, yR)});
+
+      const float aM = (mMergeAlgo == 0) ? std::sqrt(aL * aL + aR * aR) : aSum;
+      if (aM > 1e-6f)
+        mSpecPtsM.push_back({x, ampToY(aM)});
     }
 
-    DrawFill(g, mSpecPtsL, cL);
-    DrawFill(g, mSpecPtsR, cR);
-    DrawFill(g, mSpecPtsO, cO);
+    if (mChanMode == 0) {
+      DrawFill(g, mSpecPtsL, cL);
+      DrawFill(g, mSpecPtsR, cR);
+      DrawFill(g, mSpecPtsO, cO);
+    } else if (mChanMode == 1) {
+      DrawFill(g, mSpecPtsL, cL);
+      DrawFill(g, mSpecPtsR, cR);
+      DrawFill(g, mSpecPtsO, cO);
+      DrawFill(g, mSpecPtsM, cO, kMergedMinAlpha, kMergedTopAlpha);
+    } else {
+      DrawFill(g, mSpecPtsM, cO);
+    }
   }
 
-  void DrawFill(IGraphics &g, std::vector<Pt> &pts, const IColor &color) {
+  void DrawFill(IGraphics &g, std::vector<Pt> &pts, const IColor &color,
+                int minAlpha = kGradientMinAlpha, int topAlpha = 255) {
     if (pts.size() < 2)
       return;
 
@@ -315,13 +362,17 @@ private:
     for (const Pt &p : pts)
       topY = std::min(topY, p.y);
     const IRECT gradRect(mRECT.L, topY, mRECT.R, mRECT.B);
+    const IColor topColor(topAlpha, color.R, color.G, color.B);
+    const IColor botColor(minAlpha, color.R, color.G, color.B);
     IPattern fill = IPattern::CreateLinearGradient(
         gradRect, EDirection::Vertical,
-        {IColorStop(color, 0.f), IColorStop(IColor(kGradientMinAlpha, color.R, color.G, color.B), 1.f)});
+        {IColorStop(topColor, 0.f), IColorStop(botColor, 1.f)});
     g.PathFill(fill);
   }
 
-  static constexpr int kGradientMinAlpha = 40; // 填充底部最小不透明度 (方案2 下限)
+  static constexpr int kGradientMinAlpha = 40; // 实体填充底部最小不透明度
+  static constexpr int kMergedTopAlpha = 90;   // 总功率光晕顶部不透明度 (约 35%)
+  static constexpr int kMergedMinAlpha = 15;   // 总功率光晕底部不透明度
   static constexpr int kSpectrumBands = 256;
   static constexpr float kSpecFreqLo = 20.f;
   static constexpr float kSpecFreqHi = 20000.f;
@@ -347,9 +398,11 @@ private:
     }
   }
 
-  std::vector<float> mSpectrum[2]; // 平滑后的 L/R 频谱幅度 (幅度, 非 dB)
+  std::vector<float> mSpectrum[3]; // 平滑后的 L/R/Sum 频谱幅度 (幅度, 非 dB)
   std::vector<int> mBinToBand;     // 预计算: bin -> band 映射 (-1 = 频段外)
   int mMode = 0;                   // 分析模式: 0=FFT, 1=VQT
+  int mChanMode = 1;               // 声道显示模式: 0=L/R, 1=ALL, 2=MERGE
+  int mMergeAlgo = 0;              // 合并算法: 0=PWR 功率和, 1=SUM 单声道和
   std::vector<float> mVQTFreqs; // VQT band 中心频率 (Hz), 由插件下发
   float mAttackCoeff = 0.2f;
   float mReleaseCoeff = 0.9f;
@@ -362,6 +415,7 @@ private:
   std::vector<Pt> mSpecPtsL;    // 预分配: L 填充点
   std::vector<Pt> mSpecPtsR;    // 预分配: R 填充点
   std::vector<Pt> mSpecPtsO;    // 预分配: 重合区填充点 (主题色)
+  std::vector<Pt> mSpecPtsM;    // 预分配: 总功率和 M 填充点
   std::vector<BandAcc> mBandAcc; // 预分配: 每 band 双通道峰值
 };
 

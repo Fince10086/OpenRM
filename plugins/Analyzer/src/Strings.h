@@ -47,6 +47,8 @@ enum EText {
   kTxtAudioInput,
   kTxtAudioOutput,
   kTxtDriver,
+  kTxtTipChanMode,
+  kTxtTipMergeAlgo,
   kNumTexts
 };
 
@@ -89,6 +91,8 @@ inline const char *Tr(int id, int lang) {
           "Input",
           "Output",
           "Driver",
+          "Channel display mode (L/R, ALL, MERGE)",
+          "Merge algorithm (PWR: Total Power, SUM: Mono Sum)",
       },
       {
           "混合",
@@ -127,6 +131,8 @@ inline const char *Tr(int id, int lang) {
           "输入",
           "输出",
           "驱动",
+          "声道显示模式（L/R: 左右, ALL: 全部, MERGE: 仅合并）",
+          "合并算法（PWR: 总功率和, SUM: 单声道求和）",
       },
   };
   return kTable[lang][id];

@@ -81,6 +81,8 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
   GetParam(kLfRes)->InitInt("LfRes", 0, 0, kNumLfResOptions - 1, "");
   GetParam(kBpo)->InitInt("Bpo", kNumBpoOptions - 1, 0, kNumBpoOptions - 1, "");
   GetParam(kMode)->InitInt("Mode", kModeFFT, 0, 1, "");
+  GetParam(kChannelMode)->InitInt("ChanMode", kChanModeAll, 0, kNumChanModes - 1, "");
+  GetParam(kMergeAlgo)->InitInt("MergeAlgo", kMergeAlgoPWR, 0, kNumMergeAlgos - 1, "");
 
   mDefaultSnapshot = Snapshot();
   mStableSnapshot = Snapshot();
@@ -168,6 +170,21 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     // CPU 占用率显示
     mCpuMeter = new CpuMeterControl(IRECT(kCol1X, 30, kPanelR, 60));
     pGraphics->AttachControl(mCpuMeter, kCtrlTagCpu);
+
+    // 声道显示模式循环切换按钮 (L/R -> ALL -> MERGE)
+    mChanModeBtn = new FlatCycleButton(IRECT(kCol1X, 85, kCol1X + 78, 115), kChannelMode,
+                                       {"L/R", "ALL", "MERGE"}, btnStyle);
+    pGraphics->AttachControl(mChanModeBtn);
+    bindTip(mChanModeBtn, orm::kTxtTipChanMode);
+
+    // 合并算法切换按钮 (PWR / SUM)
+    IVStyle algoStyle = btnStyle;
+    algoStyle.showLabel = false;
+    algoStyle.showValue = false;
+    mMergeAlgoToggle = new FlatToggleControl(IRECT(kCol1X + 78, 85, kPanelR, 115), kMergeAlgo, " ", algoStyle,
+                                            "PWR", "SUM");
+    pGraphics->AttachControl(mMergeAlgoToggle);
+    bindTip(mMergeAlgoToggle, orm::kTxtTipMergeAlgo);
 
     // BPO 滑块（每八度频带数，仅 VQT 模式生效）
     mBpoSlider =
@@ -354,18 +371,24 @@ void ORMAnalyzer::ProcessBlock(sample **inputs, sample **outputs, int nFrames) {
   if (nIns >= 2) {
     std::memcpy(mSpecInL.data(), inputs[0], nFrames * sizeof(sample));
     std::memcpy(mSpecInR.data(), inputs[1], nFrames * sizeof(sample));
-    sample *spec[2] = {mSpecInL.data(), mSpecInR.data()};
+    // 计算时域单声道求和 (除以 sqrt(2)，使同相双声道达到 0 dBFS，单声道为 -3 dBFS，反相抵消为 0)
+    for (int s = 0; s < nFrames; ++s)
+      mSpecInM[s] = (mSpecInL[s] + mSpecInR[s]) * 0.7071067811865475;
+    sample *spec[3] = {mSpecInL.data(), mSpecInR.data(), mSpecInM.data()};
     if (vqt)
-      mVQT.ProcessBlock(spec, nFrames, kCtrlTagPad, 2);
+      mVQT.ProcessBlock(spec, nFrames, kCtrlTagPad, 3);
     else
-      mSpectrum.ProcessBlock(spec, nFrames, kCtrlTagPad, 2);
+      mSpectrum.ProcessBlock(spec, nFrames, kCtrlTagPad, 3);
   } else {
     std::memcpy(mSpecInL.data(), inputs[0], nFrames * sizeof(sample));
-    sample *spec[1] = {mSpecInL.data()};
+    std::memcpy(mSpecInR.data(), inputs[0], nFrames * sizeof(sample));
+    for (int s = 0; s < nFrames; ++s)
+      mSpecInM[s] = mSpecInL[s] * 0.7071067811865475;
+    sample *spec[3] = {mSpecInL.data(), mSpecInR.data(), mSpecInM.data()};
     if (vqt)
-      mVQT.ProcessBlock(spec, nFrames, kCtrlTagPad, 1);
+      mVQT.ProcessBlock(spec, nFrames, kCtrlTagPad, 3);
     else
-      mSpectrum.ProcessBlock(spec, nFrames, kCtrlTagPad, 1);
+      mSpectrum.ProcessBlock(spec, nFrames, kCtrlTagPad, 3);
   }
 
   // 统计音频线程耗时（一阶平滑）
@@ -391,11 +414,15 @@ void ORMAnalyzer::SendSpectrumConfig() {
   const float release = (float)GetParam(kRelease)->Value();
   const float range = (float)GetParam(kRange)->Value();
   const float attack = (float)GetParam(kAttack)->Value();
+  const int chanMode = (int)GetParam(kChannelMode)->Value();
+  const int mergeAlgo = (int)GetParam(kMergeAlgo)->Value();
   SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagSampleRate, sizeof(double), &sr);
   SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagFFTSize, sizeof(int), &fftSize);
   SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagRelease, sizeof(float), &release);
   SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagRange, sizeof(float), &range);
   SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagAttack, sizeof(float), &attack);
+  SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagChanMode, sizeof(int), &chanMode);
+  SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagMergeAlgo, sizeof(int), &mergeAlgo);
   const int mode = (int)GetParam(kMode)->Value();
   SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagMode, sizeof(int), &mode);
   if (mode == kModeVQT)
@@ -482,6 +509,18 @@ void ORMAnalyzer::OnIdle() {
       SendVQTBandFreqs();
   }
 
+  // 声道显示模式与合并算法变动检测
+  const int chanMode = (int)GetParam(kChannelMode)->Value();
+  const int mergeAlgo = (int)GetParam(kMergeAlgo)->Value();
+  if (chanMode != mSentChanMode) {
+    mSentChanMode = chanMode;
+    SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagChanMode, sizeof(int), &chanMode);
+  }
+  if (mergeAlgo != mSentMergeAlgo) {
+    mSentMergeAlgo = mergeAlgo;
+    SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagMergeAlgo, sizeof(int), &mergeAlgo);
+  }
+
   // 检查并下发有变动的频谱配置
   const double sr = GetSampleRate();
   const int fftSize = CurrentFFTSize();
@@ -537,6 +576,8 @@ void ORMAnalyzer::OnUIClose() {
   mMixSlider = nullptr;
   mCpuMeter = nullptr;
   mModeToggle = nullptr;
+  mChanModeBtn = nullptr;
+  mMergeAlgoToggle = nullptr;
   mSettingsPanel = nullptr;
   mTextBindings.clear();
   mTooltipBindings.clear();
@@ -549,6 +590,8 @@ void ORMAnalyzer::OnUIClose() {
   mSentAttack = -1.0;
   mSentLfRes = -1.0;
   mSentBpo = -1.0;
+  mSentChanMode = -1;
+  mSentMergeAlgo = -1;
 }
 
 void ORMAnalyzer::OnParentWindowResize(int width, int height) {

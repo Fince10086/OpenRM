@@ -78,7 +78,7 @@ struct HalfbandDec2 {
 
 } // namespace detail
 
-template <int MAXNC = 2, int QUEUE_SIZE = 64, int MAX_BANDS = 4096>
+template <int MAXNC = 3, int QUEUE_SIZE = 64, int MAX_BANDS = 4096>
 class VQTAnalyzer : public ISender<MAXNC, QUEUE_SIZE, std::array<float, MAX_BANDS>> {
 public:
   using TDataPacket = std::array<float, MAX_BANDS>;
