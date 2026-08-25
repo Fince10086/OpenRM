@@ -395,6 +395,9 @@ void ORMAnalyzer::ProcessBlock(sample **inputs, sample **outputs, int nFrames) {
       mSpectrum.ProcessBlock(spec, nFrames, kCtrlTagPad, 3);
   }
 
+  // 时域峰值计算 (供 Gain 条显示), 基于原始输入样本, 与频谱引擎独立
+  ComputeGainPeaks(nFrames);
+
   // 统计音频线程耗时（一阶平滑）
   {
     using namespace std::chrono;
@@ -405,11 +408,38 @@ void ORMAnalyzer::ProcessBlock(sample **inputs, sample **outputs, int nFrames) {
   }
 }
 
+// 时域峰值: 每 block 计算 L/R 样本绝对值的最大值, 按攻击/释放时间常数平滑后
+// 存到原子成员, 供 UI 线程 OnIdle 读取并转发给 Gain 条显示。
+void ORMAnalyzer::ComputeGainPeaks(int nFrames) {
+  const float sr = (float)GetSampleRate();
+  if (sr <= 0.f || nFrames <= 0)
+    return;
+
+  float rawL = 0.f, rawR = 0.f;
+  for (int s = 0; s < nFrames; ++s) {
+    rawL = std::max(rawL, std::fabs(mSpecInL[s]));
+    rawR = std::max(rawR, std::fabs(mSpecInR[s]));
+  }
+
+  const float period = (float)nFrames / sr;
+  const float aCoef = std::exp(-period / std::max((float)GetParam(kAttack)->Value(), 0.001f));
+  const float rCoef = std::exp(-period / std::max((float)GetParam(kRelease)->Value(), 0.01f));
+
+  float prevL = mPeakL.load(std::memory_order_relaxed);
+  float prevR = mPeakR.load(std::memory_order_relaxed);
+  const float coefL = (rawL > prevL) ? aCoef : rCoef;
+  const float coefR = (rawR > prevR) ? aCoef : rCoef;
+  mPeakL.store(coefL * prevL + (1.f - coefL) * rawL, std::memory_order_relaxed);
+  mPeakR.store(coefR * prevR + (1.f - coefR) * rawR, std::memory_order_relaxed);
+}
+
 void ORMAnalyzer::OnReset() {
   mSpectrum.SetFFTSizeAndOverlap(CurrentFFTSize(), 4);
   mVQT.SetSampleRate(GetSampleRate());
   mVQT.SetGamma(CurrentLfRes());
   mVQT.SetBpo(CurrentBpo());
+  mPeakL.store(0.f, std::memory_order_relaxed);
+  mPeakR.store(0.f, std::memory_order_relaxed);
 }
 
 void ORMAnalyzer::SendSpectrumConfig() {
@@ -548,6 +578,13 @@ void ORMAnalyzer::OnIdle() {
   // 执行频谱分析计算并将数据发送给 UI 控件
   mSpectrum.TransmitData(*this);
   mVQT.TransmitData(*this);
+
+  // 转发时域峰值给 Gain 条 (float[2] = {L, R})
+  {
+    const float peaks[2] = {mPeakL.load(std::memory_order_relaxed),
+                            mPeakR.load(std::memory_order_relaxed)};
+    SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagGainPeak, sizeof(peaks), peaks);
+  }
 
   // 统计 UI 线程耗时并计算综合 CPU 占用率
   {

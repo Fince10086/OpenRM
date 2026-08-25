@@ -37,6 +37,7 @@ public:
     kMsgTagReset,     // 清空平滑缓冲, 显示从头加载 (γ/BPO/模式切换时由插件下发)
     kMsgTagChanMode,  // 声道显示模式 (0: L/R, 1: MERGE)
     kMsgTagMergeAlgo, // 合并算法 (0: PWR 功率和, 1: SUM 单声道和)
+    kMsgTagGainPeak,  // 时域峰值 (float[2] = {L, R}, 已平滑), 供 Gain 条显示
   };
 
   SpectrumPad(const IRECT &bounds) : IControl(bounds) {
@@ -121,6 +122,13 @@ public:
       if (n > 0)
         std::memcpy(mVQTFreqs.data(), pData, (size_t)n * sizeof(float));
       SetDirty(false);
+    } else if (msgTag == kMsgTagGainPeak) {
+      // float[2] = {L, R}, 8 字节整体拷入 (IByteStream::Get 需显式偏移, 逐字段读易错)
+      float peaks[2];
+      std::memcpy(peaks, pData, sizeof(peaks));
+      mGainPeakL = peaks[0];
+      mGainPeakR = peaks[1];
+      SetDirty(false);
     } else if (msgTag == kMsgTagReset) {
       for (int c = 0; c < 3; ++c)
         mSpectrum[c].assign(mSpectrum[c].size(), 0.f);
@@ -130,8 +138,8 @@ public:
 
   void Draw(IGraphics &g) override {
     g.FillRect(COL_100(), mRECT);
-    // 图形区左对齐, 右侧让出 kDbTickW 刻度文字区 + kGainBarW Gain 竖条
-    const IRECT plot = mRECT.GetReducedFromRight(kDbTickW + kGainBarW);
+    // 图形区左对齐, 右侧让出 kDbTickW 刻度文字区 + L/R 两条 Gain 竖条 (2 × kGainBarW)
+    const IRECT plot = mRECT.GetReducedFromRight(kDbTickW + 2.f * kGainBarW);
     DrawTrack(g, plot);
     DrawDbGrid(g, plot);
     DrawSpectrum(g, plot);
@@ -191,37 +199,25 @@ private:
     }
   }
 
-  // Gain 竖条: 与 dB 刻度对齐 (顶部 0dB, 底部 mBottomDb), 显示当前合并电平峰值。
-  // 合并算法与频谱一致 (PWR/SUM), 数据取自已平滑频谱 → attack/release 与设置一致。
+  // L/R 双 Peak 条: 与 dB 刻度对齐 (顶部 0dB, 底部 mBottomDb)。
+  // 数值 = 音频线程的时域样本峰值 (max|sample|), 已按 attack/release 平滑, 由插件每帧下发。
   void DrawGainBar(IGraphics &g, const IRECT &plot) {
-    float peak = 0.f;
-    if (mMode == 1) {
-      const int nb = std::min((int)mVQTFreqs.size(), (int)mSpectrum[0].size());
-      for (int b = 0; b < nb; ++b) {
-        const float aL = mSpectrum[0][b], aR = mSpectrum[1][b];
-        const float aM = (mMergeAlgo == 0)
-                             ? std::sqrt(aL * aL + aR * aR)
-                             : (((int)mSpectrum[2].size() > b) ? mSpectrum[2][b] : 0.f);
-        peak = std::max(peak, aM);
-      }
-    } else {
-      const int nb = std::min(mNumBins, (int)mSpectrum[0].size());
-      for (int b = 0; b < nb; ++b) {
-        const float aL = mSpectrum[0][b], aR = mSpectrum[1][b];
-        const float aM = (mMergeAlgo == 0)
-                             ? std::sqrt(aL * aL + aR * aR)
-                             : (((int)mSpectrum[2].size() > b) ? mSpectrum[2][b] : 0.f);
-        peak = std::max(peak, aM);
-      }
-    }
+    IColor cL, cR, cM;
+    GetChannelColors(cL, cR, cM);
 
-    // 竖条位于刻度区右侧空白 (与 kGainBarW 等宽), 纵向与 plot 一致
-    const IRECT bar(mRECT.R - kGainBarW, plot.T, mRECT.R, plot.B);
-    g.FillRect(COL_300(), bar);
+    auto fillBar = [&](const IRECT &bar, IColor color, float peak) {
+      const float db =
+          (peak > 1e-6f) ? std::clamp(20.f * std::log10(peak), mBottomDb, 0.f) : mBottomDb;
+      const float yPeak = plot.B - (db - mBottomDb) / (0.f - mBottomDb) * plot.H();
+      g.FillRect(COL_300(), bar); // 轨道底色与滑块条一致
+      g.FillRect(color, IRECT(bar.L, yPeak, bar.R, bar.B));
+    };
 
-    const float db = (peak > 1e-6f) ? std::clamp(20.f * std::log10(peak), mBottomDb, 0.f) : mBottomDb;
-    const float yPeak = plot.B - (db - mBottomDb) / (0.f - mBottomDb) * plot.H();
-    g.FillRect(COL_500(), IRECT(bar.L, yPeak, bar.R, bar.B));
+    // 两条 16px 竖条紧挨, 纵向与 plot 一致
+    const IRECT barL(mRECT.R - 2.f * kGainBarW, plot.T, mRECT.R - kGainBarW, plot.B);
+    const IRECT barR(mRECT.R - kGainBarW, plot.T, mRECT.R, plot.B);
+    fillBar(barL, cL, mGainPeakL);
+    fillBar(barR, cR, mGainPeakR);
   }
 
   // 20dB 一档的 dB 横网格 + 右侧刻度文字 (样式与滑块参数值一致)
@@ -444,6 +440,8 @@ private:
   }
 
   std::vector<float> mSpectrum[3]; // 平滑后的 L/R/Sum 频谱幅度 (幅度, 非 dB)
+  float mGainPeakL = 0.f;          // Gain 条 L 峰值 (时域样本峰值, 已平滑, 由插件下发)
+  float mGainPeakR = 0.f;          // Gain 条 R 峰值
   std::vector<int> mBinToBand;     // 预计算: bin -> band 映射 (-1 = 频段外)
   int mMode = 0;                   // 分析模式: 0=FFT, 1=VQT
   int mChanMode = 0;               // 声道显示模式: 0=L/R, 1=MERGE

@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <deque>
 #include <functional>
@@ -53,6 +54,10 @@ private:
   std::array<sample, kMaxBlock> mSpecInL{};
   std::array<sample, kMaxBlock> mSpecInR{};
   std::array<sample, kMaxBlock> mSpecInM{};
+
+  // 时域峰值 (音频线程按 block 计算并做 attack/release 平滑, UI 线程 OnIdle 读取转发给 Gain 条)
+  std::atomic<float> mPeakL{0.f};
+  std::atomic<float> mPeakR{0.f};
 
   // 频谱配置缓存（用于在 OnIdle 中防抖去重）
   double mSentSampleRate = 0.0;
@@ -102,6 +107,7 @@ private:
 
   void SendSpectrumConfig();
   void SendResetToPad(); // 引擎配置重建 (γ/BPO/模式) 后通知 pad 清空平滑缓冲, 显示重新加载
+  void ComputeGainPeaks(int nFrames); // 时域峰值 (block 级) + attack/release 平滑
 
   // 分析档位 -> 实际值 (参数存档位索引)
   int CurrentFFTSize() const {
