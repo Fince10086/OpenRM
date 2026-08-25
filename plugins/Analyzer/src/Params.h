@@ -1,31 +1,24 @@
 #pragma once
 
-// 参数枚举与全局常量。
-// 独立成头的原因: UI 控件 (controls/*) 与插件本体 (Analyzer.h) 都要引用 EParams,
-// 若留在 Analyzer.h 会导致控件头反向依赖插件头; 这里只依赖 <array>, 双方安全包含。
-//
-// Analyzer 是从 BandPass 减出来的第一步: mix 参数 (撤销/重做、保存/读取的载体),
-// release/attack 参数 (频谱显示释放/上升时间), range 参数 (频谱显示下限 dBFS 幅度),
-// res/lfRes/bpo 参数 (FFT 尺寸 / VQT 低频带宽下限 γ / VQT bins-per-octave 档位),
-// mode 参数 (分析引擎选择)。
+// 插件全局参数枚举与档位常量
 
 #include <array>
 
 enum EParams {
-  kMix = 0,
-  kRelease,
-  kRange,
-  kAttack,
-  kRes,
-  kLfRes,
-  kBpo,
-  kMode,
+  kMix = 0,   // 干湿比 / 状态快照占位
+  kRelease,   // 频谱回落释放时间 (s)
+  kRange,     // 频谱显示动态范围下限 (dBFS)
+  kAttack,    // 频谱上升响应时间 (s)
+  kRes,       // FFT 分辨率档位 (1024/2048/4096)
+  kLfRes,     // VQT 低频带宽保底 γ 档位 (40/20/10 Hz)
+  kBpo,       // VQT 每八度频带数 (12/24)
+  kMode,      // 分析引擎模式 (0: FFT, 1: VQT)
   kNumParams
 };
 
 using ParamSnapshot = std::array<double, kNumParams>;
 
-// 分析档位: 参数存档位索引, 经下表映射为实际值 (默认 = 最高档)
+// 算法档位可选值列表（参数实际存储对应的索引）
 constexpr int kResOptions[] = {1024, 2048, 4096};
 constexpr int kNumResOptions = 3;
 constexpr int kLfResOptions[] = {40, 20, 10};
@@ -33,7 +26,8 @@ constexpr int kNumLfResOptions = 3;
 constexpr int kBpoOptions[] = {12, 24};
 constexpr int kNumBpoOptions = 2;
 
-// 分析引擎
+// 分析引擎模式
 enum EAnalyzerMode { kModeFFT = 0, kModeVQT = 1 };
 
+// UI 控件消息标签
 enum EControlTags { kCtrlTagPad = 100, kCtrlTagCpu = 101 };

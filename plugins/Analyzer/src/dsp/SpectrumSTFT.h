@@ -1,5 +1,7 @@
 #pragma once
 
+// SpectrumSTFT — 基于短时傅里叶变换 (STFT) 的标准频谱分析引擎
+
 #include "ISender.h"
 
 #include <algorithm>

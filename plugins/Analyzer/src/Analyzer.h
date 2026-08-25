@@ -52,7 +52,7 @@ private:
   std::array<sample, kMaxBlock> mSpecInL{};
   std::array<sample, kMaxBlock> mSpecInR{};
 
-  // 频谱配置去重: 仅当采样率/FFT 尺寸/释放/下限/上升时间/低频 γ/BPO 变化时才向 UI 控件重发 (OnIdle 节流)
+  // 频谱配置缓存（用于在 OnIdle 中防抖去重）
   double mSentSampleRate = 0.0;
   int mSentFFTSize = 0;
   double mSentRelease = -1.0;
@@ -71,18 +71,14 @@ private:
   CpuMeterControl *mCpuMeter = nullptr;
   FlatToggleControl *mModeToggle = nullptr;
 
-  // 分析模式去重: 模式变化时切换滑块参数 (RES<->LF RES) 并重发 pad 配置
   int mSentMode = -1;
 
-  // CPU 占用率 (单位: 一个核的占用比例): 音频线程在 ProcessBlock 内测量
-  // 处理耗时/块时长并一阶平滑; UI 线程在 OnIdle 内测量分析工作 (FFT/VQT 计算、
-  // 数据转发) 耗时占墙钟的比例 (每 ~0.5s 滑窗)。两者相加 = 插件总开销,
-  // 由 OnIdle 推送给 UI (0.0 ~ 1.0+, 显示为两位小数, 不带 %)。
-  double mCpuAudio = 0.0; // 音频线程占用 (处理耗时/块时长, 一阶平滑)
-  double mCpuUi = 0.0;    // UI 线程分析工作占用 (OnIdle 耗时/墙钟, 滑窗)
-  double mCpuPct = 0.0;   // 合计, 发布给 UI (mCpuAudio + mCpuUi)
-  double mUiWorkMs = 0.0; // 滑窗累计 UI 分析耗时 (ms)
-  double mUiWinMs = 0.0;  // 滑窗累计墙钟时长 (ms)
+  // CPU 占用率统计（音频线程处理耗时 + UI 分析耗时，归一化为单核百分比）
+  double mCpuAudio = 0.0;
+  double mCpuUi = 0.0;
+  double mCpuPct = 0.0;
+  double mUiWorkMs = 0.0;
+  double mUiWinMs = 0.0;
   std::chrono::steady_clock::time_point mLastIdleTp = std::chrono::steady_clock::now();
 
   ParamSnapshot mDefaultSnapshot{};

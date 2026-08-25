@@ -8,9 +8,7 @@
 #include <utility>
 #include <vector>
 
-// ORM 系列统一 .orm 后缀; 文件头 magic 标识插件类型,
-// 不同插件 magic 不同 (Analyzer = "analyzer"), 防止跨插件误载。
-// Analyzer 从 BandPass 的 PresetFileIO 减化而来: 无预设槽, 只存取当前参数状态。
+// 插件状态文件读写（.orm 格式，JSON 序列化，文件头魔数识别为 "analyzer"）
 constexpr const char *kStateMagic = "analyzer";
 
 struct StateFileData {

@@ -1,5 +1,7 @@
 #pragma once
 
+// ORMSlider — 自定义主题滑块控件，集成参数名称与数值格式化显示
+
 #include "IControls.h"
 #include "../Theme.h"
 #include "../Params.h"

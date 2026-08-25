@@ -60,7 +60,7 @@ int orm::DetectSystemLanguage() {
 }
 
 ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNumParams, 1)) {
-  // 读取全局 UI 偏好 (语言/主题), 使界面首次渲染即用用户设置
+  // 读取全局 UI 偏好设置 (语言与主题)
   {
     SettingsData s;
     if (LoadSettings(s)) {
@@ -72,11 +72,7 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
       ThemeMode() = s.themeMode;
     }
   }
-  // Analyzer 目前为纯分析器: mix 参数保留自 BandPass, 作为撤销/重做、保存/读取的
-  // 载体 (DSP 直通, 暂不参与处理); release/attack 参数控制频谱显示的释放/上升
-  // 时间 (s); range 参数控制频谱显示下限 (-80..-120 dBFS, 存正数幅度);
-  // res/lfRes/bpo 为 FFT 尺寸 / VQT 低频带宽下限 γ / VQT bins-per-octave 档位索引
-  // (映射见 Params.h); mode 选择分析引擎 (FFT / VQT)。
+  // 初始化参数（默认值、范围与步长）
   GetParam(kMix)->InitDouble("Mix", 1., 0., 1., 0.01, "");
   GetParam(kRelease)->InitDouble("Release", 0.2, 0.05, 0.5, 0.01, "s");
   GetParam(kRange)->InitDouble("Range", 90, 80, 120, 10, "");
@@ -165,23 +161,22 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     constexpr float kBtnH = 30.f;
     constexpr float kPanelR = kCol2X + kBtnW;
 
-    // 频谱显示 pad: 空 xypad, 位置 = BandPass 原 LEFT 频谱 (下半部分预留做别的)
+    // 主频谱绘制区域
     mSpectrumPad = new SpectrumPad(IRECT(20, 30, 668, 210));
     pGraphics->AttachControl(mSpectrumPad, kCtrlTagPad);
 
-    // CPU 占用率显示 (右上角, 横向占满右列整行 156x30, 与按钮行同宽, 只读, 实时刷新)
+    // CPU 占用率显示
     mCpuMeter = new CpuMeterControl(IRECT(kCol1X, 30, kPanelR, 60));
     pGraphics->AttachControl(mCpuMeter, kCtrlTagCpu);
 
-    // BPO (VQT bins per octave 档位 12/24, 仅 VQT 模式生效; 位于引擎切换按钮上方)
+    // BPO 滑块（每八度频带数，仅 VQT 模式生效）
     mBpoSlider =
         new ORMSlider(IRECT(kCol1X, 140, kPanelR, 182), kBpo, "BPO", style, EDirection::Horizontal);
     pGraphics->AttachControl(mBpoSlider);
     bindText(orm::kTxtBpo, [this](const char *s) { mBpoSlider->SetHeaderLabel(s); });
     bindTip(mBpoSlider, orm::kTxtTipBpo);
 
-    // 分析引擎切换按钮 (FFT / VQT, 与 CPU 框同宽; VQT 时黑底白字,
-    // 样式参考 BandPass 的 LINK 按钮 = FlatToggleControl)
+    // 分析引擎切换按钮 (FFT / VQT)
     IVStyle toggleStyle = btnStyle;
     toggleStyle.showLabel = false;
     toggleStyle.showValue = false;
@@ -190,7 +185,7 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     pGraphics->AttachControl(mModeToggle);
     bindTip(mModeToggle, orm::kTxtTipMode);
 
-    // RES / LF RES 滑块 (FFT 模式为 FFT 尺寸档位, VQT 模式切换为低频分辨率档位)
+    // 分辨率滑块 (FFT 模式下为 FFT 尺寸，VQT 模式下为低频分辨率 γ)
     mResSlider =
         new ORMSlider(IRECT(kCol1X, 234, kPanelR, 276), kRes, "RES", style, EDirection::Horizontal);
     pGraphics->AttachControl(mResSlider);
@@ -198,28 +193,28 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     bindText(orm::kTxtLfRes, [this](const char *) { UpdateResHeader(); });
     bindTip(mResSlider, orm::kTxtTipRes);
 
-    // RANGE (频谱显示下限 dBFS, 列顶)
+    // 动态范围滑块 (dBFS 下限)
     mRangeSlider =
         new ORMSlider(IRECT(kCol1X, 282, kPanelR, 324), kRange, "RANGE", style, EDirection::Horizontal);
     pGraphics->AttachControl(mRangeSlider);
     bindText(orm::kTxtRange, [this](const char *s) { mRangeSlider->SetHeaderLabel(s); });
     bindTip(mRangeSlider, orm::kTxtTipRange);
 
-    // ATTACK (频谱显示上升时间, 位于 RELEASE 上方)
+    // 上升响应时间滑块 (s)
     mAttackSlider =
         new ORMSlider(IRECT(kCol1X, 328, kPanelR, 370), kAttack, "ATTACK", style, EDirection::Horizontal);
     pGraphics->AttachControl(mAttackSlider);
     bindText(orm::kTxtAttack, [this](const char *s) { mAttackSlider->SetHeaderLabel(s); });
     bindTip(mAttackSlider, orm::kTxtTipAttack);
 
-    // RELEASE (频谱显示释放时间, 位于 MIX 上方)
+    // 释放衰减时间滑块 (s)
     mReleaseSlider =
         new ORMSlider(IRECT(kCol1X, 374, kPanelR, 416), kRelease, "RELEASE", style, EDirection::Horizontal);
     pGraphics->AttachControl(mReleaseSlider);
     bindText(orm::kTxtRelease, [this](const char *s) { mReleaseSlider->SetHeaderLabel(s); });
     bindTip(mReleaseSlider, orm::kTxtTipRelease);
 
-    // MIX (保留自 BandPass, 位置不变)
+    // MIX 滑块
     mMixSlider = new ORMSlider(IRECT(kCol1X, 420, kPanelR, 462), kMix, "MIX", style, EDirection::Horizontal);
     pGraphics->AttachControl(mMixSlider);
     bindText(orm::kTxtMix, [this](const char *s) { mMixSlider->SetHeaderLabel(s); });
@@ -254,7 +249,7 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
       loadBtn->SetDirty(false);
     });
 
-    // ORM logo + 设置齿轮 + 标题 "Analyzer" + 版本 (标题替换自 BandPass)
+    // 底部标题栏：ORM 标识、设置齿轮与版本号
     IText ormText(32, COL_900(), kFontBold, EAlign::Near, EVAlign::Bottom);
     pGraphics->AttachControl(new SectionTitleControl(IRECT(kCol1X, 544, kCol1X + 120, 578), "ORM", ormText, 0));
     IRECT ormInk(kCol1X, 544, kCol1X + 120, 578);
@@ -331,16 +326,13 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
 
 #if IPLUG_DSP
 void ORMAnalyzer::ProcessBlock(sample **inputs, sample **outputs, int nFrames) {
-  // CPU 占用率测量: 记录本块处理起点 (全程耗时 / 块时长 = 占用率, 一阶平滑)
   const auto cpuT0 = std::chrono::steady_clock::now();
-
-  // 宿主块尺寸可能超过 kMaxBlock（定长缓冲上限），统一在此钳制。
   nFrames = std::min(nFrames, kMaxBlock);
 
   const int nOuts = NOutChansConnected();
   const int nIns = NInChansConnected();
 
-  // Analyzer: 音频直通 (纯分析器, 不处理信号), 输出 = 输入
+  // 音频直通（分析器不改变音频信号）
   if (nOuts >= 2 && nIns >= 2) {
     std::memcpy(outputs[0], inputs[0], nFrames * sizeof(sample));
     std::memcpy(outputs[1], inputs[1], nFrames * sizeof(sample));
@@ -357,7 +349,7 @@ void ORMAnalyzer::ProcessBlock(sample **inputs, sample **outputs, int nFrames) {
       std::memcpy(outputs[c], outputs[0], nFrames * sizeof(sample));
   }
 
-  // 频谱: 先快照输入再交给分析引擎 (输入/输出可能别名, 与 BandPass 一致)
+  // 采集输入数据到当前分析引擎 (FFT 或 VQT)
   const bool vqt = GetParam(kMode)->Value() > 0.5;
   if (nIns >= 2) {
     std::memcpy(mSpecInL.data(), inputs[0], nFrames * sizeof(sample));
@@ -376,8 +368,7 @@ void ORMAnalyzer::ProcessBlock(sample **inputs, sample **outputs, int nFrames) {
       mSpectrum.ProcessBlock(spec, nFrames, kCtrlTagPad, 1);
   }
 
-  // CPU 占用率(音频部分)结算: 处理耗时 / 块时长, 一阶平滑 (0.1 → 约 150ms 时间常数 @60Hz 推送);
-  // UI 部分在 OnIdle 内合计
+  // 统计音频线程耗时（一阶平滑）
   {
     using namespace std::chrono;
     const double processMs = duration<double, std::milli>(steady_clock::now() - cpuT0).count();
@@ -389,9 +380,6 @@ void ORMAnalyzer::ProcessBlock(sample **inputs, sample **outputs, int nFrames) {
 
 void ORMAnalyzer::OnReset() {
   mSpectrum.SetFFTSizeAndOverlap(CurrentFFTSize(), 4);
-  // VQT 引擎配置: 采样率/γ/BPO 变更仅置位重建标记, band 表与历史缓冲由 UI 线程
-  // (OnIdle 开头的 CheckRebuild) 惰性重建。不再在这里直接 SendSpectrumConfig:
-  // 配置与 VQT band 频率表统一由 OnIdle 去重后下发, 保证总是基于已重建的 band 表。
   mVQT.SetSampleRate(GetSampleRate());
   mVQT.SetGamma(CurrentLfRes());
   mVQT.SetBpo(CurrentBpo());
@@ -437,20 +425,16 @@ void ORMAnalyzer::UpdateResHeader() {
 }
 
 void ORMAnalyzer::OnParamChange(int paramIdx, EParamSource source, int sampleOffset) {
-  // 分析配置变化时在音频线程重配对应引擎 (重建会清空频谱历史, 显示短暂清零)
+  // 参数变化时更新分析引擎配置
   if (paramIdx == kRes)
     mSpectrum.SetFFTSizeAndOverlap(CurrentFFTSize(), 4);
   else if (paramIdx == kLfRes) {
-    // SetGamma 仅在 γ 档位实际变化 (40/20/10 之间跨越) 时重建并返回 true;
-    // 拖动过程中参数值连续经过同档内的小数 (如 0.9->1.1 仍属同档区间) 不会重建,
-    // 也就不会误发 Reset 导致频谱连续闪烁。
     if (mVQT.SetGamma(CurrentLfRes()))
       SendResetToPad();
   } else if (paramIdx == kBpo && GetParam(kMode)->Value() > 0.5) {
     if (mVQT.SetBpo(CurrentBpo()))
       SendResetToPad();
   }
-  // kMode: DSP 路由在 ProcessBlock 按参数分支, 无需额外动作 (OnIdle 同步模式时也会 reset)
 }
 
 void ORMAnalyzer::OnParamChangeUI(int paramIdx, EParamSource source) {
@@ -481,12 +465,10 @@ void ORMAnalyzer::OnIdle() {
   mLastIdleTp = wallNow;
   const auto workT0 = wallNow;
 
-  // VQT 惰性重建: 音频线程若请求了重建 (γ/BPO/采样率变化), 在此先重建 band 表与历史缓冲,
-  // 确保下面发送的 band 频率表与幅度数据都基于最新配置 (bands/freqs 由 UI 线程独占)。
+  // 若 VQT 参数发生变动，按需重建频带表与多速率金字塔
   mVQT.CheckRebuild();
 
-  // 分析模式变化: 切换滑块参数 (RES<->LF RES)、重发 pad 模式消息与 band 频率表,
-  // 并清空 pad 平滑缓冲 (FFT bins 与 VQT bands 语义不同, 不能混叠)
+  // 模式切换处理 (FFT <-> VQT)
   const int mode = (int)GetParam(kMode)->Value();
   if (mode != mSentMode) {
     mSentMode = mode;
@@ -500,8 +482,7 @@ void ORMAnalyzer::OnIdle() {
       SendVQTBandFreqs();
   }
 
-  // 仅在采样率/FFT 尺寸/释放/下限/上升时间/低频 γ/BPO 变化时重发
-  // (如 UI 在 OnReset 之后才打开; γ/BPO 变化时同步刷新 VQT band 频率表)
+  // 检查并下发有变动的频谱配置
   const double sr = GetSampleRate();
   const int fftSize = CurrentFFTSize();
   const double release = GetParam(kRelease)->Value();
@@ -521,12 +502,11 @@ void ORMAnalyzer::OnIdle() {
     SendSpectrumConfig();
   }
 
-  // 频谱数据转发: FFT/VQT 的频谱计算都在此完成 (PrepareDataForUI 内), 跑在 UI 线程
+  // 执行频谱分析计算并将数据发送给 UI 控件
   mSpectrum.TransmitData(*this);
   mVQT.TransmitData(*this);
 
-  // CPU 占用率(UI部分)结算: OnIdle 分析工作耗时 / 两次 OnIdle 墙钟间隔, 每 ~0.5s 滑窗;
-  // 与音频线程占用 (mCpuAudio) 合计后推送 (单位: 一个核)
+  // 统计 UI 线程耗时并计算综合 CPU 占用率
   {
     const double uiMs = duration<double, std::milli>(steady_clock::now() - workT0).count();
     mUiWorkMs += uiMs;
@@ -538,7 +518,6 @@ void ORMAnalyzer::OnIdle() {
     }
     mCpuPct = mCpuAudio + mCpuUi;
   }
-  // 实时推送 CPU 占用率 (每次 OnIdle, 约 60Hz; 消息开销可忽略)
   SendControlMsgFromDelegate(kCtrlTagCpu, CpuMeterControl::kMsgTagCpu, sizeof(double), &mCpuPct);
 
   const double now = duration<double>(steady_clock::now().time_since_epoch()).count();
