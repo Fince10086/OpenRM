@@ -376,25 +376,25 @@ void ORMAnalyzer::ProcessBlock(sample **inputs, sample **outputs, int nFrames) {
       mSpectrum.ProcessBlock(spec, nFrames, kCtrlTagPad, 1);
   }
 
-  // CPU 占用率结算: 处理耗时 / 块时长, 一阶平滑 (0.1 → 约 150ms 时间常数 @60Hz 推送)
+  // CPU 占用率(音频部分)结算: 处理耗时 / 块时长, 一阶平滑 (0.1 → 约 150ms 时间常数 @60Hz 推送);
+  // UI 部分在 OnIdle 内合计
   {
     using namespace std::chrono;
     const double processMs = duration<double, std::milli>(steady_clock::now() - cpuT0).count();
     const double blockMs = (double)nFrames / std::max(GetSampleRate(), 1.0) * 1000.0;
     if (blockMs > 0.0)
-      mCpuPct += (processMs / blockMs - mCpuPct) * 0.1;
+      mCpuAudio += (processMs / blockMs - mCpuAudio) * 0.1;
   }
 }
 
 void ORMAnalyzer::OnReset() {
   mSpectrum.SetFFTSizeAndOverlap(CurrentFFTSize(), 4);
+  // CQT 引擎配置: 采样率/γ/BPO 变更仅置位重建标记, band 表与历史缓冲由 UI 线程
+  // (OnIdle 开头的 CheckRebuild) 惰性重建。不再在这里直接 SendSpectrumConfig:
+  // 配置与 CQT band 频率表统一由 OnIdle 去重后下发, 保证总是基于已重建的 band 表。
   mCQT.SetSampleRate(GetSampleRate());
   mCQT.SetGamma(CurrentLfRes());
   mCQT.SetBpo(CurrentBpo());
-
-  SendSpectrumConfig();
-  mSentSampleRate = GetSampleRate();
-  mSentFFTSize = CurrentFFTSize();
 }
 
 void ORMAnalyzer::SendSpectrumConfig() {
@@ -475,8 +475,15 @@ void ORMAnalyzer::RefreshAfterEdit() {
 }
 
 void ORMAnalyzer::OnIdle() {
-  mSpectrum.TransmitData(*this);
-  mCQT.TransmitData(*this);
+  using namespace std::chrono;
+  const auto wallNow = steady_clock::now();
+  const double idleGapMs = duration<double, std::milli>(wallNow - mLastIdleTp).count();
+  mLastIdleTp = wallNow;
+  const auto workT0 = wallNow;
+
+  // CQT 惰性重建: 音频线程若请求了重建 (γ/BPO/采样率变化), 在此先重建 band 表与历史缓冲,
+  // 确保下面发送的 band 频率表与幅度数据都基于最新配置 (bands/freqs 由 UI 线程独占)。
+  mCQT.CheckRebuild();
 
   // 分析模式变化: 切换滑块参数 (RES<->LF RES)、重发 pad 模式消息与 band 频率表,
   // 并清空 pad 平滑缓冲 (FFT bins 与 CQT bands 语义不同, 不能混叠)
@@ -514,10 +521,26 @@ void ORMAnalyzer::OnIdle() {
     SendSpectrumConfig();
   }
 
+  // 频谱数据转发: FFT/CQT 的频谱计算都在此完成 (PrepareDataForUI 内), 跑在 UI 线程
+  mSpectrum.TransmitData(*this);
+  mCQT.TransmitData(*this);
+
+  // CPU 占用率(UI部分)结算: OnIdle 分析工作耗时 / 两次 OnIdle 墙钟间隔, 每 ~0.5s 滑窗;
+  // 与音频线程占用 (mCpuAudio) 合计后推送 (单位: 一个核)
+  {
+    const double uiMs = duration<double, std::milli>(steady_clock::now() - workT0).count();
+    mUiWorkMs += uiMs;
+    mUiWinMs += idleGapMs;
+    if (mUiWinMs >= 500.0) {
+      mCpuUi = (mUiWinMs > 0.0) ? mUiWorkMs / mUiWinMs : 0.0;
+      mUiWorkMs = 0.0;
+      mUiWinMs = 0.0;
+    }
+    mCpuPct = mCpuAudio + mCpuUi;
+  }
   // 实时推送 CPU 占用率 (每次 OnIdle, 约 60Hz; 消息开销可忽略)
   SendControlMsgFromDelegate(kCtrlTagCpu, CpuMeterControl::kMsgTagCpu, sizeof(double), &mCpuPct);
 
-  using namespace std::chrono;
   const double now = duration<double>(steady_clock::now().time_since_epoch()).count();
   if (mGesturePending && now - mLastUIChangeTime > kGestureGapSec) {
     mStableSnapshot = Snapshot();

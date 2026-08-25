@@ -74,9 +74,16 @@ private:
   // 分析模式去重: 模式变化时切换滑块参数 (RES<->LF RES) 并重发 pad 配置
   int mSentMode = -1;
 
-  // CPU 占用率: 音频线程在 ProcessBlock 内测量 处理耗时/块时长, 一阶平滑后
+  // CPU 占用率 (单位: 一个核的占用比例): 音频线程在 ProcessBlock 内测量
+  // 处理耗时/块时长并一阶平滑; UI 线程在 OnIdle 内测量分析工作 (FFT/CQT 计算、
+  // 数据转发) 耗时占墙钟的比例 (每 ~0.5s 滑窗)。两者相加 = 插件总开销,
   // 由 OnIdle 推送给 UI (0.0 ~ 1.0+, 显示为两位小数, 不带 %)。
-  double mCpuPct = 0.0;
+  double mCpuAudio = 0.0; // 音频线程占用 (处理耗时/块时长, 一阶平滑)
+  double mCpuUi = 0.0;    // UI 线程分析工作占用 (OnIdle 耗时/墙钟, 滑窗)
+  double mCpuPct = 0.0;   // 合计, 发布给 UI (mCpuAudio + mCpuUi)
+  double mUiWorkMs = 0.0; // 滑窗累计 UI 分析耗时 (ms)
+  double mUiWinMs = 0.0;  // 滑窗累计墙钟时长 (ms)
+  std::chrono::steady_clock::time_point mLastIdleTp = std::chrono::steady_clock::now();
 
   ParamSnapshot mDefaultSnapshot{};
   std::deque<ParamSnapshot> mUndoStack, mRedoStack;
