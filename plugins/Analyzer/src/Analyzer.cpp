@@ -168,7 +168,7 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     pGraphics->AttachControl(new ChannelLegendControl(IRECT(20, 32, 668, 54)));
 
     // 主频谱绘制区域
-    mSpectrumPad = new SpectrumPad(IRECT(20, 58, 668, 238));
+    mSpectrumPad = new SpectrumPad(IRECT(20, 58, 668, 328));
     pGraphics->AttachControl(mSpectrumPad, kCtrlTagPad);
 
     // CPU 占用率显示
