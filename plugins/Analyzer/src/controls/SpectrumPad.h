@@ -41,7 +41,7 @@ public:
     kMsgTagRange,
     kMsgTagAttack,
     kMsgTagMode,
-    kMsgTagCQTBands,
+    kMsgTagVQTBands,
     kMsgTagReset, // 清空平滑缓冲, 显示从头加载 (γ/BPO/模式切换时由插件下发)
   };
 
@@ -59,8 +59,8 @@ public:
     if (msgTag == ISender<>::kUpdateMessage) {
       ISenderData<2, TDataPacket> d;
       stream.Get(&d, 0);
-      // FFT: 数据 = bins (nBins 个); CQT: 数据 = band 幅度 (nBands 个)
-      const int nVals = (mMode == 0) ? std::max(mNumBins, 0) : (int)mCQTFreqs.size();
+      // FFT: 数据 = bins (nBins 个); VQT: 数据 = band 幅度 (nBands 个)
+      const int nVals = (mMode == 0) ? std::max(mNumBins, 0) : (int)mVQTFreqs.size();
       if (nVals <= 0)
         return;
 
@@ -107,17 +107,17 @@ public:
       stream.Get(&mode, 0);
       mMode = (mode == 1) ? 1 : 0;
       SetDirty(false);
-    } else if (msgTag == kMsgTagCQTBands) {
+    } else if (msgTag == kMsgTagVQTBands) {
       const int n = dataSize / (int)sizeof(float);
       // band 数变化 (如 BPO 12<->24): 旧平滑缓冲与新 band 语义不匹配, 清空重来,
       // 避免新旧 band 数错位导致的显示错乱。
-      if (n != (int)mCQTFreqs.size()) {
+      if (n != (int)mVQTFreqs.size()) {
         for (int c = 0; c < 2; ++c)
           mSpectrum[c].clear();
       }
-      mCQTFreqs.resize(n);
+      mVQTFreqs.resize(n);
       if (n > 0)
-        std::memcpy(mCQTFreqs.data(), pData, (size_t)n * sizeof(float));
+        std::memcpy(mVQTFreqs.data(), pData, (size_t)n * sizeof(float));
       SetDirty(false);
     } else if (msgTag == kMsgTagReset) {
       // 引擎配置已重建 (γ/BPO/模式切换): 平滑缓冲中的旧值不再代表当前 band 语义,
@@ -221,15 +221,15 @@ private:
       return mRECT.B - (db - mBottomDb) / (0.f - mBottomDb) * mRECT.H();
     };
 
-    // CQT 模式: 数据 = band 幅度, 按 band 中心频率的原始对数位置直接绘制 (不做 256 band 聚合)
+    // VQT 模式: 数据 = band 幅度, 按 band 中心频率的原始对数位置直接绘制 (不做 256 band 聚合)
     if (mMode == 1) {
       mSpecPtsL.clear();
       mSpecPtsR.clear();
       mSpecPtsO.clear();
-      const int nb = (int)mCQTFreqs.size();
+      const int nb = (int)mVQTFreqs.size();
       const int have = std::min(nb, (int)mSpectrum[0].size());
       for (int b = 0; b < have; ++b) {
-        const float x = mRECT.L + FreqNorm(mCQTFreqs[b]) * mRECT.W();
+        const float x = mRECT.L + FreqNorm(mVQTFreqs[b]) * mRECT.W();
         const float yL = ampToY(mSpectrum[0][b]);
         const float yR = ampToY(mSpectrum[1][b]);
         if (mSpectrum[0][b] > 1e-6f)
@@ -363,8 +363,8 @@ private:
 
   std::vector<float> mSpectrum[2]; // 平滑后的 L/R 频谱幅度 (幅度, 非 dB)
   std::vector<int> mBinToBand;     // 预计算: bin -> band 映射 (-1 = 频段外)
-  int mMode = 0;                   // 分析模式: 0=FFT, 1=CQT
-  std::vector<float> mCQTFreqs; // CQT band 中心频率 (Hz), 由插件下发
+  int mMode = 0;                   // 分析模式: 0=FFT, 1=VQT
+  std::vector<float> mVQTFreqs; // VQT band 中心频率 (Hz), 由插件下发
   float mAttackCoeff = 0.2f;
   float mReleaseCoeff = 0.9f;
   float mAttackSec = 0.05f; // 上升时间常数 (s), 由插件 Attack 参数下发

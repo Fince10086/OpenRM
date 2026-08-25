@@ -1,44 +1,12 @@
 #pragma once
 
-// CQTAnalyzer — 变分辨率 CQT (VQT) 频谱分析器 (多速率直接 CQT)。
+// VQTAnalyzer — 实时多速率变分辨率 Q 变换 (Multirate VQT) 频谱分析引擎。
 //
-// 频率/带宽: IEM CQT Analyzer (AES 2020) 带宽公式 + J.C. Brown 1991 直接 CQT:
-//   fk = f0·2^(k/B)          (B = bins per octave, 12/24)
-//   Bk = fk/Q + γ            (γ = 低频带宽下限 Hz, 10/20/40)
-//   Q  = 1/(2^(1/B) - 1),  Nk = fs/Bk  (Hann 窗 + 预计算复数内核 + 块式 hop 点积)
-// 幅度归一化: /(Σw/2) 恢复输入幅度, /sqrt(Bk) 对齐 FFT power-per-bin 语义。
-//
-// 多速率金字塔 (关键性能优化): band 的输出带宽只有 Bk, 只需 ~2·Bk 的速率即可表达,
-// 因此低频 band 不需要在 48kHz 全速率上跑 1183 点长内核 —— 那 88% 的乘加是冗余的。
-// 这里用逐级 ×2 半带抽取把输入灌进 kMaxLayers 层金字塔 (48k/24k/.../~94Hz),
-// 每层一个共享历史缓冲, 每个 band 按自己的层速率用短内核点积 (8~38 抽头)。
-//   层分配约束: 带通上边 fc+Bk/2 必须低于该层新奈奎斯特的 kGuard 比例 (物理约束, 高频
-//   band fc 高 → 无法深抽取, 于是保持全速率, 这是恒定 Q 该付出的成本而非缺陷)。
-//   窗口下限: 深层速率下 winLen 会跌到几个样本, 小于 1 个 fc 周期时短窗测量不稳定,
-//   因此窗长至少覆盖 kCycleFloor(≈4) 个 fc 周期 —— 深层仅 ~10~40 抽头, 仍远小于全速率。
-// 半带滤波器: 17 抽头 Hamming 窗 sinc (截止 π/2, DC 增益归一), 每 ×2 级约 9 次乘加,
-// 整条金字塔每帧每通道约 9k 次乘加, 相对全速率 174k 抽头可忽略。流式抽取 == 一次性
-// 参考 (python 逐位验证); 带内音幅度保留 ~1.0, 带外抑制 -40dB+。
-//
-// 跨层延迟对齐: 层 L 的信号因半带级联带有累计群延迟 8/fs·(2^L−1) 秒 (每级线性相位
-// 滤波器贡献 (kN−1)/2 = 8 个本级采样)。若各 band 都从自己层缓冲尾部取窗, 层边界
-// 两侧 band 的分析窗结束时刻会差整整一级 (最深边界 ≈21ms@48k), 快速瞬态会在边界
-// 频率处显示为一道横向断裂。因此每个 band 的窗改为从缓冲尾部前移 readOff 个样本
-// 结束, 使窗结束时刻 R(fc) 随频率连续单调下降: 层底部 (最深侧的 band) 补偿到更深
-// 一层的自然延迟, 层顶部保持本层自然延迟, 层内按 log-频率线性过渡。计算量零增加,
-// 每层历史仅多保留 readOff(≤8) 个样本。
-//
-// 逐 band 输出节奏: band 包络带宽 ≈ Bk, 包络奈奎斯特 = 2·Bk。帧周期 kHop/fs ≈ 21.3ms,
-// 帧率 ≈46.9Hz, 因此仅当 2·Bk < 46.9Hz (即 Bk<23.4Hz, 只有 γ=10 的底层 band) 时才有
-// 依奈奎斯特隔帧重算的余地; 默认 γ≥20 下 Bk≥40Hz, 每帧本就必须更新, 该项节省为零。
-// 内层点积使用 4 路 float 累加 (窗长 ≤ 数百样本, float 精度绰绰有余), 便于编译器向量化。
-//
-// 线程模型: 音频线程仅在 ProcessBlock 内采集 hop 样本入队 (与 SpectrumSTFT 一致);
-// band/金字塔/各层历史全部由 UI 线程 PrepareDataForUI 独占 (OnIdle→TransmitData)。
-// γ/BPO/采样率变化时音频线程只写标量并置 mNeedRebuild, 惰性重建在 UI 线程执行。
-//
-// 数据经 ISender 发送: TDataPacket 前 kHop 个元素为入队的原始 hop 样本,
-// PrepareDataForUI 将其替换为各通道 band 幅度 (前 nBands 个元素)。
+// 算法架构:
+// 1. 变 Q 带宽模型 (VQT): Bk = fk/Q + γ (IEM AES 2020), 低频设 γ 托底消除长窗秒级延迟, 高频保持恒定 Q 对数乐理分布。
+// 2. 多速率半带金字塔: 采用 10 层逐级 ×2 半带抽取（17 抽头线性相位 FIR）降采样, 低频在降采样后使用短核点积, 消除 90% 冗余算力。
+// 3. 时域滑动点积: 每 band 从对应层抽取滑动历史做复指数内核点积 (w·cos + j·w·sin), 直接计算包络幅度。
+// 4. 局部延迟均衡: 逐 band 线性插值读取偏移, 对齐跨层半带滤波器的群延迟台阶, 消除瞬态在分层边界的视觉断裂。
 
 #include "ISender.h"
 
@@ -54,8 +22,7 @@ BEGIN_IPLUG_NAMESPACE
 namespace detail {
 
 // 半带 ×2 抽取器 (跨帧保持滤波状态)。系数为 17 抽头 Hamming 窗半带 (截止 π/2, DC 增益 1),
-// 偶数序 (除中心) 抽头严格为零 → 每输出样本 9 次乘加。流式输出 = 一次性"滤波后隔点取"
-// 的逐位同样 (保持全局偶数位抽取相位与尾部状态)。要求 nin 为偶数。
+// 偶数序 (除中心) 抽头严格为零 → 每输出样本 9 次乘加。流式输出保持全局偶数位抽取相位与尾部状态。要求 nin 为偶数。
 struct HalfbandDec2 {
   static constexpr int kN = 17;                   // 抽头数 (奇数, 半带)
   static constexpr int kQ = (kN - 1) / 2;         // 中心抽头序号 8
@@ -112,7 +79,7 @@ struct HalfbandDec2 {
 } // namespace detail
 
 template <int MAXNC = 2, int QUEUE_SIZE = 64, int MAX_BANDS = 4096>
-class CQTAnalyzer : public ISender<MAXNC, QUEUE_SIZE, std::array<float, MAX_BANDS>> {
+class VQTAnalyzer : public ISender<MAXNC, QUEUE_SIZE, std::array<float, MAX_BANDS>> {
 public:
   using TDataPacket = std::array<float, MAX_BANDS>;
   using Data = ISenderData<MAXNC, TDataPacket>;
@@ -127,7 +94,7 @@ public:
   static constexpr double kGuard = 0.78;     // band 上边距该层新奈奎斯特的比例 (防混叠)
   static constexpr double kCycleFloor = 4.0; // 深层窗长下限: 至少覆盖 ~4 个 fc 周期 (稳定)
 
-  CQTAnalyzer() {
+  VQTAnalyzer() {
     for (int c = 0; c < MAXNC; ++c) {
       mPending[c].assign(kHop, 0.f);
       mLayers[c].resize(kMaxLayers);

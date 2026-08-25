@@ -75,8 +75,8 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
   // Analyzer 目前为纯分析器: mix 参数保留自 BandPass, 作为撤销/重做、保存/读取的
   // 载体 (DSP 直通, 暂不参与处理); release/attack 参数控制频谱显示的释放/上升
   // 时间 (s); range 参数控制频谱显示下限 (-80..-120 dBFS, 存正数幅度);
-  // res/lfRes/bpo 为 FFT 尺寸 / CQT 低频带宽下限 γ / CQT bins-per-octave 档位索引
-  // (映射见 Params.h); mode 选择分析引擎 (FFT / CQT)。
+  // res/lfRes/bpo 为 FFT 尺寸 / VQT 低频带宽下限 γ / VQT bins-per-octave 档位索引
+  // (映射见 Params.h); mode 选择分析引擎 (FFT / VQT)。
   GetParam(kMix)->InitDouble("Mix", 1., 0., 1., 0.01, "");
   GetParam(kRelease)->InitDouble("Release", 0.2, 0.05, 0.5, 0.01, "s");
   GetParam(kRange)->InitDouble("Range", 90, 80, 120, 10, "");
@@ -173,24 +173,24 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     mCpuMeter = new CpuMeterControl(IRECT(kCol1X, 30, kPanelR, 60));
     pGraphics->AttachControl(mCpuMeter, kCtrlTagCpu);
 
-    // BPO (CQT bins per octave 档位 12/24, 仅 CQT 模式生效; 位于引擎切换按钮上方)
+    // BPO (VQT bins per octave 档位 12/24, 仅 VQT 模式生效; 位于引擎切换按钮上方)
     mBpoSlider =
         new ORMSlider(IRECT(kCol1X, 140, kPanelR, 182), kBpo, "BPO", style, EDirection::Horizontal);
     pGraphics->AttachControl(mBpoSlider);
     bindText(orm::kTxtBpo, [this](const char *s) { mBpoSlider->SetHeaderLabel(s); });
     bindTip(mBpoSlider, orm::kTxtTipBpo);
 
-    // 分析引擎切换按钮 (FFT / CQT, 与 CPU 框同宽; CQT 时黑底白字,
+    // 分析引擎切换按钮 (FFT / VQT, 与 CPU 框同宽; VQT 时黑底白字,
     // 样式参考 BandPass 的 LINK 按钮 = FlatToggleControl)
     IVStyle toggleStyle = btnStyle;
     toggleStyle.showLabel = false;
     toggleStyle.showValue = false;
     mModeToggle = new FlatToggleControl(IRECT(kCol1X, 192, kPanelR, 222), kMode, " ", toggleStyle, "FFT",
-                                        "CQT");
+                                        "VQT");
     pGraphics->AttachControl(mModeToggle);
     bindTip(mModeToggle, orm::kTxtTipMode);
 
-    // RES / LF RES 滑块 (FFT 模式为 FFT 尺寸档位, CQT 模式切换为低频分辨率档位)
+    // RES / LF RES 滑块 (FFT 模式为 FFT 尺寸档位, VQT 模式切换为低频分辨率档位)
     mResSlider =
         new ORMSlider(IRECT(kCol1X, 234, kPanelR, 276), kRes, "RES", style, EDirection::Horizontal);
     pGraphics->AttachControl(mResSlider);
@@ -358,20 +358,20 @@ void ORMAnalyzer::ProcessBlock(sample **inputs, sample **outputs, int nFrames) {
   }
 
   // 频谱: 先快照输入再交给分析引擎 (输入/输出可能别名, 与 BandPass 一致)
-  const bool cqt = GetParam(kMode)->Value() > 0.5;
+  const bool vqt = GetParam(kMode)->Value() > 0.5;
   if (nIns >= 2) {
     std::memcpy(mSpecInL.data(), inputs[0], nFrames * sizeof(sample));
     std::memcpy(mSpecInR.data(), inputs[1], nFrames * sizeof(sample));
     sample *spec[2] = {mSpecInL.data(), mSpecInR.data()};
-    if (cqt)
-      mCQT.ProcessBlock(spec, nFrames, kCtrlTagPad, 2);
+    if (vqt)
+      mVQT.ProcessBlock(spec, nFrames, kCtrlTagPad, 2);
     else
       mSpectrum.ProcessBlock(spec, nFrames, kCtrlTagPad, 2);
   } else {
     std::memcpy(mSpecInL.data(), inputs[0], nFrames * sizeof(sample));
     sample *spec[1] = {mSpecInL.data()};
-    if (cqt)
-      mCQT.ProcessBlock(spec, nFrames, kCtrlTagPad, 1);
+    if (vqt)
+      mVQT.ProcessBlock(spec, nFrames, kCtrlTagPad, 1);
     else
       mSpectrum.ProcessBlock(spec, nFrames, kCtrlTagPad, 1);
   }
@@ -389,12 +389,12 @@ void ORMAnalyzer::ProcessBlock(sample **inputs, sample **outputs, int nFrames) {
 
 void ORMAnalyzer::OnReset() {
   mSpectrum.SetFFTSizeAndOverlap(CurrentFFTSize(), 4);
-  // CQT 引擎配置: 采样率/γ/BPO 变更仅置位重建标记, band 表与历史缓冲由 UI 线程
+  // VQT 引擎配置: 采样率/γ/BPO 变更仅置位重建标记, band 表与历史缓冲由 UI 线程
   // (OnIdle 开头的 CheckRebuild) 惰性重建。不再在这里直接 SendSpectrumConfig:
-  // 配置与 CQT band 频率表统一由 OnIdle 去重后下发, 保证总是基于已重建的 band 表。
-  mCQT.SetSampleRate(GetSampleRate());
-  mCQT.SetGamma(CurrentLfRes());
-  mCQT.SetBpo(CurrentBpo());
+  // 配置与 VQT band 频率表统一由 OnIdle 去重后下发, 保证总是基于已重建的 band 表。
+  mVQT.SetSampleRate(GetSampleRate());
+  mVQT.SetGamma(CurrentLfRes());
+  mVQT.SetBpo(CurrentBpo());
 }
 
 void ORMAnalyzer::SendSpectrumConfig() {
@@ -410,16 +410,16 @@ void ORMAnalyzer::SendSpectrumConfig() {
   SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagAttack, sizeof(float), &attack);
   const int mode = (int)GetParam(kMode)->Value();
   SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagMode, sizeof(int), &mode);
-  if (mode == kModeCQT)
-    SendCQTBandFreqs();
+  if (mode == kModeVQT)
+    SendVQTBandFreqs();
 }
 
-void ORMAnalyzer::SendCQTBandFreqs() {
-  const auto &freqs = mCQT.BandFreqs();
+void ORMAnalyzer::SendVQTBandFreqs() {
+  const auto &freqs = mVQT.BandFreqs();
   if (freqs.empty())
     return;
   std::vector<float> buf(freqs.begin(), freqs.end());
-  SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagCQTBands,
+  SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagVQTBands,
                              (int)(buf.size() * sizeof(float)), buf.data());
 }
 
@@ -431,9 +431,9 @@ void ORMAnalyzer::SendResetToPad() {
 void ORMAnalyzer::UpdateResHeader() {
   if (!mResSlider)
     return;
-  const bool cqt = GetParam(kMode)->Value() > 0.5;
+  const bool vqt = GetParam(kMode)->Value() > 0.5;
   mResSlider->SetHeaderLabel(
-      cqt ? orm::Tr(orm::kTxtLfRes, orm::UILang()) : orm::Tr(orm::kTxtRes, orm::UILang()));
+      vqt ? orm::Tr(orm::kTxtLfRes, orm::UILang()) : orm::Tr(orm::kTxtRes, orm::UILang()));
 }
 
 void ORMAnalyzer::OnParamChange(int paramIdx, EParamSource source, int sampleOffset) {
@@ -444,10 +444,10 @@ void ORMAnalyzer::OnParamChange(int paramIdx, EParamSource source, int sampleOff
     // SetGamma 仅在 γ 档位实际变化 (40/20/10 之间跨越) 时重建并返回 true;
     // 拖动过程中参数值连续经过同档内的小数 (如 0.9->1.1 仍属同档区间) 不会重建,
     // 也就不会误发 Reset 导致频谱连续闪烁。
-    if (mCQT.SetGamma(CurrentLfRes()))
+    if (mVQT.SetGamma(CurrentLfRes()))
       SendResetToPad();
   } else if (paramIdx == kBpo && GetParam(kMode)->Value() > 0.5) {
-    if (mCQT.SetBpo(CurrentBpo()))
+    if (mVQT.SetBpo(CurrentBpo()))
       SendResetToPad();
   }
   // kMode: DSP 路由在 ProcessBlock 按参数分支, 无需额外动作 (OnIdle 同步模式时也会 reset)
@@ -481,27 +481,27 @@ void ORMAnalyzer::OnIdle() {
   mLastIdleTp = wallNow;
   const auto workT0 = wallNow;
 
-  // CQT 惰性重建: 音频线程若请求了重建 (γ/BPO/采样率变化), 在此先重建 band 表与历史缓冲,
+  // VQT 惰性重建: 音频线程若请求了重建 (γ/BPO/采样率变化), 在此先重建 band 表与历史缓冲,
   // 确保下面发送的 band 频率表与幅度数据都基于最新配置 (bands/freqs 由 UI 线程独占)。
-  mCQT.CheckRebuild();
+  mVQT.CheckRebuild();
 
   // 分析模式变化: 切换滑块参数 (RES<->LF RES)、重发 pad 模式消息与 band 频率表,
-  // 并清空 pad 平滑缓冲 (FFT bins 与 CQT bands 语义不同, 不能混叠)
+  // 并清空 pad 平滑缓冲 (FFT bins 与 VQT bands 语义不同, 不能混叠)
   const int mode = (int)GetParam(kMode)->Value();
   if (mode != mSentMode) {
     mSentMode = mode;
     if (mResSlider) {
-      mResSlider->SetParamIdx(mode == kModeCQT ? kLfRes : kRes);
+      mResSlider->SetParamIdx(mode == kModeVQT ? kLfRes : kRes);
       UpdateResHeader();
     }
     SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagMode, sizeof(int), &mode);
     SendResetToPad();
-    if (mode == kModeCQT)
-      SendCQTBandFreqs();
+    if (mode == kModeVQT)
+      SendVQTBandFreqs();
   }
 
   // 仅在采样率/FFT 尺寸/释放/下限/上升时间/低频 γ/BPO 变化时重发
-  // (如 UI 在 OnReset 之后才打开; γ/BPO 变化时同步刷新 CQT band 频率表)
+  // (如 UI 在 OnReset 之后才打开; γ/BPO 变化时同步刷新 VQT band 频率表)
   const double sr = GetSampleRate();
   const int fftSize = CurrentFFTSize();
   const double release = GetParam(kRelease)->Value();
@@ -521,9 +521,9 @@ void ORMAnalyzer::OnIdle() {
     SendSpectrumConfig();
   }
 
-  // 频谱数据转发: FFT/CQT 的频谱计算都在此完成 (PrepareDataForUI 内), 跑在 UI 线程
+  // 频谱数据转发: FFT/VQT 的频谱计算都在此完成 (PrepareDataForUI 内), 跑在 UI 线程
   mSpectrum.TransmitData(*this);
-  mCQT.TransmitData(*this);
+  mVQT.TransmitData(*this);
 
   // CPU 占用率(UI部分)结算: OnIdle 分析工作耗时 / 两次 OnIdle 墙钟间隔, 每 ~0.5s 滑窗;
   // 与音频线程占用 (mCpuAudio) 合计后推送 (单位: 一个核)

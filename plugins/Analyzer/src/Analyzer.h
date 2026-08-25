@@ -3,7 +3,7 @@
 #include "IPlug_include_in_plug_hdr.h"
 #include "Params.h"
 #include "dsp/SpectrumSTFT.h"
-#include "dsp/CQTAnalyzer.h"
+#include "dsp/VQTAnalyzer.h"
 #include "Strings.h"
 
 #include <algorithm>
@@ -46,7 +46,7 @@ public:
 
 private:
   SpectrumSTFT<2> mSpectrum;
-  CQTAnalyzer<2> mCQT;
+  VQTAnalyzer<2> mVQT;
 
   static constexpr int kMaxBlock = 16384;
   std::array<sample, kMaxBlock> mSpecInL{};
@@ -75,7 +75,7 @@ private:
   int mSentMode = -1;
 
   // CPU 占用率 (单位: 一个核的占用比例): 音频线程在 ProcessBlock 内测量
-  // 处理耗时/块时长并一阶平滑; UI 线程在 OnIdle 内测量分析工作 (FFT/CQT 计算、
+  // 处理耗时/块时长并一阶平滑; UI 线程在 OnIdle 内测量分析工作 (FFT/VQT 计算、
   // 数据转发) 耗时占墙钟的比例 (每 ~0.5s 滑窗)。两者相加 = 插件总开销,
   // 由 OnIdle 推送给 UI (0.0 ~ 1.0+, 显示为两位小数, 不带 %)。
   double mCpuAudio = 0.0; // 音频线程占用 (处理耗时/块时长, 一阶平滑)
@@ -114,7 +114,7 @@ private:
     const int idx = (int)std::clamp(GetParam(kBpo)->Value(), 0.0, (double)kNumBpoOptions - 1);
     return kBpoOptions[idx];
   }
-  void SendCQTBandFreqs();
+  void SendVQTBandFreqs();
   void UpdateResHeader();
 
   void SetParamFromEditor(int idx, double value);
