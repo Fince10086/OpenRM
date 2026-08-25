@@ -130,11 +130,12 @@ public:
 
   void Draw(IGraphics &g) override {
     g.FillRect(COL_100(), mRECT);
-    // 图形区右侧保持原比例, 左侧让出 kDbAxisW 作为 dB 刻度区
-    const IRECT plot = mRECT.GetReducedFromLeft(kDbAxisW);
+    // 图形区左对齐, 右侧让出 kDbTickW 刻度文字区 + kGainBarW Gain 竖条
+    const IRECT plot = mRECT.GetReducedFromRight(kDbTickW + kGainBarW);
     DrawTrack(g, plot);
     DrawDbGrid(g, plot);
     DrawSpectrum(g, plot);
+    DrawGainBar(g, plot);
   }
 
 private:
@@ -190,7 +191,41 @@ private:
     }
   }
 
-  // 20dB 一档的 dB 横网格 + 左侧刻度文字 (样式与滑块参数值一致)
+  // Gain 竖条: 与 dB 刻度对齐 (顶部 0dB, 底部 mBottomDb), 显示当前合并电平峰值。
+  // 合并算法与频谱一致 (PWR/SUM), 数据取自已平滑频谱 → attack/release 与设置一致。
+  void DrawGainBar(IGraphics &g, const IRECT &plot) {
+    float peak = 0.f;
+    if (mMode == 1) {
+      const int nb = std::min((int)mVQTFreqs.size(), (int)mSpectrum[0].size());
+      for (int b = 0; b < nb; ++b) {
+        const float aL = mSpectrum[0][b], aR = mSpectrum[1][b];
+        const float aM = (mMergeAlgo == 0)
+                             ? std::sqrt(aL * aL + aR * aR)
+                             : (((int)mSpectrum[2].size() > b) ? mSpectrum[2][b] : 0.f);
+        peak = std::max(peak, aM);
+      }
+    } else {
+      const int nb = std::min(mNumBins, (int)mSpectrum[0].size());
+      for (int b = 0; b < nb; ++b) {
+        const float aL = mSpectrum[0][b], aR = mSpectrum[1][b];
+        const float aM = (mMergeAlgo == 0)
+                             ? std::sqrt(aL * aL + aR * aR)
+                             : (((int)mSpectrum[2].size() > b) ? mSpectrum[2][b] : 0.f);
+        peak = std::max(peak, aM);
+      }
+    }
+
+    // 竖条位于刻度区右侧空白 (与 kGainBarW 等宽), 纵向与 plot 一致
+    const IRECT bar(mRECT.R - kGainBarW, plot.T, mRECT.R, plot.B);
+    const float cr = kGainBarW * 0.5f;
+    g.FillRoundRect(COL_300(), bar, cr);
+
+    const float db = (peak > 1e-6f) ? std::clamp(20.f * std::log10(peak), mBottomDb, 0.f) : mBottomDb;
+    const float yPeak = plot.B - (db - mBottomDb) / (0.f - mBottomDb) * plot.H();
+    g.FillRoundRect(COL_500(), IRECT(bar.L, yPeak, bar.R, bar.B), cr);
+  }
+
+  // 20dB 一档的 dB 横网格 + 右侧刻度文字 (样式与滑块参数值一致)
   void DrawDbGrid(IGraphics &g, const IRECT &plot) {
     if (mBottomDb >= 0.f)
       return;
@@ -204,11 +239,11 @@ private:
       // 灰色细线横贯图形区
       g.FillRect(grid, IRECT(plot.L, y, plot.R, y + 1.f));
 
-      // 左侧刻度文字: 右对齐到图形区左缘, 字号/字重/颜色与滑块参数值一致
+      // 刻度文字: 位于 plot 右侧刻度区, 右对齐, 字号/字重/颜色与滑块参数值一致
       char buf[16];
       std::snprintf(buf, sizeof(buf), "%d", db);
       g.DrawText(IText(20, COL_700(), kFontRegular, EAlign::Far, EVAlign::Middle), buf,
-                 IRECT(mRECT.L, y - 14.f, plot.L - 6.f, y + 14.f));
+                 IRECT(plot.R, y - 14.f, plot.R + kDbTickW - 4.f, y + 14.f));
     }
   }
 

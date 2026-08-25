@@ -164,8 +164,8 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     constexpr float kBtnH = 30.f;
     constexpr float kPanelR = kCol2X + kBtnW;
 
-    // 三通道色块图例 (L / R / M, 颜色跟随主题), 右移与频谱图形区左缘对齐
-    pGraphics->AttachControl(new ChannelLegendControl(IRECT(20 + kDbAxisW, 32, 668, 54)));
+    // 三通道色块图例 (L / R / M, 颜色跟随主题), 与频谱图形区左缘对齐
+    pGraphics->AttachControl(new ChannelLegendControl(IRECT(20, 32, 668, 54)));
 
     // 主频谱绘制区域
     mSpectrumPad = new SpectrumPad(IRECT(20, 58, 668, 328));
