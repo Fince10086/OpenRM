@@ -130,8 +130,11 @@ public:
 
   void Draw(IGraphics &g) override {
     g.FillRect(COL_100(), mRECT);
-    DrawTrack(g);
-    DrawSpectrum(g);
+    // 图形区右侧保持原比例, 左侧让出 kDbAxisW 作为 dB 刻度区
+    const IRECT plot = mRECT.GetReducedFromLeft(kDbAxisW);
+    DrawTrack(g, plot);
+    DrawDbGrid(g, plot);
+    DrawSpectrum(g, plot);
   }
 
 private:
@@ -148,9 +151,9 @@ private:
     return (float)(std::log(std::clamp(hz, 20.0, 20000.0) / 20.0) / std::log(20000.0 / 20.0));
   }
 
-  float XOf(IGraphics &, double f) const { return mRECT.L + FreqNorm(f) * mRECT.W(); }
+  float XOf(const IRECT &plot, double f) const { return plot.L + FreqNorm(f) * plot.W(); }
 
-  void DrawTrack(IGraphics &g) {
+  void DrawTrack(IGraphics &g, const IRECT &plot) {
     struct Band {
       double lo, hi;
       float v0, v1;
@@ -176,21 +179,43 @@ private:
 
       float xs[16];
       for (int i = 0; i < n; ++i)
-        xs[i] = XOf(g, edges[i]);
+        xs[i] = XOf(plot, edges[i]);
 
       const int cells = n - 1;
       for (int i = 0; i < cells; ++i) {
         const float t = (cells > 1) ? (float)i / (cells - 1) : 0.f;
         const int v = (int)std::lround(band.v0 + (band.v1 - band.v0) * t);
-        g.FillRect(WarmGray(v), IRECT(xs[i], mRECT.T, xs[i + 1], mRECT.B));
+        g.FillRect(WarmGray(v), IRECT(xs[i], plot.T, xs[i + 1], plot.B));
       }
     }
   }
 
-  void DrawSpectrum(IGraphics &g) {
+  // 20dB 一档的 dB 横网格 + 左侧刻度文字 (样式与滑块参数值一致)
+  void DrawDbGrid(IGraphics &g, const IRECT &plot) {
+    if (mBottomDb >= 0.f)
+      return;
+
+    const IColor grid = WarmGray(200);
+    const int bottomDb = (int)mBottomDb;
+
+    for (int db = 0; db >= bottomDb; db -= 20) {
+      const float y = plot.B - (float)(db - bottomDb) / (0.f - bottomDb) * plot.H();
+
+      // 灰色细线横贯图形区
+      g.FillRect(grid, IRECT(plot.L, y, plot.R, y + 1.f));
+
+      // 左侧刻度文字: 右对齐到图形区左缘, 字号/字重/颜色与滑块参数值一致
+      char buf[16];
+      std::snprintf(buf, sizeof(buf), "%d", db);
+      g.DrawText(IText(20, COL_700(), kFontRegular, EAlign::Far, EVAlign::Middle), buf,
+                 IRECT(mRECT.L, y - 14.f, plot.L - 6.f, y + 14.f));
+    }
+  }
+
+  void DrawSpectrum(IGraphics &g, const IRECT &plot) {
     if (mSpectrum[0].empty() || mSpectrum[1].empty() || mNumBins <= 0)
       return;
-    if (mRECT.W() <= 0.f || mRECT.H() <= 0.f)
+    if (plot.W() <= 0.f || plot.H() <= 0.f)
       return;
 
     // 通道色: L/R 基于主题色相 ±120°, 各自保持自身颜色 (不因重叠切换)。
@@ -205,7 +230,7 @@ private:
     auto ampToY = [&](float amp) -> float {
       const float db =
           (amp > 1e-6f) ? std::clamp(20.f * std::log10(amp), mBottomDb, 0.f) : mBottomDb;
-      return mRECT.B - (db - mBottomDb) / (0.f - mBottomDb) * mRECT.H();
+      return plot.B - (db - mBottomDb) / (0.f - mBottomDb) * plot.H();
     };
 
     // VQT 模式: 数据 = band 幅度, 按 band 中心频率的原始对数位置直接绘制 (不做 256 band 聚合)
@@ -216,7 +241,7 @@ private:
       const int nb = (int)mVQTFreqs.size();
       const int have = std::min(nb, (int)mSpectrum[0].size());
       for (int b = 0; b < have; ++b) {
-        const float x = mRECT.L + FreqNorm(mVQTFreqs[b]) * mRECT.W();
+        const float x = plot.L + FreqNorm(mVQTFreqs[b]) * plot.W();
         const float aL = mSpectrum[0][b];
         const float aR = mSpectrum[1][b];
         const float aSum = (mSpectrum[2].size() > (size_t)b) ? mSpectrum[2][b] : 0.f;
@@ -233,10 +258,10 @@ private:
       }
 
       if (mChanMode == 0) {
-        DrawFill(g, mSpecPtsL, cL, kGradientMinAlpha, kLayerTopAlpha);
-        DrawFill(g, mSpecPtsR, cR, kGradientMinAlpha, kLayerTopAlpha);
+        DrawFill(g, plot, mSpecPtsL, cL, kGradientMinAlpha, kLayerTopAlpha);
+        DrawFill(g, plot, mSpecPtsR, cR, kGradientMinAlpha, kLayerTopAlpha);
       } else {
-        DrawFill(g, mSpecPtsM, cO);
+        DrawFill(g, plot, mSpecPtsM, cO);
       }
       return;
     }
@@ -269,7 +294,7 @@ private:
     for (int b = 0; b < kSpectrumBands; ++b) {
       const BandAcc &acc = mBandAcc[b];
       const double fCenter = kSpecFreqLo * std::exp2(logBand * (b + 0.5));
-      const float x = mRECT.L + FreqNorm(fCenter) * mRECT.W();
+      const float x = plot.L + FreqNorm(fCenter) * plot.W();
       const float aL = acc.max[0], aR = acc.max[1], aSum = acc.max[2];
       const float yL = ampToY(aL);
       const float yR = ampToY(aR);
@@ -284,22 +309,22 @@ private:
     }
 
     if (mChanMode == 0) {
-      DrawFill(g, mSpecPtsL, cL, kGradientMinAlpha, kLayerTopAlpha);
-      DrawFill(g, mSpecPtsR, cR, kGradientMinAlpha, kLayerTopAlpha);
+      DrawFill(g, plot, mSpecPtsL, cL, kGradientMinAlpha, kLayerTopAlpha);
+      DrawFill(g, plot, mSpecPtsR, cR, kGradientMinAlpha, kLayerTopAlpha);
     } else {
-      DrawFill(g, mSpecPtsM, cO);
+      DrawFill(g, plot, mSpecPtsM, cO);
     }
   }
 
-  void DrawFill(IGraphics &g, std::vector<Pt> &pts, const IColor &color,
+  void DrawFill(IGraphics &g, const IRECT &plot, std::vector<Pt> &pts, const IColor &color,
                 int minAlpha = kGradientMinAlpha, int topAlpha = 255) {
     if (pts.size() < 2)
       return;
 
     // 左右边缘闭合：低频延伸至左边缘贴底，高频在实际最高频点处垂直收口
-    pts.front().x = mRECT.L;
-    if (pts.back().x >= mRECT.R - mRECT.W() * 0.02f)
-      pts.back().x = mRECT.R;
+    pts.front().x = plot.L;
+    if (pts.back().x >= plot.R - plot.W() * 0.02f)
+      pts.back().x = plot.R;
 
     g.PathClear();
     g.PathMoveTo(pts[0].x, pts[0].y);
@@ -321,15 +346,15 @@ private:
       for (int i = 1; i < (int)pts.size(); ++i)
         g.PathLineTo(pts[i].x, pts[i].y);
     }
-    g.PathLineTo(pts.back().x, mRECT.B);
-    g.PathLineTo(pts[0].x, mRECT.B);
+    g.PathLineTo(pts.back().x, plot.B);
+    g.PathLineTo(pts[0].x, plot.B);
     g.PathClose();
 
     // 渐变范围跟随曲线峰值，保证弱信号在底部也有足够的对比度
-    float topY = mRECT.B;
+    float topY = plot.B;
     for (const Pt &p : pts)
       topY = std::min(topY, p.y);
-    const IRECT gradRect(mRECT.L, topY, mRECT.R, mRECT.B);
+    const IRECT gradRect(plot.L, topY, plot.R, plot.B);
     // 指数衰减渐变: 顶部接近实色, 按指数曲线快速向底部透明 (多 stops 近似)
     constexpr int kGradientStops = 12;
     constexpr float kGradientDecay = 3.5f;

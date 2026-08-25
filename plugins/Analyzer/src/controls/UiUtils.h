@@ -13,6 +13,9 @@
 BEGIN_IPLUG_NAMESPACE
 BEGIN_IGRAPHICS_NAMESPACE
 
+// 频谱左侧 dB 刻度区宽度 (px)。Analyzer.cpp 图例左移对齐 + SpectrumPad 内部图形区右移共用。
+constexpr float kDbAxisW = 56.f;
+
 // 标准旋钮手柄: 白环 + 深色核心
 inline void DrawKnob(IGraphics &g, float cx, float cy) {
   g.FillCircle(COL_100(), cx, cy, HANDLE_R + HANDLE_RING);
