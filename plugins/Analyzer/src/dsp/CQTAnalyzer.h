@@ -20,6 +20,14 @@
 // 整条金字塔每帧每通道约 9k 次乘加, 相对全速率 174k 抽头可忽略。流式抽取 == 一次性
 // 参考 (python 逐位验证); 带内音幅度保留 ~1.0, 带外抑制 -40dB+。
 //
+// 跨层延迟对齐: 层 L 的信号因半带级联带有累计群延迟 8/fs·(2^L−1) 秒 (每级线性相位
+// 滤波器贡献 (kN−1)/2 = 8 个本级采样)。若各 band 都从自己层缓冲尾部取窗, 层边界
+// 两侧 band 的分析窗结束时刻会差整整一级 (最深边界 ≈21ms@48k), 快速瞬态会在边界
+// 频率处显示为一道横向断裂。因此每个 band 的窗改为从缓冲尾部前移 readOff 个样本
+// 结束, 使窗结束时刻 R(fc) 随频率连续单调下降: 层底部 (最深侧的 band) 补偿到更深
+// 一层的自然延迟, 层顶部保持本层自然延迟, 层内按 log-频率线性过渡。计算量零增加,
+// 每层历史仅多保留 readOff(≤8) 个样本。
+//
 // 逐 band 输出节奏: band 包络带宽 ≈ Bk, 包络奈奎斯特 = 2·Bk。帧周期 kHop/fs ≈ 21.3ms,
 // 帧率 ≈46.9Hz, 因此仅当 2·Bk < 46.9Hz (即 Bk<23.4Hz, 只有 γ=10 的底层 band) 时才有
 // 依奈奎斯特隔帧重算的余地; 默认 γ≥20 下 Bk≥40Hz, 每帧本就必须更新, 该项节省为零。
@@ -220,9 +228,12 @@ protected:
         if (--rs.phase <= 0) {
           const std::vector<float> &buf = mLayers[c][bd.layer];
           const int wl = bd.winLen;
-          const int have = std::min(wl, (int)buf.size()); // 实际可用样本数
+          // 窗在缓冲内结束于"尾部前 readOff"处 (跨层延迟对齐, 见 RebuildBands);
+          // 启动阶段窗前补零, 缓冲不足时最多读到有效起点。
+          const int have = std::max(0, std::min(wl, (int)buf.size() - bd.readOff));
           const int skip = wl - have;                     // 窗口前补零 (启动阶段)
-          const float *x = buf.data() + (buf.size() - have);
+          const int start = std::max(0, (int)buf.size() - bd.readOff - have);
+          const float *x = buf.data() + start;
           const float *kr = bd.kernelRe.data() + skip;
           const float *ki = bd.kernelIm.data() + skip;
           const int cnt = wl - skip;
@@ -262,6 +273,7 @@ private:
     float invSqrtBw;              // 1/sqrt(Bk): 功率密度归一化
     int winLen;                   // 该层速率下窗长 (样本) = fsL/Bk (下限: ≥~4 个 fc 周期)
     int advance;                  // 每 advance 帧重算一次 (包络奈奎斯特: 1/(2·Bk)/帧周期)
+    int readOff;                  // 窗从层缓冲尾部前移的样本数 (跨层延迟对齐, 0..8)
     std::vector<float> kernelRe, kernelIm; // 在该层速率下计算的 w·cos/w·sin
   };
 
@@ -292,12 +304,38 @@ private:
     const double fs = std::max(mSampleRate, 1.0);
     const double q = 1.0 / (std::pow(2.0, 1.0 / mBpo) - 1.0);
 
+    // 第一遍: 列出全部 band 的频率/带宽/层号。层号随 fc 升高单调变浅, 同层 band 在
+    // spec 中是连续段, 段内 fc 升序 (层底部 = 段首, 紧贴更深一层)。
+    struct Spec { double fc, bw; int layer; };
+    std::vector<Spec> spec;
+    std::array<bool, kMaxLayers> used{};
     for (int k = 0;; ++k) {
       const double fc = kFreqLo * std::pow(2.0, (double)k / mBpo);
       if (fc > kFreqHi)
         break;
       const double bw = fc / q + mGamma; // Bk: 低频段被 γ 托底, 高频段趋于恒定 Q
-      AddBand(fc, bw, fs);
+      const int L = AssignLayer(fc + bw / 2.0, fs);
+      spec.push_back({fc, bw, L});
+      used[L] = true;
+    }
+
+    // 第二遍: 逐层构建 band 并做跨层延迟对齐 —— 目标使各 band 的分析窗结束时刻
+    // R(fc) 随频率连续单调下降: 层底部取更深一层的累计群延迟 (补偿一级), 层顶部
+    // 保持本层自然延迟, 层内按 log-频率线性过渡。边界两侧 band 的对齐保证瞬态
+    // 响应不再在边界频率处出现横向断裂。
+    for (int i = 0, n = (int)spec.size(); i < n;) {
+      const int L = spec[i].layer;
+      int j = i;
+      while (j < n && spec[j].layer == L)
+        ++j; // 本层 band 段 [i, j)
+      const double gdL = GroupDelaySec(fs, L);
+      const double gdD = (L + 1 < kMaxLayers && used[L + 1]) ? GroupDelaySec(fs, L + 1) : gdL;
+      for (int t = i; t < j; ++t) {
+        const double f = (j - i > 1) ? (double)(t - i) / (j - i - 1) : 0.0;
+        const double R = gdD + (gdL - gdD) * f;
+        AddBand(spec[t].fc, spec[t].bw, fs, L, R);
+      }
+      i = j;
     }
 
     // 逐 band 运行状态 (每通道) 复位
@@ -314,9 +352,8 @@ private:
         mDecim[c][l].Reset();
   }
 
-  void AddBand(double fc, double bw, double fs) {
-    // 层分配: 最大 L 使带通上边 fc+Bk/2 落在该层新奈奎斯特的 kGuard 比例内 (物理约束)
-    const double bandHi = fc + bw / 2.0;
+  // 层分配: 最大 L 使带通上边 fc+Bk/2 落在该层新奈奎斯特的 kGuard 比例内 (物理约束)
+  int AssignLayer(double bandHi, double fs) const {
     int L = 0;
     while (L + 1 < kMaxLayers) {
       const double newNyq = fs / (double)(1 << (L + 2)); // 层 L+1 的奈奎斯特
@@ -324,6 +361,18 @@ private:
         break;
       ++L;
     }
+    return L;
+  }
+
+  // 层 L 信号相对原始输入的累计群延迟 (秒): 每级半带 (线性相位) 在本级采样时钟
+  // 下贡献 (kN−1)/2 = kQ 个样本, 级联后 gd_L = kQ/fs·(2^L − 1)。
+  static double GroupDelaySec(double fs, int L) {
+    return (double)detail::HalfbandDec2::kQ / fs * (std::pow(2.0, L) - 1.0);
+  }
+
+  // R: 本 band 分析窗的结束时刻 (相对输入源, 秒)。跨层延迟对齐 (见 RebuildBands):
+  // 窗在层缓冲内从尾部前移 readOff 个样本结束, 使 R(fc) 随频率连续单调下降。
+  void AddBand(double fc, double bw, double fs, int L, double R) {
     const double fsL = fs / (double)(1 << L);
 
     // 窗长: 1/Bk (频率分辨率) 但至少覆盖 ~kCycleFloor 个 fc 周期 (底层短窗不稳定), 且 ≥8。
@@ -338,6 +387,7 @@ private:
     // 包络更新节奏: band 输出带宽 ≈ Bk, 包络奈奎斯特 = 2·Bk; 每帧时长 kHop/fs。
     // 只有 Bk < fs/(2·kHop)(约23Hz@48k) 时才有必要隔帧重算, 否则恒为 1 (默认 γ≥20 全为 1)。
     bd.advance = std::max(1, (int)std::lround(fs / (2.0 * bw * kHop)));
+    bd.readOff = (int)std::lround((R - GroupDelaySec(fs, L)) * fsL);
     bd.kernelRe.resize(wl);
     bd.kernelIm.resize(wl);
     const double step = 2.0 * PI * fc / fsL; // 该层速率的归一化频率
@@ -349,7 +399,7 @@ private:
     }
     mBands.push_back(std::move(bd));
     mFreqs.push_back(fc);
-    mMaxWinPerLayer[L] = std::max(mMaxWinPerLayer[L], wl);
+    mMaxWinPerLayer[L] = std::max(mMaxWinPerLayer[L], wl + bd.readOff);
   }
 
   int mBpo = 24;                          // bins per octave (12/24); 音频线程写, UI 线程读
