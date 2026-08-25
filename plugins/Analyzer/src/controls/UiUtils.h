@@ -15,9 +15,9 @@ BEGIN_IGRAPHICS_NAMESPACE
 
 // 频谱右侧布局 (Analyzer.cpp 图例与 SpectrumPad 共用):
 // - kDbTickW: dB 刻度文字区宽度
-// - kGainBarW: Gain 竖条横向宽度 = 右侧滑块 track 纵向宽度 (IVSliderControl 默认 2.f) 的 4 倍
+// - kGainBarW: Gain 竖条横向宽度。基准 = 右侧滑块 track 纵向宽度 (IVSliderControl 默认 2.f) 的 4 倍, 再 ×4
 constexpr float kDbTickW = 52.f;
-constexpr float kGainBarW = 4.f * 2.f;
+constexpr float kGainBarW = 4.f * 2.f * 4.f;
 
 // 标准旋钮手柄: 白环 + 深色核心
 inline void DrawKnob(IGraphics &g, float cx, float cy) {

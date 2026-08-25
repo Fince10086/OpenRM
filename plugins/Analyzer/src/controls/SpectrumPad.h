@@ -217,12 +217,11 @@ private:
 
     // 竖条位于刻度区右侧空白 (与 kGainBarW 等宽), 纵向与 plot 一致
     const IRECT bar(mRECT.R - kGainBarW, plot.T, mRECT.R, plot.B);
-    const float cr = kGainBarW * 0.5f;
-    g.FillRoundRect(COL_300(), bar, cr);
+    g.FillRect(COL_300(), bar);
 
     const float db = (peak > 1e-6f) ? std::clamp(20.f * std::log10(peak), mBottomDb, 0.f) : mBottomDb;
     const float yPeak = plot.B - (db - mBottomDb) / (0.f - mBottomDb) * plot.H();
-    g.FillRoundRect(COL_500(), IRECT(bar.L, yPeak, bar.R, bar.B), cr);
+    g.FillRect(COL_500(), IRECT(bar.L, yPeak, bar.R, bar.B));
   }
 
   // 20dB 一档的 dB 横网格 + 右侧刻度文字 (样式与滑块参数值一致)
@@ -239,11 +238,23 @@ private:
       // 灰色细线横贯图形区
       g.FillRect(grid, IRECT(plot.L, y, plot.R, y + 1.f));
 
-      // 刻度文字: 位于 plot 右侧刻度区, 右对齐, 字号/字重/颜色与滑块参数值一致
+      // 刻度文字: 位于 plot 右侧刻度区, 右对齐, 字号/字重/颜色与滑块参数值一致。
+      // 顶部 0dB / 底部最后一条刻度避开控件边界, 防止文字被裁剪。
       char buf[16];
       std::snprintf(buf, sizeof(buf), "%d", db);
-      g.DrawText(IText(20, COL_700(), kFontRegular, EAlign::Far, EVAlign::Middle), buf,
-                 IRECT(plot.R, y - 14.f, plot.R + kDbTickW - 4.f, y + 14.f));
+      const float labelH = 28.f;
+      IRECT labelR(plot.R, y - labelH * 0.5f, plot.R + kDbTickW - 4.f, y + labelH * 0.5f);
+      EVAlign valign = EVAlign::Middle;
+      if (labelR.T < plot.T) {
+        labelR.T = plot.T + 2.f; // 贴顶: 文字整体移到刻度线下方
+        labelR.B = labelR.T + labelH;
+        valign = EVAlign::Top;
+      } else if (labelR.B > plot.B) {
+        labelR.B = plot.B - 2.f; // 贴底: 文字整体移到刻度线上方
+        labelR.T = labelR.B - labelH;
+        valign = EVAlign::Bottom;
+      }
+      g.DrawText(IText(20, COL_700(), kFontRegular, EAlign::Far, valign), buf, labelR);
     }
   }
 
