@@ -5,7 +5,7 @@
 // 视觉特性:
 // 1. 20 Hz ~ 20 kHz 对数频率坐标轴。
 // 2. 双声道色彩区分: 左/右声道基于主题色相做 ±120° 旋转，各自保持自身颜色绘制 (不再因重叠切换颜色)。
-// 3. 合并声道 (L+R) 以主题色相绘制在最前图层, 低透明度光晕。
+// 3. 合并声道 (L+R) 以主题色相绘制 (MERGE 模式独立显示)。
 // 4. 动态渐变填充: 渐变锚定于信号峰值自身，弱信号在底部依然清晰。
 // 5. 动力学平滑: 独立支持 Attack（上升响应）与 Release（释放衰减）时间常数平滑。
 
@@ -35,7 +35,7 @@ public:
     kMsgTagMode,
     kMsgTagVQTBands,
     kMsgTagReset,     // 清空平滑缓冲, 显示从头加载 (γ/BPO/模式切换时由插件下发)
-    kMsgTagChanMode,  // 声道显示模式 (0: L/R, 1: ALL, 2: MERGE)
+    kMsgTagChanMode,  // 声道显示模式 (0: L/R, 1: MERGE)
     kMsgTagMergeAlgo, // 合并算法 (0: PWR 功率和, 1: SUM 单声道和)
   };
 
@@ -104,7 +104,7 @@ public:
     } else if (msgTag == kMsgTagChanMode) {
       int chanMode;
       stream.Get(&chanMode, 0);
-      mChanMode = std::clamp(chanMode, 0, 2);
+      mChanMode = std::clamp(chanMode, 0, 1);
       SetDirty(false);
     } else if (msgTag == kMsgTagMergeAlgo) {
       int mergeAlgo;
@@ -193,8 +193,7 @@ private:
     if (mRECT.W() <= 0.f || mRECT.H() <= 0.f)
       return;
 
-    // 通道色: L/R 基于主题色相 ±120°, 各自保持自身颜色 (不因重叠切换);
-    // 合并声道 M 使用主题色相, 低透明度绘制在最前图层。
+    // 通道色: L/R 基于主题色相 ±120°, 各自保持自身颜色 (不因重叠切换)。
     // 取色逻辑见 Theme.h GetChannelColors, 与色块图例保持一致。
     IColor cL, cR, cO;
     GetChannelColors(cL, cR, cO);
@@ -236,11 +235,6 @@ private:
       if (mChanMode == 0) {
         DrawFill(g, mSpecPtsL, cL, kGradientMinAlpha, kLayerTopAlpha);
         DrawFill(g, mSpecPtsR, cR, kGradientMinAlpha, kLayerTopAlpha);
-      } else if (mChanMode == 1) {
-        DrawFill(g, mSpecPtsL, cL, kGradientMinAlpha, kLayerTopAlpha);
-        DrawFill(g, mSpecPtsR, cR, kGradientMinAlpha, kLayerTopAlpha);
-        // 合并声道 (L+R) 绘制在 L/R 之后 = 最前图层, 低透明度光晕
-        DrawFill(g, mSpecPtsM, cO, kMergedMinAlpha, kMergedTopAlpha);
       } else {
         DrawFill(g, mSpecPtsM, cO);
       }
@@ -292,11 +286,6 @@ private:
     if (mChanMode == 0) {
       DrawFill(g, mSpecPtsL, cL, kGradientMinAlpha, kLayerTopAlpha);
       DrawFill(g, mSpecPtsR, cR, kGradientMinAlpha, kLayerTopAlpha);
-    } else if (mChanMode == 1) {
-      DrawFill(g, mSpecPtsL, cL, kGradientMinAlpha, kLayerTopAlpha);
-      DrawFill(g, mSpecPtsR, cR, kGradientMinAlpha, kLayerTopAlpha);
-      // 合并声道 (L+R) 绘制在 L/R 之后 = 最前图层, 低透明度光晕
-      DrawFill(g, mSpecPtsM, cO, kMergedMinAlpha, kMergedTopAlpha);
     } else {
       DrawFill(g, mSpecPtsM, cO);
     }
@@ -358,8 +347,6 @@ private:
 
   static constexpr int kGradientMinAlpha = 10; // L/R 实体填充底部最小不透明度
   static constexpr int kLayerTopAlpha = 160;   // L/R 顶部不透明度 (从 255 降低, 更透明)
-  static constexpr int kMergedTopAlpha = 125;  // 合并声道光晕顶部不透明度 (ALL 模式, 从 85 再加深)
-  static constexpr int kMergedMinAlpha = 10;   // 合并声道光晕底部不透明度
   static constexpr int kSpectrumBands = 256;
   static constexpr float kSpecFreqLo = 20.f;
   static constexpr float kSpecFreqHi = 20000.f;
@@ -388,7 +375,7 @@ private:
   std::vector<float> mSpectrum[3]; // 平滑后的 L/R/Sum 频谱幅度 (幅度, 非 dB)
   std::vector<int> mBinToBand;     // 预计算: bin -> band 映射 (-1 = 频段外)
   int mMode = 0;                   // 分析模式: 0=FFT, 1=VQT
-  int mChanMode = 1;               // 声道显示模式: 0=L/R, 1=ALL, 2=MERGE
+  int mChanMode = 0;               // 声道显示模式: 0=L/R, 1=MERGE
   int mMergeAlgo = 0;              // 合并算法: 0=PWR 功率和, 1=SUM 单声道和
   std::vector<float> mVQTFreqs; // VQT band 中心频率 (Hz), 由插件下发
   float mAttackCoeff = 0.2f;

@@ -82,7 +82,7 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
   GetParam(kLfRes)->InitInt("LfRes", 0, 0, kNumLfResOptions - 1, "");
   GetParam(kBpo)->InitInt("Bpo", kNumBpoOptions - 1, 0, kNumBpoOptions - 1, "");
   GetParam(kMode)->InitInt("Mode", kModeFFT, 0, 1, "");
-  GetParam(kChannelMode)->InitInt("ChanMode", kChanModeAll, 0, kNumChanModes - 1, "");
+  GetParam(kChannelMode)->InitInt("ChanMode", kChanModeLR, 0, kNumChanModes - 1, "");
   GetParam(kMergeAlgo)->InitInt("MergeAlgo", kMergeAlgoPWR, 0, kNumMergeAlgos - 1, "");
 
   mDefaultSnapshot = Snapshot();
@@ -175,9 +175,9 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     mCpuMeter = new CpuMeterControl(IRECT(kCol1X, 30, kPanelR, 60));
     pGraphics->AttachControl(mCpuMeter, kCtrlTagCpu);
 
-    // 声道显示模式循环切换按钮 (L/R -> ALL -> MERGE)
+    // 声道显示模式循环切换按钮 (L/R -> MERGE)
     mChanModeBtn = new FlatCycleButton(IRECT(kCol1X, 85, kCol1X + 78, 115), kChannelMode,
-                                       {"L/R", "ALL", "MERGE"}, btnStyle);
+                                       {"L/R", "MERGE"}, btnStyle);
     pGraphics->AttachControl(mChanModeBtn);
     bindTip(mChanModeBtn, orm::kTxtTipChanMode);
 

@@ -91,7 +91,7 @@ inline const char *Tr(int id, int lang) {
           "Input",
           "Output",
           "Driver",
-          "Channel display mode (L/R, ALL, MERGE)",
+          "Channel display mode (L/R, MERGE)",
           "Merge algorithm (PWR: Total Power, SUM: Mono Sum)",
       },
       {
@@ -131,7 +131,7 @@ inline const char *Tr(int id, int lang) {
           "输入",
           "输出",
           "驱动",
-          "声道显示模式（L/R: 左右, ALL: 全部, MERGE: 仅合并）",
+          "声道显示模式（L/R: 左右, MERGE: 仅合并）",
           "合并算法（PWR: 总功率和, SUM: 单声道求和）",
       },
   };
