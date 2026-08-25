@@ -52,14 +52,17 @@ private:
   std::array<sample, kMaxBlock> mSpecInL{};
   std::array<sample, kMaxBlock> mSpecInR{};
 
-  // 频谱配置去重: 仅当采样率/FFT 尺寸/释放/下限/上升时间变化时才向 UI 控件重发 (OnIdle 节流)
+  // 频谱配置去重: 仅当采样率/FFT 尺寸/释放/下限/上升时间/低频 γ/BPO 变化时才向 UI 控件重发 (OnIdle 节流)
   double mSentSampleRate = 0.0;
   int mSentFFTSize = 0;
   double mSentRelease = -1.0;
   double mSentRange = -1.0;
   double mSentAttack = -1.0;
+  double mSentLfRes = -1.0;
+  double mSentBpo = -1.0;
 
   SpectrumPad *mSpectrumPad = nullptr;
+  ORMSlider *mBpoSlider = nullptr;
   ORMSlider *mResSlider = nullptr;
   ORMSlider *mRangeSlider = nullptr;
   ORMSlider *mAttackSlider = nullptr;
@@ -89,6 +92,7 @@ private:
   std::vector<std::pair<IControl *, int>> mTooltipBindings;
 
   void SendSpectrumConfig();
+  void SendResetToPad(); // 引擎配置重建 (γ/BPO/模式) 后通知 pad 清空平滑缓冲, 显示重新加载
 
   // 分析档位 -> 实际值 (参数存档位索引)
   int CurrentFFTSize() const {
@@ -98,6 +102,10 @@ private:
   int CurrentLfRes() const {
     const int idx = (int)std::clamp(GetParam(kLfRes)->Value(), 0.0, (double)kNumLfResOptions - 1);
     return kLfResOptions[idx];
+  }
+  int CurrentBpo() const {
+    const int idx = (int)std::clamp(GetParam(kBpo)->Value(), 0.0, (double)kNumBpoOptions - 1);
+    return kBpoOptions[idx];
   }
   void SendCQTBandFreqs();
   void UpdateResHeader();

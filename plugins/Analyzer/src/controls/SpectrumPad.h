@@ -42,6 +42,7 @@ public:
     kMsgTagAttack,
     kMsgTagMode,
     kMsgTagCQTBands,
+    kMsgTagReset, // 清空平滑缓冲, 显示从头加载 (γ/BPO/模式切换时由插件下发)
   };
 
   SpectrumPad(const IRECT &bounds) : IControl(bounds) {
@@ -108,9 +109,21 @@ public:
       SetDirty(false);
     } else if (msgTag == kMsgTagCQTBands) {
       const int n = dataSize / (int)sizeof(float);
+      // band 数变化 (如 BPO 12<->24): 旧平滑缓冲与新 band 语义不匹配, 清空重来,
+      // 避免新旧 band 数错位导致的显示错乱。
+      if (n != (int)mCQTFreqs.size()) {
+        for (int c = 0; c < 2; ++c)
+          mSpectrum[c].clear();
+      }
       mCQTFreqs.resize(n);
       if (n > 0)
         std::memcpy(mCQTFreqs.data(), pData, (size_t)n * sizeof(float));
+      SetDirty(false);
+    } else if (msgTag == kMsgTagReset) {
+      // 引擎配置已重建 (γ/BPO/模式切换): 平滑缓冲中的旧值不再代表当前 band 语义,
+      // 全部清零, 让频谱显示从空重新加载 —— 避免旧频谱与新车窗数据混叠/残影。
+      for (int c = 0; c < 2; ++c)
+        mSpectrum[c].assign(mSpectrum[c].size(), 0.f);
       SetDirty(false);
     }
   }
@@ -277,8 +290,13 @@ private:
     if (pts.size() < 2)
       return;
 
-    pts.front().x = mRECT.L + FreqNorm(kSpecFreqLo) * mRECT.W();
-    pts.back().x = mRECT.L + FreqNorm(kSpecFreqHi) * mRECT.W();
+    // 左侧恒贴边: 低频内容通常延伸到 20Hz, 缺失时也从左缘起底 (满幅"墙"观感,
+    // 也是原行为)。右侧仅在已贴近频段边缘时贴边; 若信号高频提前截止
+    // (如低通后只到 10kHz), 保持最右有数据点的真实 x, 填充在声音边缘垂直收口,
+    // 避免"最右声音点被拉到右缘再连到 pad 右下角"产生斜线/竖线假边缘。
+    pts.front().x = mRECT.L;
+    if (pts.back().x >= mRECT.R - mRECT.W() * 0.02f)
+      pts.back().x = mRECT.R;
 
     g.PathClear();
     g.PathMoveTo(pts[0].x, pts[0].y);

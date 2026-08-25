@@ -75,14 +75,15 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
   // Analyzer 目前为纯分析器: mix 参数保留自 BandPass, 作为撤销/重做、保存/读取的
   // 载体 (DSP 直通, 暂不参与处理); release/attack 参数控制频谱显示的释放/上升
   // 时间 (s); range 参数控制频谱显示下限 (-80..-120 dBFS, 存正数幅度);
-  // res/lfRes 为 FFT 尺寸 / CQT 低频分辨率档位索引 (映射见 Params.h);
-  // mode 选择分析引擎 (FFT / CQT)。
+  // res/lfRes/bpo 为 FFT 尺寸 / CQT 低频带宽下限 γ / CQT bins-per-octave 档位索引
+  // (映射见 Params.h); mode 选择分析引擎 (FFT / CQT)。
   GetParam(kMix)->InitDouble("Mix", 1., 0., 1., 0.01, "");
   GetParam(kRelease)->InitDouble("Release", 0.2, 0.05, 0.5, 0.01, "s");
   GetParam(kRange)->InitDouble("Range", 90, 80, 120, 10, "");
   GetParam(kAttack)->InitDouble("Attack", 0.05, 0.001, 0.1, 0.001, "s");
   GetParam(kRes)->InitInt("Res", kNumResOptions - 1, 0, kNumResOptions - 1, "");
   GetParam(kLfRes)->InitInt("LfRes", 0, 0, kNumLfResOptions - 1, "");
+  GetParam(kBpo)->InitInt("Bpo", kNumBpoOptions - 1, 0, kNumBpoOptions - 1, "");
   GetParam(kMode)->InitInt("Mode", kModeFFT, 0, 1, "");
 
   mDefaultSnapshot = Snapshot();
@@ -171,6 +172,13 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     // CPU 占用率显示 (右上角, 横向占满右列整行 156x30, 与按钮行同宽, 只读, 实时刷新)
     mCpuMeter = new CpuMeterControl(IRECT(kCol1X, 30, kPanelR, 60));
     pGraphics->AttachControl(mCpuMeter, kCtrlTagCpu);
+
+    // BPO (CQT bins per octave 档位 12/24, 仅 CQT 模式生效; 位于引擎切换按钮上方)
+    mBpoSlider =
+        new ORMSlider(IRECT(kCol1X, 140, kPanelR, 182), kBpo, "BPO", style, EDirection::Horizontal);
+    pGraphics->AttachControl(mBpoSlider);
+    bindText(orm::kTxtBpo, [this](const char *s) { mBpoSlider->SetHeaderLabel(s); });
+    bindTip(mBpoSlider, orm::kTxtTipBpo);
 
     // 分析引擎切换按钮 (FFT / CQT, 与 CPU 框同宽; CQT 时黑底白字,
     // 样式参考 BandPass 的 LINK 按钮 = FlatToggleControl)
@@ -381,7 +389,8 @@ void ORMAnalyzer::ProcessBlock(sample **inputs, sample **outputs, int nFrames) {
 void ORMAnalyzer::OnReset() {
   mSpectrum.SetFFTSizeAndOverlap(CurrentFFTSize(), 4);
   mCQT.SetSampleRate(GetSampleRate());
-  mCQT.SetLfRes(CurrentLfRes());
+  mCQT.SetGamma(CurrentLfRes());
+  mCQT.SetBpo(CurrentBpo());
 
   SendSpectrumConfig();
   mSentSampleRate = GetSampleRate();
@@ -414,6 +423,11 @@ void ORMAnalyzer::SendCQTBandFreqs() {
                              (int)(buf.size() * sizeof(float)), buf.data());
 }
 
+void ORMAnalyzer::SendResetToPad() {
+  const int dummy = 0;
+  SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagReset, sizeof(int), &dummy);
+}
+
 void ORMAnalyzer::UpdateResHeader() {
   if (!mResSlider)
     return;
@@ -426,9 +440,17 @@ void ORMAnalyzer::OnParamChange(int paramIdx, EParamSource source, int sampleOff
   // 分析配置变化时在音频线程重配对应引擎 (重建会清空频谱历史, 显示短暂清零)
   if (paramIdx == kRes)
     mSpectrum.SetFFTSizeAndOverlap(CurrentFFTSize(), 4);
-  else if (paramIdx == kLfRes)
-    mCQT.SetLfRes(CurrentLfRes());
-  // kMode: DSP 路由在 ProcessBlock 按参数分支, 无需额外动作
+  else if (paramIdx == kLfRes) {
+    // SetGamma 仅在 γ 档位实际变化 (40/20/10 之间跨越) 时重建并返回 true;
+    // 拖动过程中参数值连续经过同档内的小数 (如 0.9->1.1 仍属同档区间) 不会重建,
+    // 也就不会误发 Reset 导致频谱连续闪烁。
+    if (mCQT.SetGamma(CurrentLfRes()))
+      SendResetToPad();
+  } else if (paramIdx == kBpo && GetParam(kMode)->Value() > 0.5) {
+    if (mCQT.SetBpo(CurrentBpo()))
+      SendResetToPad();
+  }
+  // kMode: DSP 路由在 ProcessBlock 按参数分支, 无需额外动作 (OnIdle 同步模式时也会 reset)
 }
 
 void ORMAnalyzer::OnParamChangeUI(int paramIdx, EParamSource source) {
@@ -456,7 +478,8 @@ void ORMAnalyzer::OnIdle() {
   mSpectrum.TransmitData(*this);
   mCQT.TransmitData(*this);
 
-  // 分析模式变化: 切换滑块参数 (RES<->LF RES)、重发 pad 模式消息与 band 频率表
+  // 分析模式变化: 切换滑块参数 (RES<->LF RES)、重发 pad 模式消息与 band 频率表,
+  // 并清空 pad 平滑缓冲 (FFT bins 与 CQT bands 语义不同, 不能混叠)
   const int mode = (int)GetParam(kMode)->Value();
   if (mode != mSentMode) {
     mSentMode = mode;
@@ -465,23 +488,29 @@ void ORMAnalyzer::OnIdle() {
       UpdateResHeader();
     }
     SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagMode, sizeof(int), &mode);
+    SendResetToPad();
     if (mode == kModeCQT)
       SendCQTBandFreqs();
   }
 
-  // 仅在采样率/FFT 尺寸/释放/下限/上升时间变化时重发 (如 UI 在 OnReset 之后才打开)
+  // 仅在采样率/FFT 尺寸/释放/下限/上升时间/低频 γ/BPO 变化时重发
+  // (如 UI 在 OnReset 之后才打开; γ/BPO 变化时同步刷新 CQT band 频率表)
   const double sr = GetSampleRate();
   const int fftSize = CurrentFFTSize();
   const double release = GetParam(kRelease)->Value();
   const double range = GetParam(kRange)->Value();
   const double attack = GetParam(kAttack)->Value();
+  const double lfRes = GetParam(kLfRes)->Value();
+  const double bpo = GetParam(kBpo)->Value();
   if (sr != mSentSampleRate || fftSize != mSentFFTSize || release != mSentRelease ||
-      range != mSentRange || attack != mSentAttack) {
+      range != mSentRange || attack != mSentAttack || lfRes != mSentLfRes || bpo != mSentBpo) {
     mSentSampleRate = sr;
     mSentFFTSize = fftSize;
     mSentRelease = release;
     mSentRange = range;
     mSentAttack = attack;
+    mSentLfRes = lfRes;
+    mSentBpo = bpo;
     SendSpectrumConfig();
   }
 
@@ -498,6 +527,7 @@ void ORMAnalyzer::OnIdle() {
 
 void ORMAnalyzer::OnUIClose() {
   mSpectrumPad = nullptr;
+  mBpoSlider = nullptr;
   mResSlider = nullptr;
   mRangeSlider = nullptr;
   mAttackSlider = nullptr;
@@ -515,6 +545,8 @@ void ORMAnalyzer::OnUIClose() {
   mSentMode = -1;
   mSentRange = -1.0;
   mSentAttack = -1.0;
+  mSentLfRes = -1.0;
+  mSentBpo = -1.0;
 }
 
 void ORMAnalyzer::OnParentWindowResize(int width, int height) {
@@ -644,13 +676,14 @@ void ORMAnalyzer::ReadStateFileFrom(const std::string &path, std::string &err) {
   if (!ReadStateFile(path, data, err))
     return;
 
-  if ((int)data.values.size() != kNumParams) {
+  // 兼容旧文件: 参数数少于当前版本时, 缺失项用默认值 (新参数自动取默认档)
+  if ((int)data.values.size() > kNumParams) {
     err = "Parameter count mismatch (expected " + std::to_string(kNumParams) + ")";
     return;
   }
 
   ParamSnapshot s = mDefaultSnapshot;
-  for (int i = 0; i < kNumParams; ++i)
+  for (int i = 0; i < (int)data.values.size(); ++i)
     s[i] = data.values[i];
 
   PushUndo();

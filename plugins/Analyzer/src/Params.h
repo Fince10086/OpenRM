@@ -6,7 +6,8 @@
 //
 // Analyzer 是从 BandPass 减出来的第一步: mix 参数 (撤销/重做、保存/读取的载体),
 // release/attack 参数 (频谱显示释放/上升时间), range 参数 (频谱显示下限 dBFS 幅度),
-// res/lfRes 参数 (FFT 尺寸 / CQT 低频分辨率档位), mode 参数 (分析引擎选择)。
+// res/lfRes/bpo 参数 (FFT 尺寸 / CQT 低频带宽下限 γ / CQT bins-per-octave 档位),
+// mode 参数 (分析引擎选择)。
 
 #include <array>
 
@@ -17,6 +18,7 @@ enum EParams {
   kAttack,
   kRes,
   kLfRes,
+  kBpo,
   kMode,
   kNumParams
 };
@@ -28,6 +30,8 @@ constexpr int kResOptions[] = {1024, 2048, 4096};
 constexpr int kNumResOptions = 3;
 constexpr int kLfResOptions[] = {40, 20, 10};
 constexpr int kNumLfResOptions = 3;
+constexpr int kBpoOptions[] = {12, 24};
+constexpr int kNumBpoOptions = 2;
 
 // 分析引擎
 enum EAnalyzerMode { kModeFFT = 0, kModeCQT = 1 };
