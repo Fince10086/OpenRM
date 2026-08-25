@@ -220,7 +220,7 @@ protected:
             re += x[j] * kr[j];
             im += x[j] * ki[j];
           }
-          mag = std::sqrt(re * re + im * im) * bd.wsumInv * bd.invSqrtBw;
+          mag = std::sqrt(re * re + im * im) * bd.wsumInv;
           rs.last = mag;
           rs.phase = bd.advance;
         } else {
@@ -237,7 +237,6 @@ private:
   struct Band {
     int layer;                    // 金字塔层号 (D = 1<<layer)
     float wsumInv;                // 4/winLen: 恢复输入幅度
-    float invSqrtBw;              // 1/sqrt(Bk): 功率密度归一化
     int winLen;                   // 该层速率下窗长 (样本) = fsL/Bk (下限: ≥~4 个 fc 周期)
     int advance;                  // 每 advance 帧重算一次 (包络奈奎斯特: 1/(2·Bk)/帧周期)
     int readOff;                  // 窗从层缓冲尾部前移的样本数 (跨层延迟对齐, 0..8)
@@ -350,7 +349,6 @@ private:
     bd.layer = L;
     bd.winLen = wl;
     bd.wsumInv = (float)(4.0 / wl);
-    bd.invSqrtBw = (float)(1.0 / std::sqrt(bw));
     // 包络更新节奏: band 输出带宽 ≈ Bk, 包络奈奎斯特 = 2·Bk; 每帧时长 kHop/fs。
     // 只有 Bk < fs/(2·kHop)(约23Hz@48k) 时才有必要隔帧重算, 否则恒为 1 (默认 γ≥20 全为 1)。
     bd.advance = std::max(1, (int)std::lround(fs / (2.0 * bw * kHop)));
