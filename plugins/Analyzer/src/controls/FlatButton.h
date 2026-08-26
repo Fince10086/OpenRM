@@ -81,13 +81,21 @@ public:
   using InvertToggleControl::InvertToggleControl;
 
   void Draw(IGraphics &g) override {
-    const IRECT b = GetWidgetBounds();
+    const IRECT b = mRECT;
     const bool on = GetValue() > 0.5;
     g.FillRect(on ? COL_900() : COL_300(), b);
     // hover: 半透明叠层 (替代原换色), on 时不叠加
     if (!on && GetMouseIsOver())
       g.FillRect(HoverOverlay(), b);
     DrawValue(g, false);
+  }
+
+  void DrawValue(IGraphics &g, bool) override {
+    const bool on = GetValue() > 0.5;
+    IText t = mStyle.valueText;
+    t.mFGColor = on ? COL_100() : COL_900();
+    strcpy(t.mFont, kFontSemiBold);
+    g.DrawText(t, on ? mOnText.Get() : mOffText.Get(), mRECT, &mBlend);
   }
 };
 

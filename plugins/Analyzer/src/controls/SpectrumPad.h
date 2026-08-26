@@ -603,7 +603,7 @@ private:
   float mReleaseCoeff = 0.9f;
   float mAttackSec = 0.05f; // 上升时间常数 (s), 由插件 Attack 参数下发
   float mReleaseSec = 0.2f; // 释放时间常数 (s), 由插件 Release 参数下发
-  float mBottomDb = -90.f;  // 频谱显示下限 (dBFS), 由插件 Range 参数下发 (-80..-120)
+  float mBottomDb = -100.f; // 频谱显示下限 (dBFS), 由插件 Range 参数下发 (-80/-100/-120); 初始与参数默认一致
   int mNumBins = 2048;
   double mSampleRate = 48000.0;
 

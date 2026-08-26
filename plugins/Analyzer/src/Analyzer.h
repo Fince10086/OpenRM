@@ -83,7 +83,8 @@ private:
 
   SpectrumPad *mSpectrumPad = nullptr;
   ORMSlider *mBpoSlider = nullptr;
-  ORMSlider *mResSlider = nullptr;
+  FlatCycleButton *mResBtn = nullptr;   // FFT 分辨率循环按钮 (LOW/MID/HIGH)
+  FlatCycleButton *mLfResBtn = nullptr; // VQT 低频分辨率循环按钮 (LOW/MID/HIGH)
   FlatCycleButton *mRangeBtn = nullptr; // 动态范围循环按钮 (刻度底部 80/100/120)
   ORMSlider *mAttackSlider = nullptr;
   ORMSlider *mReleaseSlider = nullptr;
@@ -143,7 +144,6 @@ private:
     return kRangeDb[idx];
   }
   void SendVQTBandFreqs();
-  void UpdateResHeader();
 
   void SetParamFromEditor(int idx, double value);
   void RefreshAfterEdit();

@@ -9,7 +9,7 @@ enum EParams {
   kRelease,       // 频谱回落释放时间 (s)
   kRange,         // 频谱显示动态范围下限 (dBFS)
   kAttack,        // 频谱上升响应时间 (s)
-  kRes,           // FFT 分辨率档位 (1024/2048/4096)
+  kRes,           // FFT 分辨率档位 (2048/4096/8192)
   kLfRes,         // VQT 低频带宽保底 γ 档位 (低/中/高: 20/10/5 Hz)
   kBpo,           // VQT 每八度频带数 (12/24)
   kMode,          // 分析引擎模式 (0: FFT, 1: VQT)
@@ -22,7 +22,7 @@ enum EParams {
 using ParamSnapshot = std::array<double, kNumParams>;
 
 // 算法档位可选值列表（参数实际存储对应的索引）
-constexpr int kResOptions[] = {1024, 2048, 4096};
+constexpr int kResOptions[] = {2048, 4096, 8192};
 constexpr int kNumResOptions = 3;
 constexpr int kLfResOptions[] = {20, 10, 5};
 constexpr int kNumLfResOptions = 3;
