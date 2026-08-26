@@ -114,7 +114,7 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
   GetParam(kRes)->InitInt("Res", 1, 0, kNumResOptions - 1, ""); // 默认 MID (4096)
   GetParam(kLfRes)->InitInt("LfRes", 0, 0, kNumLfResOptions - 1, "");
   GetParam(kBpo)->InitInt("Bpo", kNumBpoOptions - 1, 0, kNumBpoOptions - 1, "");
-  GetParam(kMode)->InitInt("Mode", kModeFFT, 0, 1, "");
+  GetParam(kMode)->InitInt("Mode", kModeFFT, 0, kNumModes - 1, "");
   GetParam(kChannelMode)->InitInt("ChanMode", kChanModeLR, 0, kNumChanModes - 1, "");
   GetParam(kLevelMode)->InitInt("LevelMode", kLevelModeDBTP, 0, kNumLevelModes - 1, "");
   GetParam(kLevelHold)->InitDouble("LevelHold", 2., 0., 5., 0.1, "s");
@@ -201,7 +201,7 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     constexpr float kCol2X = kCol1X + kBtnW + kBtnGap; // 右列按钮左缘
     constexpr float kPanelR = kCol2X + kBtnW;
 
-    // 顶部三按钮 (LR / FFT·VQT / RES) 统一尺寸: 宽 62 高 26, 容纳 HIGH/PWR 文字 + 基础内边距
+    // 顶部三按钮 (LR / FFT·VQT·PAZ / RES) 统一尺寸: 宽 62 高 26, 容纳 HIGH/PWR 文字 + 基础内边距
     constexpr float kTopBtnW = 62.f;
     constexpr float kTopBtnH = 26.f;
     constexpr float kTopBtnY = 22.f;
@@ -217,17 +217,14 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     pGraphics->AttachControl(mChanModeBtn);
     bindTip(mChanModeBtn, orm::kTxtTipChanMode);
 
-    // 分析引擎切换按钮 (FFT / VQT) — LR 右侧, 留 kTopBtnGap 空隙
+    // 分析引擎切换按钮 (FFT / VQT / PAZ) — LR 右侧, 留 kTopBtnGap 空隙
     constexpr float kModeX = 20.f + kTopBtnW + kTopBtnGap;
-    IVStyle toggleStyle = btnStyle;
-    toggleStyle.showLabel = false;
-    toggleStyle.showValue = false;
-    mModeToggle = new FlatToggleControl(IRECT(kModeX, kTopBtnY, kModeX + kTopBtnW, kTopBtnY + kTopBtnH),
-                                        kMode, " ", toggleStyle, "FFT", "VQT");
-    pGraphics->AttachControl(mModeToggle);
-    bindTip(mModeToggle, orm::kTxtTipMode);
+    mModeBtn = new FlatCycleButton(IRECT(kModeX, kTopBtnY, kModeX + kTopBtnW, kTopBtnY + kTopBtnH),
+                                   kMode, {"FFT", "VQT", "PAZ"}, btnStyle);
+    pGraphics->AttachControl(mModeBtn);
+    bindTip(mModeBtn, orm::kTxtTipMode);
 
-    // FFT 分辨率循环按钮 (LOW/MID/HIGH = 2048/4096/8192) — 紧贴 FFT 按钮右侧, 仅 FFT 模式可见
+    // FFT 分辨率循环按钮 (LOW/MID/HIGH = 2048/4096/8192) — 紧贴 Mode 按钮右侧, 仅 FFT 模式可见
     constexpr float kResX = kModeX + kTopBtnW;
     mResBtn = new FlatCycleButton(IRECT(kResX, kTopBtnY, kResX + kTopBtnW, kTopBtnY + kTopBtnH), kRes,
                                   {"LOW", "MID", "HIGH"}, btnStyle);
@@ -240,6 +237,13 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     pGraphics->AttachControl(mLfResBtn);
     bindTip(mLfResBtn, orm::kTxtTipLfRes);
     mLfResBtn->Hide(true); // 默认 FFT 模式, 初始隐藏
+
+    // PAZ 低频分辨率循环按钮 (40/20/10 Hz) — 同位置, 仅 PAZ 模式可见
+    mPazLfResBtn = new FlatCycleButton(IRECT(kResX, kTopBtnY, kResX + kTopBtnW, kTopBtnY + kTopBtnH), kLfRes,
+                                       {"40Hz", "20Hz", "10Hz"}, btnStyle);
+    pGraphics->AttachControl(mPazLfResBtn);
+    bindTip(mPazLfResBtn, orm::kTxtTipLfRes);
+    mPazLfResBtn->Hide(true);
 
     // 主频谱绘制区域
     mSpectrumPad = new SpectrumPad(IRECT(20, 58, 668, 328));
@@ -462,8 +466,8 @@ void ORMAnalyzer::ProcessBlock(sample **inputs, sample **outputs, int nFrames) {
       std::memcpy(outputs[c], outputs[0], nFrames * sizeof(sample));
   }
 
-  // 采集输入数据到当前分析引擎 (FFT 或 VQT)
-  const bool vqt = GetParam(kMode)->Value() > 0.5;
+  // 采集输入数据到当前分析引擎 (FFT, VQT 或 PAZ)
+  const int mode = (int)GetParam(kMode)->Value();
   if (nIns >= 2) {
     std::memcpy(mSpecInL.data(), inputs[0], nFrames * sizeof(sample));
     std::memcpy(mSpecInR.data(), inputs[1], nFrames * sizeof(sample));
@@ -471,8 +475,10 @@ void ORMAnalyzer::ProcessBlock(sample **inputs, sample **outputs, int nFrames) {
     for (int s = 0; s < nFrames; ++s)
       mSpecInM[s] = (mSpecInL[s] + mSpecInR[s]) * 0.7071067811865475;
     sample *spec[3] = {mSpecInL.data(), mSpecInR.data(), mSpecInM.data()};
-    if (vqt)
+    if (mode == kModeVQT)
       mVQT.ProcessBlock(spec, nFrames, kCtrlTagPad, 3);
+    else if (mode == kModePAZ)
+      mPAZ.ProcessBlock(spec, nFrames, kCtrlTagPad, 3);
     else
       mSpectrum.ProcessBlock(spec, nFrames, kCtrlTagPad, 3);
   } else {
@@ -481,8 +487,10 @@ void ORMAnalyzer::ProcessBlock(sample **inputs, sample **outputs, int nFrames) {
     for (int s = 0; s < nFrames; ++s)
       mSpecInM[s] = mSpecInL[s] * 0.7071067811865475;
     sample *spec[3] = {mSpecInL.data(), mSpecInR.data(), mSpecInM.data()};
-    if (vqt)
+    if (mode == kModeVQT)
       mVQT.ProcessBlock(spec, nFrames, kCtrlTagPad, 3);
+    else if (mode == kModePAZ)
+      mPAZ.ProcessBlock(spec, nFrames, kCtrlTagPad, 3);
     else
       mSpectrum.ProcessBlock(spec, nFrames, kCtrlTagPad, 3);
   }
@@ -530,6 +538,8 @@ void ORMAnalyzer::OnReset() {
   mVQT.SetSampleRate(GetSampleRate());
   mVQT.SetGamma(CurrentLfRes());
   mVQT.SetBpo(CurrentBpo());
+  mPAZ.SetSampleRate(GetSampleRate());
+  mPAZ.SetLfWidth(CurrentPazLfRes());
   mLevelSetSR.store(GetSampleRate(), std::memory_order_relaxed); // 音频线程下一 block 执行 SetSampleRate+Reset
   mPeakL.store(0.f, std::memory_order_relaxed);
   mPeakR.store(0.f, std::memory_order_relaxed);
@@ -555,6 +565,8 @@ void ORMAnalyzer::SendSpectrumConfig() {
   SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagMode, sizeof(int), &mode);
   if (mode == kModeVQT)
     SendVQTBandFreqs();
+  else if (mode == kModePAZ)
+    SendPAZBandFreqs();
 }
 
 void ORMAnalyzer::SendVQTBandFreqs() {
@@ -563,6 +575,15 @@ void ORMAnalyzer::SendVQTBandFreqs() {
     return;
   std::vector<float> buf(freqs.begin(), freqs.end());
   SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagVQTBands,
+                             (int)(buf.size() * sizeof(float)), buf.data());
+}
+
+void ORMAnalyzer::SendPAZBandFreqs() {
+  const auto &freqs = mPAZ.BandFreqs();
+  if (freqs.empty())
+    return;
+  std::vector<float> buf(freqs.begin(), freqs.end());
+  SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagPAZBands,
                              (int)(buf.size() * sizeof(float)), buf.data());
 }
 
@@ -576,9 +597,14 @@ void ORMAnalyzer::OnParamChange(int paramIdx, EParamSource source, int sampleOff
   if (paramIdx == kRes)
     mSpectrum.SetFFTSizeAndOverlap(CurrentFFTSize(), 4);
   else if (paramIdx == kLfRes) {
-    if (mVQT.SetGamma(CurrentLfRes()))
-      SendResetToPad();
-  } else if (paramIdx == kBpo && GetParam(kMode)->Value() > 0.5) {
+    if (GetParam(kMode)->Value() > 1.5) { // PAZ 模式
+      if (mPAZ.SetLfWidth(CurrentPazLfRes()))
+        SendResetToPad();
+    } else { // VQT 模式
+      if (mVQT.SetGamma(CurrentLfRes()))
+        SendResetToPad();
+    }
+  } else if (paramIdx == kBpo && GetParam(kMode)->Value() > 0.5 && GetParam(kMode)->Value() < 1.5) {
     if (mVQT.SetBpo(CurrentBpo()))
       SendResetToPad();
   } else if (paramIdx == kLevelMode) {
@@ -615,22 +641,26 @@ void ORMAnalyzer::OnIdle() {
   mLastIdleTp = wallNow;
   const uint64_t workT0 = ThreadCpuNs(); // UI 线程实际 CPU 时间基线 (不含被抢占)
 
-  // 若 VQT 参数发生变动，按需重建频带表与多速率金字塔
+  // 若 VQT 或 PAZ 参数发生变动，按需重建频带表与多速率金字塔
   mVQT.CheckRebuild();
+  mPAZ.CheckRebuild();
 
-  // 模式切换处理 (FFT <-> VQT)
+  // 模式切换处理 (FFT / VQT / PAZ)
   const int mode = (int)GetParam(kMode)->Value();
   if (mode != mSentMode) {
     mSentMode = mode;
-    if (mResBtn && mLfResBtn) {
-      const bool vqt = (mode == kModeVQT);
-      mResBtn->Hide(vqt);
-      mLfResBtn->Hide(!vqt);
+    if (mResBtn && mLfResBtn && mPazLfResBtn && mBpoSlider) {
+      mResBtn->Hide(mode != kModeFFT);
+      mLfResBtn->Hide(mode != kModeVQT);
+      mPazLfResBtn->Hide(mode != kModePAZ);
+      mBpoSlider->Hide(mode != kModeVQT);
     }
     SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagMode, sizeof(int), &mode);
     SendResetToPad();
     if (mode == kModeVQT)
       SendVQTBandFreqs();
+    else if (mode == kModePAZ)
+      SendPAZBandFreqs();
   }
 
   // 声道显示模式 (三态 LR/PWR/SUM) 变动检测, 派生 chanMode + mergeAlgo 一并下发
@@ -672,6 +702,7 @@ void ORMAnalyzer::OnIdle() {
   // 执行频谱分析计算并将数据发送给 UI 控件
   mSpectrum.TransmitData(*this);
   mVQT.TransmitData(*this);
+  mPAZ.TransmitData(*this);
 
   // 转发电平表数据给表头区 (LevelMeterUiData, 含模式/保持时长/过载锁存)
   {
@@ -720,11 +751,12 @@ void ORMAnalyzer::OnUIClose() {
   mBpoSlider = nullptr;
   mResBtn = nullptr;
   mLfResBtn = nullptr;
+  mPazLfResBtn = nullptr;
   mRangeBtn = nullptr;
   mAttackSlider = nullptr;
   mReleaseSlider = nullptr;
   mCpuMeter = nullptr;
-  mModeToggle = nullptr;
+  mModeBtn = nullptr;
   mChanModeBtn = nullptr;
   mLevelModeBtn = nullptr;
   mLevelResetBtn = nullptr;

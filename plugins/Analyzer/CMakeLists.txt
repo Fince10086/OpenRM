@@ -23,6 +23,8 @@ openrm_add_plugin(${PROJECT_NAME}
     src/Theme.h
     src/Strings.h
     src/dsp/SpectrumSTFT.h
+    src/dsp/VQTAnalyzer.h
+    src/dsp/PAZAnalyzer.h
     src/dsp/LevelMeter.h
     src/controls/UiUtils.h
     src/controls/ThemeCornerResizer.h

@@ -25,11 +25,13 @@ constexpr int kResOptions[] = {2048, 4096, 8192};
 constexpr int kNumResOptions = 3;
 constexpr int kLfResOptions[] = {20, 10, 5};
 constexpr int kNumLfResOptions = 3;
+constexpr int kPazLfResOptions[] = {40, 20, 10};
+constexpr int kNumPazLfResOptions = 3;
 constexpr int kBpoOptions[] = {12, 24};
 constexpr int kNumBpoOptions = 2;
 
 // 分析引擎模式
-enum EAnalyzerMode { kModeFFT = 0, kModeVQT = 1 };
+enum EAnalyzerMode { kModeFFT = 0, kModeVQT = 1, kModePAZ = 2, kNumModes = 3 };
 
 // 声道显示模式 (三态: LR / PWR(Merge) / SUM(Merge))
 enum EChannelMode { kChanModeLR = 0, kChanModePWR = 1, kChanModeSUM = 2, kNumChanModes = 3 };

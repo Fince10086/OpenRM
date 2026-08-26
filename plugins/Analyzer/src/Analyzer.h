@@ -4,6 +4,7 @@
 #include "Params.h"
 #include "dsp/SpectrumSTFT.h"
 #include "dsp/VQTAnalyzer.h"
+#include "dsp/PAZAnalyzer.h"
 #include "dsp/LevelMeter.h"
 #include "Strings.h"
 
@@ -51,6 +52,7 @@ public:
 private:
   SpectrumSTFT<3> mSpectrum;
   VQTAnalyzer<3> mVQT;
+  PAZAnalyzer<3> mPAZ;
 
   static constexpr int kMaxBlock = 16384;
   std::array<sample, kMaxBlock> mSpecInL{};
@@ -85,13 +87,14 @@ private:
 
   SpectrumPad *mSpectrumPad = nullptr;
   ORMSlider *mBpoSlider = nullptr;
-  FlatCycleButton *mResBtn = nullptr;   // FFT 分辨率循环按钮 (LOW/MID/HIGH)
-  FlatCycleButton *mLfResBtn = nullptr; // VQT 低频分辨率循环按钮 (LOW/MID/HIGH)
-  FlatCycleButton *mRangeBtn = nullptr; // 动态范围循环按钮 (刻度底部 80/100/120)
+  FlatCycleButton *mResBtn = nullptr;      // FFT 分辨率循环按钮 (LOW/MID/HIGH)
+  FlatCycleButton *mLfResBtn = nullptr;    // VQT 低频分辨率循环按钮 (LOW/MID/HIGH: 20/10/5 Hz)
+  FlatCycleButton *mPazLfResBtn = nullptr; // PAZ 低频分辨率循环按钮 (40/20/10 Hz)
+  FlatCycleButton *mRangeBtn = nullptr;    // 动态范围循环按钮 (刻度底部 80/100/120)
   ORMSlider *mAttackSlider = nullptr;
   ORMSlider *mReleaseSlider = nullptr;
   CpuMeterControl *mCpuMeter = nullptr;
-  FlatToggleControl *mModeToggle = nullptr;
+  FlatCycleButton *mModeBtn = nullptr;
   FlatCycleButton *mChanModeBtn = nullptr;
   FlatCycleButton *mLevelModeBtn = nullptr;
   IVButtonControl *mLevelResetBtn = nullptr;
@@ -132,6 +135,10 @@ private:
     const int idx = (int)std::clamp(GetParam(kLfRes)->Value(), 0.0, (double)kNumLfResOptions - 1);
     return kLfResOptions[idx];
   }
+  int CurrentPazLfRes() const {
+    const int idx = (int)std::clamp(GetParam(kLfRes)->Value(), 0.0, (double)kNumPazLfResOptions - 1);
+    return kPazLfResOptions[idx];
+  }
   int CurrentBpo() const {
     const int idx = (int)std::clamp(GetParam(kBpo)->Value(), 0.0, (double)kNumBpoOptions - 1);
     return kBpoOptions[idx];
@@ -145,6 +152,7 @@ private:
     return kRangeDb[idx];
   }
   void SendVQTBandFreqs();
+  void SendPAZBandFreqs();
 
   void SetParamFromEditor(int idx, double value);
   void RefreshAfterEdit();
