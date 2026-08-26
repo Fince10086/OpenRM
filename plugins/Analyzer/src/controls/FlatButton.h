@@ -17,6 +17,10 @@ public:
   FlatActionButton(const IRECT &bounds, IActionFunction aF, const char *label, const IVStyle &style)
       : IVButtonControl(bounds, aF, label, style) {}
 
+  // 快速连击: 偶数次点击会被平台识别为双击, 若不处理会走 IControl 默认的
+  // SetValueToDefault (重置参数), 导致丢一次响应。双击视为再次按下。
+  void OnMouseDblClick(float x, float y, const IMouseMod &mod) override { OnMouseDown(x, y, mod); }
+
   void Draw(IGraphics &g) override {
     const IRECT b = GetWidgetBounds();
     const bool pressed = GetValue() > 0.5;
@@ -58,6 +62,9 @@ public:
     SetDirty(false);
   }
 
+  // 快速连击: 偶数次点击走双击, 转发为按下 (切换), 避免重置默认
+  void OnMouseDblClick(float x, float y, const IMouseMod &mod) override { OnMouseDown(x, y, mod); }
+
   void DrawValue(IGraphics &g, bool) override {
     const bool on = GetValue() > 0.5;
     IText t = mStyle.valueText;
@@ -97,6 +104,9 @@ public:
       SetValueFromUserInput(norm);
     }
   }
+
+  // 快速连击: 偶数次点击走双击, 转发为按下 (循环切换), 避免重置默认
+  void OnMouseDblClick(float x, float y, const IMouseMod &mod) override { OnMouseDown(x, y, mod); }
 
   // 与界面背景色同灰度的按钮文字色 (浅色主题接近白但非纯白, 深色主题对应变深)
   static IColor SplitBtnTextColor() {
