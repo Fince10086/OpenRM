@@ -437,6 +437,7 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     mSentBpo = GetParam(kBpo)->Value();
     mSentMode = (int)GetParam(kMode)->Value();
     mSentChanMode = (int)GetParam(kChannelMode)->Value();
+    mUIOpen.store(true, std::memory_order_release);
   };
 #endif
 }
@@ -451,19 +452,38 @@ void ORMAnalyzer::ProcessBlock(sample **inputs, sample **outputs, int nFrames) {
 
   // 音频直通（分析器不改变音频信号）
   if (nOuts >= 2 && nIns >= 2) {
-    std::memcpy(outputs[0], inputs[0], nFrames * sizeof(sample));
-    std::memcpy(outputs[1], inputs[1], nFrames * sizeof(sample));
-    for (int c = 2; c < nOuts; ++c)
-      std::memcpy(outputs[c], inputs[c], nFrames * sizeof(sample));
+    if (outputs[0] != inputs[0])
+      std::memcpy(outputs[0], inputs[0], nFrames * sizeof(sample));
+    if (outputs[1] != inputs[1])
+      std::memcpy(outputs[1], inputs[1], nFrames * sizeof(sample));
+    for (int c = 2; c < nOuts; ++c) {
+      if (outputs[c] != inputs[c])
+        std::memcpy(outputs[c], inputs[c], nFrames * sizeof(sample));
+    }
   } else if (nOuts >= 2) {
-    std::memcpy(outputs[0], inputs[0], nFrames * sizeof(sample));
+    if (outputs[0] != inputs[0])
+      std::memcpy(outputs[0], inputs[0], nFrames * sizeof(sample));
     std::memcpy(outputs[1], inputs[0], nFrames * sizeof(sample));
-    for (int c = 2; c < nOuts; ++c)
-      std::memcpy(outputs[c], outputs[0], nFrames * sizeof(sample));
+    for (int c = 2; c < nOuts; ++c) {
+      if (outputs[c] != outputs[0])
+        std::memcpy(outputs[c], outputs[0], nFrames * sizeof(sample));
+    }
   } else {
-    std::memcpy(outputs[0], inputs[0], nFrames * sizeof(sample));
-    for (int c = 1; c < nOuts; ++c)
-      std::memcpy(outputs[c], outputs[0], nFrames * sizeof(sample));
+    if (outputs[0] != inputs[0])
+      std::memcpy(outputs[0], inputs[0], nFrames * sizeof(sample));
+    for (int c = 1; c < nOuts; ++c) {
+      if (outputs[c] != outputs[0])
+        std::memcpy(outputs[c], outputs[0], nFrames * sizeof(sample));
+    }
+  }
+
+  // 若 UI 未打开 (或处于后台休眠状态), 挂起所有高开销分析 (FFT/VQT/PAZ/LevelMeter), 耗时直接归零
+  if (!mUIOpen.load(std::memory_order_relaxed)) {
+    const double processMs = (double)(ThreadCpuNs() - cpuT0) / 1e6;
+    const double blockMs = (double)nFrames / std::max(GetSampleRate(), 1.0) * 1000.0;
+    if (blockMs > 0.0)
+      mCpuAudio += (processMs / blockMs - mCpuAudio) * 0.1;
+    return;
   }
 
   // 采集输入数据到当前分析引擎 (FFT, VQT 或 PAZ)
@@ -635,6 +655,9 @@ void ORMAnalyzer::RefreshAfterEdit() {
 }
 
 void ORMAnalyzer::OnIdle() {
+  if (!mUIOpen.load(std::memory_order_relaxed))
+    return;
+
   using namespace std::chrono;
   const auto wallNow = steady_clock::now();
   const double idleGapMs = duration<double, std::milli>(wallNow - mLastIdleTp).count();
@@ -752,7 +775,15 @@ void ORMAnalyzer::OnIdle() {
   }
 }
 
+void ORMAnalyzer::OnUIOpen() {
+  mUIOpen.store(true, std::memory_order_release);
+#if IPLUG_EDITOR
+  Plugin::OnUIOpen();
+#endif
+}
+
 void ORMAnalyzer::OnUIClose() {
+  mUIOpen.store(false, std::memory_order_release);
   mSpectrumPad = nullptr;
   mBpoSlider = nullptr;
   mResBtn = nullptr;

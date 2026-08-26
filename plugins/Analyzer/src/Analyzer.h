@@ -45,11 +45,14 @@ public:
   void OnParamChangeUI(int paramIdx, EParamSource source) override;
 #endif
   void OnIdle() override;
+  void OnUIOpen() override;
   void OnUIClose() override;
   void OnParentWindowResize(int width, int height) override;
   bool ConstrainEditorResize(int &w, int &h) const override;
 
 private:
+  std::atomic<bool> mUIOpen{false};
+
   SpectrumSTFT<3> mSpectrum;
   VQTAnalyzer<3> mVQT;
   PAZAnalyzer<3> mPAZ;
