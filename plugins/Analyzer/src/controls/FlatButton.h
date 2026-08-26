@@ -24,8 +24,10 @@ public:
   void Draw(IGraphics &g) override {
     const IRECT b = GetWidgetBounds();
     const bool pressed = GetValue() > 0.5;
-    const IColor fill = pressed ? COL_900() : GetMouseIsOver() ? COL_500() : COL_300();
-    g.FillRect(fill, b);
+    g.FillRect(pressed ? COL_900() : COL_300(), b);
+    // hover: 半透明叠层 (替代原换色), pressed 时不叠加
+    if (!pressed && GetMouseIsOver())
+      g.FillRect(HoverOverlay(), b);
     IText t = mStyle.valueText;
     t.mFGColor = pressed ? COL_100() : COL_900();
     strcpy(t.mFont, kFontSemiBold);
@@ -81,8 +83,10 @@ public:
   void Draw(IGraphics &g) override {
     const IRECT b = GetWidgetBounds();
     const bool on = GetValue() > 0.5;
-    const IColor fill = on ? COL_900() : GetMouseIsOver() ? COL_500() : COL_300();
-    g.FillRect(fill, b);
+    g.FillRect(on ? COL_900() : COL_300(), b);
+    // hover: 半透明叠层 (替代原换色), on 时不叠加
+    if (!on && GetMouseIsOver())
+      g.FillRect(HoverOverlay(), b);
     DrawValue(g, false);
   }
 };
@@ -143,15 +147,19 @@ public:
         if (idx < num)
           g.DrawText(wt, mLabels[idx], pb);
       }
+      // hover: 半透明叠层叠在通道色之上 (通道色也可获得 hover 反馈)
+      if (GetMouseIsOver())
+        g.FillRect(HoverOverlay(), pb);
       return;
     }
 
     if (mScaleStyle) {
-      // 刻度样式: 背景方块 + 与刻度文字相同的位置/字号/颜色/对齐。
-      // 文字矩形 = (L+4, T, R-3, B-1): 右缘/底缘与 SpectrumPad DrawDbGrid 的
-      // 最底部刻度文字完全重合 (kTickRight=3, 底部贴线留 1px)。
-      const IColor fill = GetMouseIsOver() ? COL_500() : COL_300();
-      g.FillRect(fill, b);
+      // 刻度样式: 加色半透明背景 (EBlend::Add = 线性提亮, 在频谱上形成光晕方块) +
+      // 与刻度文字相同的位置/字号/颜色/对齐。文字矩形 = (L+4, T, R-3, B-1):
+      // 右缘/底缘与 SpectrumPad DrawDbGrid 的最底部刻度文字完全重合 (kTickRight=3, 贴线留 1px)。
+      IBlend add(EBlend::Add, 1.f);
+      const IColor fill = GetMouseIsOver() ? IColor(72, 255, 255, 255) : IColor(40, 255, 255, 255);
+      g.FillRect(fill, b, &add);
       if (idx >= 0 && idx < num) {
         const IText t(14, COL_700(), kFontRegular, EAlign::Far, EVAlign::Bottom);
         g.DrawText(t, mLabels[idx], IRECT(b.L + 4.f, b.T, b.R - 3.f, b.B - 1.f));
@@ -159,8 +167,9 @@ public:
       return;
     }
 
-    const IColor fill = GetMouseIsOver() ? COL_500() : COL_300();
-    g.FillRect(fill, b);
+    g.FillRect(COL_300(), b);
+    if (GetMouseIsOver())
+      g.FillRect(HoverOverlay(), b);
     IText t = mStyle.valueText;
     t.mFGColor = COL_900();
     strcpy(t.mFont, kFontSemiBold);

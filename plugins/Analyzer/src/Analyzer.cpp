@@ -374,6 +374,21 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
 
     pGraphics->EnableTooltips(true);
     ApplyLanguage();
+
+    // UI 控件已全部就绪: 立即同步一次频谱配置并更新去重标记。
+    // App 模式下 OnIdle 首帧可能早于控件 attach 运行, SendControlMsgFromDelegate
+    // 对不存在的控件会静默丢弃消息 (不排队), 频谱将停留在默认范围 (如 -90)
+    // 直到参数变化才重发——这里保证 UI 打开即同步, VST/App 行为一致。
+    SendSpectrumConfig();
+    mSentSampleRate = GetSampleRate();
+    mSentFFTSize = CurrentFFTSize();
+    mSentRelease = GetParam(kRelease)->Value();
+    mSentRange = (double)std::clamp(std::lround(GetParam(kRange)->Value()), 0L, 2L);
+    mSentAttack = GetParam(kAttack)->Value();
+    mSentLfRes = GetParam(kLfRes)->Value();
+    mSentBpo = GetParam(kBpo)->Value();
+    mSentMode = (int)GetParam(kMode)->Value();
+    mSentChanMode = (int)GetParam(kChannelMode)->Value();
   };
 #endif
 }
@@ -591,7 +606,13 @@ void ORMAnalyzer::OnIdle() {
   const double sr = GetSampleRate();
   const int fftSize = CurrentFFTSize();
   const double release = GetParam(kRelease)->Value();
-  const double range = GetParam(kRange)->Value();
+  // kRange 可能被旧版宿主状态恢复为档位间值 (旧连续参数如 90 → 归一化 0.25 → 档值 0.5),
+  // 强制吸附到最近档位并回写宿主, 保证按钮显示 / CurrentRangeDb 换算 / 下发值三者一致,
+  // 避免"打开时按钮 100 而频谱停留在旧范围, 点一下才同步"。
+  const int rangeIdx = (int)std::clamp(std::lround(GetParam(kRange)->Value()), 0L, 2L);
+  if (GetParam(kRange)->Value() != (double)rangeIdx)
+    SetParamFromEditor(kRange, (double)rangeIdx);
+  const double range = (double)rangeIdx;
   const double attack = GetParam(kAttack)->Value();
   const double lfRes = GetParam(kLfRes)->Value();
   const double bpo = GetParam(kBpo)->Value();

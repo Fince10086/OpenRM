@@ -134,9 +134,11 @@ private:
     const int idx = (int)std::clamp(GetParam(kBpo)->Value(), 0.0, (double)kNumBpoOptions - 1);
     return kBpoOptions[idx];
   }
-  // 频谱显示范围 (刻度底部 dB): 离散三档 80/100/120, 由 Range 循环按钮切换
+  // 频谱显示范围 (刻度底部 dB): 离散三档 80/100/120, 由 Range 循环按钮切换。
+  // 用 lround 取档位 (与按钮显示取整一致), 避免宿主旧状态恢复出档位间值 (如 0.5) 时
+  // 截断到低档导致按钮与频谱不同步。
   float CurrentRangeDb() const {
-    const int idx = (int)std::clamp(GetParam(kRange)->Value(), 0.0, 2.0);
+    const int idx = (int)std::clamp(std::lround(GetParam(kRange)->Value()), 0L, 2L);
     static constexpr float kRangeDb[3] = {80.f, 100.f, 120.f};
     return kRangeDb[idx];
   }

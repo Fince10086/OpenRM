@@ -84,6 +84,12 @@ inline IColor COL_100() {
   return HSBToIColor(ThemeHue(), SatForB(B) / 100.f, B / 100.f);
 }
 
+// 按钮 hover 半透明叠层色: 浅色主题叠加黑色 (变深), 深色主题叠加白色 (变亮)。
+// 以普通 alpha 混合叠在按钮底色之上, 使所有按钮 (含通道分半色) 获得一致的 hover 反馈。
+inline IColor HoverOverlay() {
+  return ThemeMode() ? IColor(48, 255, 255, 255) : IColor(48, 0, 0, 0);
+}
+
 inline IColor WarmGray(int v) {
   int vv = ThemeMode() ? 255 - v : v;
   if (ThemeMode())
