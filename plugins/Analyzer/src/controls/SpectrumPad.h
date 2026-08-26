@@ -166,27 +166,34 @@ public:
 
   void Draw(IGraphics &g) override {
     g.FillRect(COL_100(), mRECT);
-    // 图形区左对齐, 右侧让出 L/R 两条电平表竖条 (刻度文字绘制在频谱区域内部右侧)
-    const IRECT plot = mRECT.GetReducedFromRight(2.f * kGainBarW);
+    // 图形区左对齐, 右侧让出 L/R 两条电平表竖条 (刻度文字绘制在频谱区域内部右侧)。
+    // 对 plot 做物理像素对齐: 层位图/层内绘制/贴图/频谱/电平表共用同一矩形,
+    // 避免层内容与位图边缘之间的亚像素透明条带在右侧/底侧露出底色 (白边)。
+    const IRECT plot =
+        mRECT.GetReducedFromRight(2.f * kGainBarW).GetPixelAligned(g.GetScreenScale() * g.GetDrawScale());
     DrawGridLayer(g, plot);
+    DrawVuLine(g, plot);
     DrawSpectrum(g, plot);
     DrawLevelMeter(g, plot);
   }
 
 private:
   // 静态网格 (背景色块 + dB/频率刻度) 绘制进离屏 Layer 缓存:
-  // 内容只依赖 Range 底限 / 电平表模式 (VU 参考线) / 主题三值, 任一变化才重建, 平时每帧 1 次纹理 blit。
+  // 内容只依赖 Range 底限与主题三值, 任一变化才重建, 平时每帧 1 次纹理 blit。
   void DrawGridLayer(IGraphics &g, const IRECT &plot) {
+    // 层位图四周外扩 1px (gridRect) 吸收引擎在纹理边缘的亚像素瑕疵;
+    // 网格内部布局仍按 plot (与频谱曲线对齐), 仅最右列/最底行延伸到 gridRect 边缘,
+    // 让位图边缘像素为网格色而非透明, 避免贴图时露出底色, 同时不产生视觉偏移。
+    const IRECT gridRect = plot.GetPadded(1.f);
     const int hue = ThemeHue(), sat = ThemeSatMax(), mode = ThemeMode();
-    if (!g.CheckLayer(mGridLayer) || mBottomDb != mGridBottomDb || mMeterMode != mGridMeterMode ||
-        hue != mGridHue || sat != mGridSat || mode != mGridMode) {
-      g.StartLayer(this, plot);
-      DrawBackground(g, plot);
+    if (!g.CheckLayer(mGridLayer) || mBottomDb != mGridBottomDb || hue != mGridHue || sat != mGridSat ||
+        mode != mGridMode) {
+      g.StartLayer(this, gridRect);
+      DrawBackground(g, plot, gridRect);
       DrawDbGrid(g, plot);
       DrawFreqGrid(g, plot);
       mGridLayer = g.EndLayer();
       mGridBottomDb = mBottomDb;
-      mGridMeterMode = mMeterMode;
       mGridHue = hue;
       mGridSat = sat;
       mGridMode = mode;
@@ -213,7 +220,9 @@ private:
   // 频率维度沿用原 DrawTrack 的分段渐变 (低频偏暗, 高频偏亮);
   // dB 维度每 20 dB 一横条 (底部深, 顶部浅);
   // 每个 cell 亮度取两维度平均后过 WarmGray, 饱和度由 SatForB 自动决定。
-  void DrawBackground(IGraphics &g, const IRECT &plot) {
+  // edge 为层位图边界 (比 plot 四周大 1px): 最右列/最底行延伸至 edge,
+  // 内部位置仍按 plot 布局, 与频谱曲线坐标一致。
+  void DrawBackground(IGraphics &g, const IRECT &plot, const IRECT &edge) {
     if (mBottomDb >= 0.f)
       return;
 
@@ -281,11 +290,11 @@ private:
     const size_t nCols = freqCells.size();
     for (size_t r = 0; r + 1 < nRows; ++r) {
       const float yHigh = dbToY(dbBounds[r]);
-      const float yLow = (r + 2 < nRows) ? dbToY(dbBounds[r + 1]) + 1.f : plot.B;
+      const float yLow = (r + 2 < nRows) ? dbToY(dbBounds[r + 1]) + 1.f : edge.B;
       const float vDb = vDbAt((dbBounds[r] + dbBounds[r + 1]) * 0.5f);
       for (size_t i = 0; i < nCols; ++i) {
         const auto &fc = freqCells[i];
-        const float xR = (i + 1 < nCols) ? fc.xR + 1.f : plot.R;
+        const float xR = (i + 1 < nCols) ? fc.xR + 1.f : edge.R;
         const int v = (int)std::lround((fc.vFreq + vDb) * 0.5f);
         g.FillRect(WarmGray(v), IRECT(fc.xL, yHigh, xR, yLow));
       }
@@ -392,7 +401,6 @@ private:
 
     const int bottomDb = (int)mBottomDb;
     constexpr float kLabelH = 16.f; // 14px 字行高
-    constexpr float kTickRight = 3.f; // 文字右缘距频谱区域右缘的边距
 
     for (int db = 0; db >= bottomDb; db -= 20) {
       // 最底部一条标签由 Range 循环按钮顶替 (按钮位于刻度列底部, 显示当前底部 dB 值), 跳过文字
@@ -407,8 +415,11 @@ private:
       const IRECT labelR(plot.R - 52.f, y - kLabelH - 1.f, plot.R - kTickRight, y - 1.f);
       g.DrawText(IText(14, COL_700(), kFontRegular, EAlign::Far, EVAlign::Bottom), buf, labelR);
     }
+  }
 
-    // VU 模式: 0 VU (-18 dBFS) 参考刻度线 (位于频谱区域内部右侧, 与刻度文字同区)
+  // VU 模式: 0 VU (-18 dBFS) 参考刻度线 (位于频谱区域内部右侧, 与刻度文字同区)。
+  // 动态绘制 (不进入网格层缓存), 电平表模式切换即时生效, 无需重建层。
+  void DrawVuLine(IGraphics &g, const IRECT &plot) {
     if (mMeterMode == 2 && mBottomDb <= -18.f) {
       const float y18 = YOf(plot, -18.f);
       g.FillRect(COL_700(), IRECT(plot.R - 52.f, y18 - 1.f, plot.R - kTickRight, y18 + 1.f));
@@ -595,6 +606,7 @@ private:
   static constexpr float kSpecFreqLo = 20.f;
   static constexpr float kSpecFreqHi = 20000.f;
   static constexpr float kTopDb = 9.f;         // 显示范围顶部 (dBFS), 刻度线仍从 0 dB 开始
+  static constexpr float kTickRight = 3.f;     // 刻度文字右缘距频谱区域右缘的边距
 
   // 预计算 bin -> 对数 band 映射表: 只在采样率/FFT 尺寸变化时重建,
   // 绘制聚合循环直接查表, 省去每帧 2048*2 次 log2。
@@ -647,7 +659,6 @@ private:
   // 静态网格离屏缓存; 状态哨兵初值保证首帧重建
   ILayerPtr mGridLayer;
   float mGridBottomDb = -1000.f;
-  int mGridMeterMode = -1;
   int mGridHue = -1;
   int mGridSat = -1;
   int mGridMode = -1;

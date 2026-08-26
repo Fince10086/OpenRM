@@ -42,6 +42,7 @@ public:
   void Reset() {
     mHistL.fill(0.f);
     mHistR.fill(0.f);
+    mHistIdxL = mHistIdxR = 0;
     for (float &v : mRmsRingL)
       v = 0.f;
     for (float &v : mRmsRingR)
@@ -80,26 +81,19 @@ public:
     const double w2 = w * w;
     const double w2dt = w2 * dt;
     const double wdt2 = 2.0 * w * dt;
-    const int ringSize = (int)mRmsRingL.size();
 
     float rawPeakL = 0.f, rawPeakR = 0.f;
     float tpPeakL = 0.f, tpPeakR = 0.f;
-
-    for (int i = 0; i < n; ++i) {
-      const float l = L[i], r = R[i];
-      rawPeakL = std::max(rawPeakL, std::fabs(l));
-      rawPeakR = std::max(rawPeakR, std::fabs(r));
-      tpPeakL = std::max(tpPeakL, TruePeakSample(l, mHistL));
-      tpPeakR = std::max(tpPeakR, TruePeakSample(r, mHistR));
-      // RMS 300ms 滑动窗口 (IEC 60268-10 短积分行为, 无泄漏积分收敛误差)
-      mRmsSumL += (double)l * l - mRmsRingL[mRmsHeadL];
-      mRmsRingL[mRmsHeadL] = l * l;
-      mRmsHeadL = (mRmsHeadL + 1) % ringSize;
-      mRmsSumR += (double)r * r - mRmsRingR[mRmsHeadR];
-      mRmsRingR[mRmsHeadR] = r * r;
-      mRmsHeadR = (mRmsHeadR + 1) % ringSize;
-      StepVu(mVuPosL, mVuVelL, std::fabs(l), dt, w2dt, wdt2);
-      StepVu(mVuPosR, mVuVelR, std::fabs(r), dt, w2dt, wdt2);
+    switch (mode) {
+    case 0:
+      ProcessMode<0>(L, R, n, dt, w2dt, wdt2, rawPeakL, rawPeakR, tpPeakL, tpPeakR);
+      break;
+    case 1:
+      ProcessMode<1>(L, R, n, dt, w2dt, wdt2, rawPeakL, rawPeakR, tpPeakL, tpPeakR);
+      break;
+    default:
+      ProcessMode<2>(L, R, n, dt, w2dt, wdt2, rawPeakL, rawPeakR, tpPeakL, tpPeakR);
+      break;
     }
 
     const float peakDbL = AmpToDb(rawPeakL);
@@ -157,49 +151,80 @@ public:
 
 private:
   static constexpr int kPhaseTaps = 12; // 每相位抽头数 (总 4 × 12 = 48 阶)
-  static constexpr int kHistLen = kPhaseTaps - 1;
+  static constexpr int kHistCap = 16;   // 真峰值历史环形容量 (2 的幂, ≥ 抽头数-1)
+  static constexpr int kHistMask = kHistCap - 1;
 
-  // 4x 半带插值 FIR 系数 (Blackman 窗 sinc, 各相位直流增益归一化到 1)
-  static const std::array<std::array<float, kPhaseTaps>, 4> &PolyCoeffs() {
+  // 逐样本循环按模式模板分派 (0=dBTP, 1=dBFS+RMS, 2=VU): 只执行当前模式需要的中段,
+  // 模板常量折叠消除每样本分支; rawPeak 全模式收集, 保持切换模式时 peak ballistics 连续。
+  template <int MODE>
+  void ProcessMode(const float *L, const float *R, int n, double dt, double w2dt, double wdt2,
+                   float &rawPeakL, float &rawPeakR, float &tpPeakL, float &tpPeakR) {
+    const int ringSize = (int)mRmsRingL.size();
+    for (int i = 0; i < n; ++i) {
+      const float l = L[i], r = R[i];
+      rawPeakL = std::max(rawPeakL, std::fabs(l));
+      rawPeakR = std::max(rawPeakR, std::fabs(r));
+      if (MODE == 0) {
+        tpPeakL = std::max(tpPeakL, TruePeakSample(l, mHistL, mHistIdxL));
+        tpPeakR = std::max(tpPeakR, TruePeakSample(r, mHistR, mHistIdxR));
+      } else if (MODE == 1) {
+        // RMS 300ms 滑动窗口 (IEC 60268-10 短积分行为, 无泄漏积分收敛误差)
+        mRmsSumL += (double)l * l - mRmsRingL[mRmsHeadL];
+        mRmsRingL[mRmsHeadL] = l * l;
+        mRmsHeadL = (mRmsHeadL + 1) % ringSize;
+        mRmsSumR += (double)r * r - mRmsRingR[mRmsHeadR];
+        mRmsRingR[mRmsHeadR] = r * r;
+        mRmsHeadR = (mRmsHeadR + 1) % ringSize;
+      } else {
+        StepVu(mVuPosL, mVuVelL, std::fabs(l), dt, w2dt, wdt2);
+        StepVu(mVuPosR, mVuVelR, std::fabs(r), dt, w2dt, wdt2);
+      }
+    }
+  }
+
+  // 4x 半带插值 FIR 系数 (Blackman 窗 sinc, 各相位直流增益归一化到 1)。
+  // 存储为 [tap][phase] 主序: 同一历史样本一次读取喂满 4 个相位累加器, 利于 SIMD。
+  static const std::array<std::array<float, 4>, kPhaseTaps> &PolyCoeffs() {
     static const auto poly = [] {
       constexpr int L = 4 * kPhaseTaps;
       constexpr float kPi = 3.14159265358979323846f;
       const float c = (float)(L - 1) * 0.5f;
-      std::array<std::array<float, kPhaseTaps>, 4> p{};
+      std::array<std::array<float, 4>, kPhaseTaps> p{};
       for (int n = 0; n < L; ++n) {
         const float x = ((float)n - c) / 4.f;
         float h = (std::fabs(x) < 1e-6f) ? 4.f : 4.f * std::sin(kPi * x) / (kPi * x);
         const float w = 0.42f - 0.5f * std::cos(2.f * kPi * (float)n / (float)(L - 1)) +
                         0.08f * std::cos(4.f * kPi * (float)n / (float)(L - 1));
-        p[n % 4][n / 4] = h * w;
+        p[n / 4][n % 4] = h * w;
       }
-      for (int k = 0; k < 4; ++k) {
-        float s = 0.f;
-        for (int j = 0; j < kPhaseTaps; ++j)
-          s += p[k][j];
-        if (std::fabs(s) > 1e-9f)
-          for (int j = 0; j < kPhaseTaps; ++j)
-            p[k][j] /= s;
-      }
+      double g[4] = {0.0, 0.0, 0.0, 0.0};
+      for (int j = 0; j < kPhaseTaps; ++j)
+        for (int k = 0; k < 4; ++k)
+          g[k] += p[j][k];
+      for (int j = 0; j < kPhaseTaps; ++j)
+        for (int k = 0; k < 4; ++k)
+          if (std::fabs(g[k]) > 1e-9)
+            p[j][k] /= (float)g[k];
       return p;
     }();
     return poly;
   }
 
-  // 单样本 4x 过采样: 返回该样本 4 个插值输出的最大绝对值, 并推进历史
-  static float TruePeakSample(float x, std::array<float, kHistLen> &hist) {
+  // 单样本 4x 过采样: 返回该样本 4 个插值输出的最大绝对值, 并推进环形历史。
+  // 历史为环形缓冲 (容量 16, 掩码寻址), 消除逐样本整体移位拷贝。
+  static float TruePeakSample(float x, std::array<float, kHistCap> &hist, int &idx) {
+    hist[idx] = x;
+    idx = (idx + 1) & kHistMask;
     const auto &poly = PolyCoeffs();
-    float ymax = 0.f;
-    for (int k = 0; k < 4; ++k) {
-      float y = poly[k][0] * x;
-      for (int j = 1; j < kPhaseTaps; ++j)
-        y += poly[k][j] * hist[j - 1];
-      ymax = std::max(ymax, std::fabs(y));
+    float y0 = 0.f, y1 = 0.f, y2 = 0.f, y3 = 0.f;
+    for (int j = 0; j < kPhaseTaps; ++j) {
+      const float h = hist[(idx - 1 - j) & kHistMask];
+      y0 += poly[j][0] * h;
+      y1 += poly[j][1] * h;
+      y2 += poly[j][2] * h;
+      y3 += poly[j][3] * h;
     }
-    for (int j = kHistLen - 1; j > 0; --j)
-      hist[j] = hist[j - 1];
-    hist[0] = x;
-    return ymax;
+    return std::max(std::max(std::fabs(y0), std::fabs(y1)), std::max(std::fabs(y2), std::fabs(y3)));
   }
 
   // VU 二阶临界阻尼积分 (symplectic Euler): 99% 阶跃响应 ≈ 300ms
@@ -232,8 +257,8 @@ private:
   static float VUToDb(float avg) { return (avg > 1e-8f) ? 20.f * std::log10(1.1107f * avg) : -120.f; }
 
   double mSR = 48000.0;
-  std::array<float, kHistLen> mHistL{};
-  std::array<float, kHistLen> mHistR{};
+  std::array<float, kHistCap> mHistL{}, mHistR{}; // 真峰值 4x 插值历史 (环形)
+  int mHistIdxL = 0, mHistIdxR = 0;               // 环形写指针
   std::vector<float> mRmsRingL, mRmsRingR; // 300ms 能量滑动窗
   int mRmsHeadL = 0, mRmsHeadR = 0;
   double mRmsSumL = 0.0, mRmsSumR = 0.0;

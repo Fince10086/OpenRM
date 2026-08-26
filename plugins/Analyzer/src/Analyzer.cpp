@@ -449,6 +449,12 @@ void ORMAnalyzer::ProcessBlock(sample **inputs, sample **outputs, int nFrames) {
   }
 
   // 专业电平表测量 (真峰值/峰值/RMS/VU + hold + over), 与频谱引擎独立
+  // UI 线程的采样率/复位请求在此统一执行, 保证只在音频线程改写 LevelMeter 状态
+  const double newSR = mLevelSetSR.exchange(-1.0, std::memory_order_relaxed);
+  if (newSR > 0.0)
+    mLevelMeter.SetSampleRate(newSR); // 内部含 Reset()
+  if (mLevelResetHoldFlag.exchange(false, std::memory_order_relaxed))
+    mLevelMeter.ResetHold();
   if (mLevelResetFlag.exchange(false))
     mLevelMeter.ResetHoldOver();
   mLevelMeter.Process(mSpecInL.data(), mSpecInR.data(), nFrames, (int)GetParam(kLevelMode)->Value(),
@@ -486,8 +492,7 @@ void ORMAnalyzer::OnReset() {
   mVQT.SetSampleRate(GetSampleRate());
   mVQT.SetGamma(CurrentLfRes());
   mVQT.SetBpo(CurrentBpo());
-  mLevelMeter.SetSampleRate(GetSampleRate());
-  mLevelMeter.Reset();
+  mLevelSetSR.store(GetSampleRate(), std::memory_order_relaxed); // 音频线程下一 block 执行 SetSampleRate+Reset
   mPeakL.store(0.f, std::memory_order_relaxed);
   mPeakR.store(0.f, std::memory_order_relaxed);
 }
@@ -539,8 +544,8 @@ void ORMAnalyzer::OnParamChange(int paramIdx, EParamSource source, int sampleOff
     if (mVQT.SetBpo(CurrentBpo()))
       SendResetToPad();
   } else if (paramIdx == kLevelMode) {
-    // 电平表模式切换: 清除峰值保持 (过载锁存保留, 直到手动 RESET)
-    mLevelMeter.ResetHold();
+    // 电平表模式切换: 清除峰值保持 (过载锁存保留, 直到手动 RESET); 由音频线程执行
+    mLevelResetHoldFlag.store(true, std::memory_order_relaxed);
   }
 }
 

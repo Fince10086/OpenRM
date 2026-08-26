@@ -69,7 +69,9 @@ private:
   std::atomic<float> mHoldL{0.f}, mHoldR{0.f};
   std::atomic<int> mOverL{0}, mOverR{0};
   std::atomic<float> mHoldSec{2.f};
-  std::atomic<bool> mLevelResetFlag{false}; // UI 线程置位, 音频线程下一 block 清除 hold/over
+  std::atomic<bool> mLevelResetFlag{false};     // UI 线程置位, 音频线程下一 block 清除 hold/over
+  std::atomic<bool> mLevelResetHoldFlag{false}; // UI 线程置位, 音频线程下一 block 清除峰值保持 (模式切换)
+  std::atomic<double> mLevelSetSR{-1.0};        // UI 线程置位, 音频线程下一 block 执行 SetSampleRate+Reset (-1=无请求)
 
   // 频谱配置缓存（用于在 OnIdle 中防抖去重）
   double mSentSampleRate = 0.0;
