@@ -9,6 +9,8 @@
 //
 // 附加: 峰值保持 (hold, 时长可调, 超时后 20 dB/s 衰减) 与过载锁存 (over latch, 手动清除)。
 
+#include "FastMath.h"
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -251,10 +253,10 @@ private:
     return hold;
   }
 
-  static float AmpToDb(float a) { return (a > 1e-8f) ? 20.f * std::log10(a) : -120.f; }
-  static float Db10(double v) { return (v > 1e-12) ? 10.f * (float)std::log10(v) : -120.f; }
+  static float AmpToDb(float a) { return orm::FastAmpToDb(a, -120.f); }
+  static float Db10(double v) { return orm::FastPwrToDb((float)v, -120.f); }
   // VU 位置 (平均整流值) -> 正弦 RMS dBFS: RMS = avg * π/(2√2) ≈ 1.1107 * avg
-  static float VUToDb(float avg) { return (avg > 1e-8f) ? 20.f * std::log10(1.1107f * avg) : -120.f; }
+  static float VUToDb(float avg) { return (avg > 1e-8f) ? orm::FastAmpToDb(1.1107f * avg, -120.f) : -120.f; }
 
   double mSR = 48000.0;
   std::array<float, kHistCap> mHistL{}, mHistR{}; // 真峰值 4x 插值历史 (环形)

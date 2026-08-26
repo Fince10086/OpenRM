@@ -13,6 +13,7 @@
 #include "ISender.h"
 #include "UiUtils.h"
 #include "../Theme.h"
+#include "../dsp/FastMath.h"
 
 #include <algorithm>
 #include <array>
@@ -499,7 +500,7 @@ private:
 
     auto ampToY = [&](float amp) -> float {
       const float db =
-          (amp > 1e-6f) ? std::clamp(20.f * std::log10(amp), mBottomDb, kTopDb) : mBottomDb;
+          (amp > 1e-6f) ? std::clamp(orm::FastAmpToDb(amp, mBottomDb), mBottomDb, kTopDb) : mBottomDb;
       return plot.B - (db - mBottomDb) / (kTopDb - mBottomDb) * plot.H();
     };
 

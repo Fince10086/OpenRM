@@ -83,17 +83,25 @@ protected:
       std::memmove(mHistory[c].data(), mHistory[c].data() + mHop, (mFFTSize - mHop) * sizeof(float));
       std::memcpy(mHistory[c].data() + mFFTSize - mHop, d.vals[c].data(), mHop * sizeof(float));
 
-      WDL_FFT_COMPLEX *fb = mFFTBuf[c].data();
+      WDL_FFT_REAL *rb = mRealBuf[c].data();
       for (int i = 0; i < mFFTSize; ++i) {
-        fb[i].re = mHistory[c][i] * mWindow[i];
-        fb[i].im = 0.0f;
+        rb[i] = mHistory[c][i] * mWindow[i];
       }
-      WDL_fft(fb, mFFTSize, false);
+      WDL_real_fft(rb, mFFTSize, 0);
 
-      for (int i = 0; i < mNumBins; ++i) {
-        const int si = WDL_fft_permute(mFFTSize, i);
-        const float re = fb[si].re, im = fb[si].im;
-        d.vals[c][i] = std::sqrt(2.0f * (re * re + im * im) / mScaling);
+      const WDL_FFT_COMPLEX *comp = reinterpret_cast<const WDL_FFT_COMPLEX *>(rb);
+      const int halfSize = mFFTSize / 2;
+      const float invScaling2 = 2.0f / mScaling;
+
+      // DC (bin 0)
+      const float dc = comp[0].re;
+      d.vals[c][0] = std::sqrt((dc * dc) / mScaling);
+
+      // 正频段 (bin 1 .. mNumBins - 1)
+      for (int i = 1; i < mNumBins; ++i) {
+        const int si = WDL_fft_permute(halfSize, i);
+        const float re = comp[si].re, im = comp[si].im;
+        d.vals[c][i] = std::sqrt((re * re + im * im) * invScaling2);
       }
       for (int i = mNumBins; i < MAX_FFT_SIZE; ++i)
         d.vals[c][i] = 0.0f;
@@ -110,7 +118,7 @@ private:
   float mScaling = 0.f;
   std::array<float, MAX_FFT_SIZE> mWindow{};
   std::array<std::array<float, MAX_FFT_SIZE>, MAXNC> mHistory{};
-  std::array<std::array<WDL_FFT_COMPLEX, MAX_FFT_SIZE>, MAXNC> mFFTBuf{};
+  std::array<std::array<WDL_FFT_REAL, MAX_FFT_SIZE>, MAXNC> mRealBuf{};
   std::array<std::array<float, MAX_FFT_SIZE>, MAXNC> mPending{};
 };
 

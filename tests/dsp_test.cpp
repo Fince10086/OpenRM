@@ -11,6 +11,7 @@
 // 构建:  c++ -std=c++17 -O2 -o dsp_test dsp_test.cpp
 #include "../plugins/BandPass/src/dsp/BandPassCore.h"
 #include "../plugins/BandPass/config.h"
+#include "../plugins/Analyzer/src/dsp/FastMath.h"
 #include <cstdio>
 #include <cmath>
 #include <vector>
@@ -452,6 +453,31 @@ int main() {
     runDb(l2, r2);
     printf("   linked:   L=%.1f dB  R=%.1f dB\n", l2, r2);
     check("slope linked: R follows L (~-12 both)", std::fabs(r2 - l2) < 1.0 && r2 > -14.0);
+  }
+
+  // ---- 8) FastMath (FastLog2 / FastAmpToDb / FastPwrToDb) 精度验证 ----
+  {
+    double maxDbErr = 0.0;
+    for (float db = -100.f; db <= 24.f; db += 0.5f) {
+      const float amp = std::pow(10.f, db / 20.f);
+      const float fastDb = FastAmpToDb(amp);
+      const double err = std::fabs(fastDb - db);
+      if (err > maxDbErr)
+        maxDbErr = err;
+    }
+    printf("   FastAmpToDb max error across [-100dB, +24dB]: %.4f dB\n", maxDbErr);
+    check("FastAmpToDb precision (< 0.05 dB)", maxDbErr < 0.05);
+
+    double maxPwrErr = 0.0;
+    for (float db = -100.f; db <= 24.f; db += 0.5f) {
+      const float pwr = std::pow(10.f, db / 10.f);
+      const float fastDb = FastPwrToDb(pwr);
+      const double err = std::fabs(fastDb - db);
+      if (err > maxPwrErr)
+        maxPwrErr = err;
+    }
+    printf("   FastPwrToDb max error across [-100dB, +24dB]: %.4f dB\n", maxPwrErr);
+    check("FastPwrToDb precision (< 0.05 dB)", maxPwrErr < 0.05);
   }
 
   printf("=== %s (%d failures) ===\n", failures == 0 ? "ALL PASS" : "FAILED", failures);
