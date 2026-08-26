@@ -13,8 +13,7 @@ enum EParams {
   kLfRes,         // VQT 低频带宽保底 γ 档位 (低/中/高: 20/10/5 Hz)
   kBpo,           // VQT 每八度频带数 (12/24)
   kMode,          // 分析引擎模式 (0: FFT, 1: VQT)
-  kChannelMode,   // 声道显示模式 (0: L/R, 1: MERGE)
-  kMergeAlgo,     // 合并算法 (0: PWR 功率和, 1: SUM 时域单声道和)
+  kChannelMode,   // 声道显示模式 (0: LR, 1: PWR(Merge), 2: SUM(Merge))
   kLevelMode,     // 电平表模式 (0: dBTP 真峰值, 1: dBFS+RMS, 2: VU)
   kLevelHold,     // 峰值保持时长 (s, 0=关)
   kNumParams
@@ -33,11 +32,8 @@ constexpr int kNumBpoOptions = 2;
 // 分析引擎模式
 enum EAnalyzerMode { kModeFFT = 0, kModeVQT = 1 };
 
-// 声道显示模式
-enum EChannelMode { kChanModeLR = 0, kChanModeMerge = 1, kNumChanModes = 2 };
-
-// 合并算法
-enum EMergeAlgo { kMergeAlgoPWR = 0, kMergeAlgoSUM = 1, kNumMergeAlgos = 2 };
+// 声道显示模式 (三态: LR / PWR(Merge) / SUM(Merge))
+enum EChannelMode { kChanModeLR = 0, kChanModePWR = 1, kChanModeSUM = 2, kNumChanModes = 3 };
 
 // 电平表模式
 enum ELevelMode { kLevelModeDBTP = 0, kLevelModeDBFS = 1, kLevelModeVU = 2, kNumLevelModes = 3 };

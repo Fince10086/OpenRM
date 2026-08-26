@@ -79,8 +79,7 @@ private:
   double mSentAttack = -1.0;
   double mSentLfRes = -1.0;
   double mSentBpo = -1.0;
-  int mSentChanMode = -1;
-  int mSentMergeAlgo = -1;
+  int mSentChanMode = -1; // 存储三态值 (0=LR,1=PWR,2=SUM), 用于 OnIdle 增量去重
 
   SpectrumPad *mSpectrumPad = nullptr;
   ORMSlider *mBpoSlider = nullptr;
@@ -92,7 +91,6 @@ private:
   CpuMeterControl *mCpuMeter = nullptr;
   FlatToggleControl *mModeToggle = nullptr;
   FlatCycleButton *mChanModeBtn = nullptr;
-  FlatToggleControl *mMergeAlgoToggle = nullptr;
   FlatCycleButton *mLevelModeBtn = nullptr;
   IVButtonControl *mLevelResetBtn = nullptr;
   ORMSlider *mLevelHoldSlider = nullptr;

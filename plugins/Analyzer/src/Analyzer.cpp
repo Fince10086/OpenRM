@@ -83,7 +83,6 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
   GetParam(kBpo)->InitInt("Bpo", kNumBpoOptions - 1, 0, kNumBpoOptions - 1, "");
   GetParam(kMode)->InitInt("Mode", kModeFFT, 0, 1, "");
   GetParam(kChannelMode)->InitInt("ChanMode", kChanModeLR, 0, kNumChanModes - 1, "");
-  GetParam(kMergeAlgo)->InitInt("MergeAlgo", kMergeAlgoPWR, 0, kNumMergeAlgos - 1, "");
   GetParam(kLevelMode)->InitInt("LevelMode", kLevelModeDBTP, 0, kNumLevelModes - 1, "");
   GetParam(kLevelHold)->InitDouble("LevelHold", 2., 0., 5., 0.1, "s");
 
@@ -172,11 +171,11 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     // 三通道色块图例 (L / R / M, 颜色跟随主题) + 电平表读数, 与频谱图形区左缘对齐
     pGraphics->AttachControl(new ChannelLegendControl(IRECT(20, 32, 668, 54)), kCtrlTagLegend);
 
-    // 声道显示模式循环按钮: 与顶部色块图例合二为一 (图例色块移除, 由按钮着色代替)。
-    // L/R 样式: 左半 L 色右半 R 色, L/R 各半居中 (无斜杠); MERGE 样式: 整块 M 色。
+    // 声道显示模式循环按钮 (三态: LR / PWR / SUM).
+    // L/R 样式: 左半 L 色右半 R 色; PWR/SUM 样式: 整块 M 色 (Merge 色) + 居中标签。
     // 左缘与频谱图左缘 (x=20) 对齐, 底部与频谱图顶部 (y=58) 留 6px 间距。
-    mChanModeBtn = new FlatCycleButton(IRECT(20.f, 22.f, 20.f + kBtnW, 52.f), kChannelMode, {"L/R", "MERGE"},
-                                       btnStyle, true);
+    mChanModeBtn = new FlatCycleButton(IRECT(20.f, 22.f, 20.f + kBtnW, 52.f), kChannelMode,
+                                       {"L/R", "PWR", "SUM"}, btnStyle, true);
     pGraphics->AttachControl(mChanModeBtn);
     bindTip(mChanModeBtn, orm::kTxtTipChanMode);
 
@@ -188,18 +187,9 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     mCpuMeter = new CpuMeterControl(IRECT(kCol1X, 30, kPanelR, 60));
     pGraphics->AttachControl(mCpuMeter, kCtrlTagCpu);
 
-    // 合并算法切换按钮 (PWR / SUM) — 声道按钮已上移, 本按钮移至左半保持左缘对齐
-    IVStyle algoStyle = btnStyle;
-    algoStyle.showLabel = false;
-    algoStyle.showValue = false;
-    mMergeAlgoToggle = new FlatToggleControl(IRECT(kCol1X, 69, kCol1X + kBtnW, 99), kMergeAlgo, " ", algoStyle,
-                                            "PWR", "SUM");
-    pGraphics->AttachControl(mMergeAlgoToggle);
-    bindTip(mMergeAlgoToggle, orm::kTxtTipMergeAlgo);
-
     // BPO 滑块（每八度频带数，仅 VQT 模式生效）
     mBpoSlider =
-        new ORMSlider(IRECT(kCol1X, 108, kPanelR, 150), kBpo, "BPO", style, EDirection::Horizontal);
+        new ORMSlider(IRECT(kCol1X, 69, kPanelR, 111), kBpo, "BPO", style, EDirection::Horizontal);
     pGraphics->AttachControl(mBpoSlider);
     bindText(orm::kTxtBpo, [this](const char *s) { mBpoSlider->SetHeaderLabel(s); });
     bindTip(mBpoSlider, orm::kTxtTipBpo);
@@ -208,14 +198,14 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     IVStyle toggleStyle = btnStyle;
     toggleStyle.showLabel = false;
     toggleStyle.showValue = false;
-    mModeToggle = new FlatToggleControl(IRECT(kCol1X, 159, kPanelR, 189), kMode, " ", toggleStyle, "FFT",
+    mModeToggle = new FlatToggleControl(IRECT(kCol1X, 120, kPanelR, 150), kMode, " ", toggleStyle, "FFT",
                                         "VQT");
     pGraphics->AttachControl(mModeToggle);
     bindTip(mModeToggle, orm::kTxtTipMode);
 
     // 分辨率滑块 (FFT 模式下为 FFT 尺寸，VQT 模式下为低频分辨率 γ)
     mResSlider =
-        new ORMSlider(IRECT(kCol1X, 198, kPanelR, 240), kRes, "RES", style, EDirection::Horizontal);
+        new ORMSlider(IRECT(kCol1X, 159, kPanelR, 201), kRes, "RES", style, EDirection::Horizontal);
     pGraphics->AttachControl(mResSlider);
     bindText(orm::kTxtRes, [this](const char *) { UpdateResHeader(); });
     bindText(orm::kTxtLfRes, [this](const char *) { UpdateResHeader(); });
@@ -223,54 +213,54 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
 
     // 动态范围滑块 (dBFS 下限)
     mRangeSlider =
-        new ORMSlider(IRECT(kCol1X, 249, kPanelR, 291), kRange, "RANGE", style, EDirection::Horizontal);
+        new ORMSlider(IRECT(kCol1X, 210, kPanelR, 252), kRange, "RANGE", style, EDirection::Horizontal);
     pGraphics->AttachControl(mRangeSlider);
     bindText(orm::kTxtRange, [this](const char *s) { mRangeSlider->SetHeaderLabel(s); });
     bindTip(mRangeSlider, orm::kTxtTipRange);
 
     // 上升响应时间滑块 (s)
     mAttackSlider =
-        new ORMSlider(IRECT(kCol1X, 300, kPanelR, 342), kAttack, "ATTACK", style, EDirection::Horizontal);
+        new ORMSlider(IRECT(kCol1X, 261, kPanelR, 303), kAttack, "ATTACK", style, EDirection::Horizontal);
     pGraphics->AttachControl(mAttackSlider);
     bindText(orm::kTxtAttack, [this](const char *s) { mAttackSlider->SetHeaderLabel(s); });
     bindTip(mAttackSlider, orm::kTxtTipAttack);
 
     // 释放衰减时间滑块 (s)
     mReleaseSlider =
-        new ORMSlider(IRECT(kCol1X, 351, kPanelR, 393), kRelease, "RELEASE", style, EDirection::Horizontal);
+        new ORMSlider(IRECT(kCol1X, 312, kPanelR, 354), kRelease, "RELEASE", style, EDirection::Horizontal);
     pGraphics->AttachControl(mReleaseSlider);
     bindText(orm::kTxtRelease, [this](const char *s) { mReleaseSlider->SetHeaderLabel(s); });
     bindTip(mReleaseSlider, orm::kTxtTipRelease);
 
     // MIX 滑块
-    mMixSlider = new ORMSlider(IRECT(kCol1X, 402, kPanelR, 444), kMix, "MIX", style, EDirection::Horizontal);
+    mMixSlider = new ORMSlider(IRECT(kCol1X, 363, kPanelR, 405), kMix, "MIX", style, EDirection::Horizontal);
     pGraphics->AttachControl(mMixSlider);
     bindText(orm::kTxtMix, [this](const char *s) { mMixSlider->SetHeaderLabel(s); });
     bindTip(mMixSlider, orm::kTxtTipMix);
 
     IVButtonControl *undoBtn =
-        MakeMomentary(IRECT(kCol1X, 453, kCol1X + kBtnW, 483), [this](IControl *) { Undo(); }, "UNDO", btnStyle);
+        MakeMomentary(IRECT(kCol1X, 414, kCol1X + kBtnW, 444), [this](IControl *) { Undo(); }, "UNDO", btnStyle);
     pGraphics->AttachControl(undoBtn);
     bindText(orm::kTxtUndo, [undoBtn](const char *s) {
       undoBtn->SetLabelStr(s);
       undoBtn->SetDirty(false);
     });
     IVButtonControl *redoBtn =
-        MakeMomentary(IRECT(kCol2X, 453, kPanelR, 483), [this](IControl *) { Redo(); }, "REDO", btnStyle);
+        MakeMomentary(IRECT(kCol2X, 414, kPanelR, 444), [this](IControl *) { Redo(); }, "REDO", btnStyle);
     pGraphics->AttachControl(redoBtn);
     bindText(orm::kTxtRedo, [redoBtn](const char *s) {
       redoBtn->SetLabelStr(s);
       redoBtn->SetDirty(false);
     });
     IVButtonControl *saveBtn =
-        MakeMomentary(IRECT(kCol1X, 492, kCol1X + kBtnW, 522), [this](IControl *) { SaveFile(); }, "SAVE", btnStyle);
+        MakeMomentary(IRECT(kCol1X, 453, kCol1X + kBtnW, 483), [this](IControl *) { SaveFile(); }, "SAVE", btnStyle);
     pGraphics->AttachControl(saveBtn);
     bindText(orm::kTxtSave, [saveBtn](const char *s) {
       saveBtn->SetLabelStr(s);
       saveBtn->SetDirty(false);
     });
     IVButtonControl *loadBtn =
-        MakeMomentary(IRECT(kCol2X, 492, kPanelR, 522), [this](IControl *) { LoadFile(); }, "LOAD", btnStyle);
+        MakeMomentary(IRECT(kCol2X, 453, kPanelR, 483), [this](IControl *) { LoadFile(); }, "LOAD", btnStyle);
     pGraphics->AttachControl(loadBtn);
     bindText(orm::kTxtLoad, [loadBtn](const char *s) {
       loadBtn->SetLabelStr(s);
@@ -278,14 +268,14 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     });
 
     // 电平表模式循环按钮 (dBTP -> dBFS -> VU)
-    mLevelModeBtn = new FlatCycleButton(IRECT(kCol1X, 531, kCol1X + kBtnW, 561), kLevelMode,
+    mLevelModeBtn = new FlatCycleButton(IRECT(kCol1X, 492, kCol1X + kBtnW, 522), kLevelMode,
                                         {"dBTP", "dBFS", "VU"}, btnStyle);
     pGraphics->AttachControl(mLevelModeBtn);
     bindTip(mLevelModeBtn, orm::kTxtTipLevelMode);
 
     // 电平表 RESET (清除峰值保持与过载锁存)
     mLevelResetBtn =
-        MakeMomentary(IRECT(kCol2X, 531, kPanelR, 561), [this](IControl *) { mLevelResetFlag.store(true); },
+        MakeMomentary(IRECT(kCol2X, 492, kPanelR, 522), [this](IControl *) { mLevelResetFlag.store(true); },
                       "RESET", btnStyle);
     pGraphics->AttachControl(mLevelResetBtn);
     bindText(orm::kTxtReset, [this](const char *s) {
@@ -298,7 +288,7 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
 
     // 电平表峰值保持时长滑块 (s)
     mLevelHoldSlider =
-        new ORMSlider(IRECT(kCol1X, 570, kPanelR, 612), kLevelHold, "HOLD", style, EDirection::Horizontal);
+        new ORMSlider(IRECT(kCol1X, 531, kPanelR, 573), kLevelHold, "HOLD", style, EDirection::Horizontal);
     pGraphics->AttachControl(mLevelHoldSlider);
     bindText(orm::kTxtLevelHold, [this](const char *s) {
       if (mLevelHoldSlider)
@@ -481,8 +471,9 @@ void ORMAnalyzer::SendSpectrumConfig() {
   const float release = (float)GetParam(kRelease)->Value();
   const float range = (float)GetParam(kRange)->Value();
   const float attack = (float)GetParam(kAttack)->Value();
-  const int chanMode = (int)GetParam(kChannelMode)->Value();
-  const int mergeAlgo = (int)GetParam(kMergeAlgo)->Value();
+  const int chanTri = (int)GetParam(kChannelMode)->Value();
+  const int chanMode = (chanTri == kChanModeLR) ? 0 : 1;
+  const int mergeAlgo = (chanTri == kChanModeSUM) ? 1 : 0;
   SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagSampleRate, sizeof(double), &sr);
   SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagFFTSize, sizeof(int), &fftSize);
   SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagRelease, sizeof(float), &release);
@@ -579,15 +570,13 @@ void ORMAnalyzer::OnIdle() {
       SendVQTBandFreqs();
   }
 
-  // 声道显示模式与合并算法变动检测
-  const int chanMode = (int)GetParam(kChannelMode)->Value();
-  const int mergeAlgo = (int)GetParam(kMergeAlgo)->Value();
-  if (chanMode != mSentChanMode) {
-    mSentChanMode = chanMode;
+  // 声道显示模式 (三态 LR/PWR/SUM) 变动检测, 派生 chanMode + mergeAlgo 一并下发
+  const int chanTri = (int)GetParam(kChannelMode)->Value();
+  if (chanTri != mSentChanMode) {
+    mSentChanMode = chanTri;
+    const int chanMode = (chanTri == kChanModeLR) ? 0 : 1;
+    const int mergeAlgo = (chanTri == kChanModeSUM) ? 1 : 0;
     SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagChanMode, sizeof(int), &chanMode);
-  }
-  if (mergeAlgo != mSentMergeAlgo) {
-    mSentMergeAlgo = mergeAlgo;
     SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagMergeAlgo, sizeof(int), &mergeAlgo);
   }
 
@@ -668,7 +657,6 @@ void ORMAnalyzer::OnUIClose() {
   mCpuMeter = nullptr;
   mModeToggle = nullptr;
   mChanModeBtn = nullptr;
-  mMergeAlgoToggle = nullptr;
   mLevelModeBtn = nullptr;
   mLevelResetBtn = nullptr;
   mLevelHoldSlider = nullptr;
@@ -685,7 +673,6 @@ void ORMAnalyzer::OnUIClose() {
   mSentLfRes = -1.0;
   mSentBpo = -1.0;
   mSentChanMode = -1;
-  mSentMergeAlgo = -1;
 }
 
 void ORMAnalyzer::OnParentWindowResize(int width, int height) {
