@@ -5,6 +5,7 @@
 #include "IControls.h"
 #include "../Theme.h"
 #include "../Params.h"
+#include "../Strings.h"
 #include "UiUtils.h"
 
 #include <algorithm>
@@ -132,8 +133,7 @@ protected:
     }
     case kLfRes: {
       const int idx = (int)std::clamp(p->Value(), 0.0, (double)kNumLfResOptions - 1);
-      std::snprintf(buf, sizeof(buf), "%d Hz", kLfResOptions[idx]);
-      ds.Set(buf);
+      ds.Set(orm::Tr(orm::kTxtLfLow + idx, orm::UILang()));
       break;
     }
     case kBpo: {

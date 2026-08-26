@@ -115,7 +115,7 @@ public:
   }
 
   bool SetGamma(int gammaHz) {
-    const int g = std::clamp(gammaHz, 10, 40);
+    const int g = std::clamp(gammaHz, 5, 20);
     if (g != mGamma) {
       mGamma = g;
       mNeedRebuild.store(true);
@@ -368,7 +368,7 @@ private:
   }
 
   int mBpo = 24;                          // bins per octave (12/24); 音频线程写, UI 线程读
-  int mGamma = 40;                        // 低频带宽下限 Hz (10/20/40)
+  int mGamma = 20;                        // 低频带宽下限 Hz (低/中/高: 20/10/5)
   double mSampleRate = 48000.0;
   std::atomic<bool> mNeedRebuild{false};  // 音频线程置位, UI 线程读取并清除
   std::vector<Band> mBands;               // UI 线程独占

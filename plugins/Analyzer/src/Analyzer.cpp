@@ -158,8 +158,9 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     };
     auto bindTip = [this](IControl *c, int id) { mTooltipBindings.push_back({c, id}); };
 
-    constexpr float kCol1X = 740.f;
-    constexpr float kCol2X = 824.f;
+    // 右栏锚定窗口右下 (窗口 960x720): 右缘 kPanelR=940 距右 20, 底部标题区到底 36
+    constexpr float kCol1X = 784.f;
+    constexpr float kCol2X = 868.f;
     constexpr float kBtnW = 72.f;
     constexpr float kBtnH = 30.f;
     constexpr float kPanelR = kCol2X + kBtnW;
@@ -272,17 +273,17 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
 
     // 底部标题栏：ORM 标识、设置齿轮与版本号
     IText ormText(32, COL_900(), kFontBold, EAlign::Near, EVAlign::Bottom);
-    pGraphics->AttachControl(new SectionTitleControl(IRECT(kCol1X, 544, kCol1X + 120, 578), "ORM", ormText, 0));
-    IRECT ormInk(kCol1X, 544, kCol1X + 120, 578);
+    pGraphics->AttachControl(new SectionTitleControl(IRECT(kCol1X, 618, kCol1X + 120, 652), "ORM", ormText, 0));
+    IRECT ormInk(kCol1X, 618, kCol1X + 120, 652);
     pGraphics->MeasureText(ormText, "ORM", ormInk);
     const float gearL = ormInk.R + 8.f;
     const float gearR = gearL + (ormInk.B - ormInk.T);
     pGraphics->AttachControl(
         new SettingsMenuButton(IRECT(gearL, ormInk.T, gearR, ormInk.B), [this]() { ToggleSettingsPanel(); }));
-    pGraphics->AttachControl(new SectionTitleControl(IRECT(kCol1X, 576, kPanelR, 610), "Analyzer",
+    pGraphics->AttachControl(new SectionTitleControl(IRECT(kCol1X, 650, kPanelR, 684), "Analyzer",
                                                      IText(32, COL_900(), kFontBold, EAlign::Near, EVAlign::Middle),
                                                      0));
-    pGraphics->AttachControl(new SectionTitleControl(IRECT(gearR + 8.f, 541, kPanelR, 575), "v" PLUG_VERSION_STR,
+    pGraphics->AttachControl(new SectionTitleControl(IRECT(gearR + 8.f, 615, kPanelR, 649), "v" PLUG_VERSION_STR,
                                                      IText(20, COL_500(), kFontRegular, EAlign::Near, EVAlign::Bottom),
                                                      1, 0));
 

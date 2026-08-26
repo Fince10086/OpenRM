@@ -49,6 +49,9 @@ enum EText {
   kTxtDriver,
   kTxtTipChanMode,
   kTxtTipMergeAlgo,
+  kTxtLfLow,
+  kTxtLfMid,
+  kTxtLfHigh,
   kNumTexts
 };
 
@@ -84,7 +87,7 @@ inline const char *Tr(int id, int lang) {
           "Spectrum display bottom (dBFS)",
           "Spectrum display attack time",
           "Spectrum analysis FFT size (1024/2048/4096)",
-          "Low-frequency bandwidth floor gamma (40/20/10 Hz)",
+          "Low-frequency bandwidth floor gamma (LOW/MID/HIGH: 20/10/5 Hz)",
           "VQT bins per octave (12/24)",
           "Switch analysis engine (FFT / VQT)",
           "AUDIO",
@@ -93,6 +96,9 @@ inline const char *Tr(int id, int lang) {
           "Driver",
           "Channel display mode (L/R, MERGE)",
           "Merge algorithm (PWR: Total Power, SUM: Mono Sum)",
+          "LOW",
+          "MID",
+          "HIGH",
       },
       {
           "混合",
@@ -124,7 +130,7 @@ inline const char *Tr(int id, int lang) {
           "频谱显示下限（dBFS）",
           "频谱显示上升时间",
           "频谱分析 FFT 尺寸（1024/2048/4096）",
-          "低频带宽下限 γ（40/20/10 Hz）",
+          "低频带宽下限 γ（低/中/高: 20/10/5 Hz）",
           "VQT 每八度 band 数（12/24）",
           "切换分析引擎（FFT / VQT）",
           "音频",
@@ -133,6 +139,9 @@ inline const char *Tr(int id, int lang) {
           "驱动",
           "声道显示模式（L/R: 左右, MERGE: 仅合并）",
           "合并算法（PWR: 总功率和, SUM: 单声道求和）",
+          "低",
+          "中",
+          "高",
       },
   };
   return kTable[lang][id];
