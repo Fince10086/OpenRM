@@ -75,6 +75,20 @@ public:
           mSpectrum[c][i] = coef * prev + (1.f - coef) * raw;
         }
       }
+      // VQT 模式: 频带方向 3 点平滑 (0.25/0.5/0.25), 抹掉跨层边界 band 起振首帧的瞬时缺口
+      if (mMode == 1) {
+        for (int c = 0; c < 3; ++c) {
+          auto &s = mSpectrum[c];
+          if (s.size() < 3)
+            continue;
+          float prev = s[0];
+          for (int i = 1; i < (int)s.size() - 1; ++i) {
+            const float cur = s[i];
+            s[i] = 0.5f * cur + 0.25f * (prev + s[i + 1]);
+            prev = cur;
+          }
+        }
+      }
       SetDirty(false);
     } else if (msgTag == kMsgTagSampleRate) {
       double sr;

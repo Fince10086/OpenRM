@@ -239,7 +239,7 @@ private:
     float wsumInv;                // 4/winLen: 恢复输入幅度
     int winLen;                   // 该层速率下窗长 (样本) = fsL/Bk (下限: ≥~4 个 fc 周期)
     int advance;                  // 每 advance 帧重算一次 (包络奈奎斯特: 1/(2·Bk)/帧周期)
-    int readOff;                  // 窗从层缓冲尾部前移的样本数 (跨层延迟对齐, 0..8)
+    int readOff;                  // 窗从层缓冲尾部前移的层样本数 (跨层延迟对齐)
     std::vector<float> kernelRe, kernelIm; // 在该层速率下计算的 w·cos/w·sin
   };
 
@@ -285,10 +285,9 @@ private:
       used[L] = true;
     }
 
-    // 第二遍: 逐层构建 band 并做跨层延迟对齐 —— 目标使各 band 的分析窗结束时刻
-    // R(fc) 随频率连续单调下降: 层底部取更深一层的累计群延迟 (补偿一级), 层顶部
-    // 保持本层自然延迟, 层内按 log-频率线性过渡。边界两侧 band 的对齐保证瞬态
-    // 响应不再在边界频率处出现横向断裂。
+    // 第二遍: 逐层构建 band 并做跨层延迟对齐 —— 各 band 的分析窗结束时刻 R(fc)
+    // 随频率连续单调下降: 层底部对齐更深一层的累计群延迟, 层顶部保持本层自然
+    // 延迟, 层内按 log-频率线性过渡。
     for (int i = 0, n = (int)spec.size(); i < n;) {
       const int L = spec[i].layer;
       int j = i;
@@ -349,9 +348,9 @@ private:
     bd.layer = L;
     bd.winLen = wl;
     bd.wsumInv = (float)(4.0 / wl);
-    // 包络更新节奏: band 输出带宽 ≈ Bk, 包络奈奎斯特 = 2·Bk; 每帧时长 kHop/fs。
-    // 只有 Bk < fs/(2·kHop)(约23Hz@48k) 时才有必要隔帧重算, 否则恒为 1 (默认 γ≥20 全为 1)。
-    bd.advance = std::max(1, (int)std::lround(fs / (2.0 * bw * kHop)));
+    // 包络更新节奏: band 包络带宽 ≈ Bk, 奈奎斯特 2·Bk; 帧时长 kHop/fs。
+    // 向下取整: 仅当 Bk < fs/(2·kHop)(约23Hz@48k) 时 advance > 1 (γ=5/10 的最深窄带)。
+    bd.advance = std::max(1, (int)std::floor(fs / (2.0 * bw * kHop)));
     bd.readOff = (int)std::lround((R - GroupDelaySec(fs, L)) * fsL);
     bd.kernelRe.resize(wl);
     bd.kernelIm.resize(wl);
