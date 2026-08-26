@@ -363,6 +363,10 @@ private:
     constexpr float kTickRight = 3.f; // 文字右缘距频谱区域右缘的边距
 
     for (int db = 0; db >= bottomDb; db -= 20) {
+      // 最底部一条标签由 Range 循环按钮顶替 (按钮位于刻度列底部, 显示当前底部 dB 值), 跳过文字
+      if (db == bottomDb)
+        continue;
+
       const float y = plot.B - (float)(db - bottomDb) / (kTopDb - (float)bottomDb) * plot.H();
 
       char buf[16];

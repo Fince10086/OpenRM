@@ -84,7 +84,7 @@ private:
   SpectrumPad *mSpectrumPad = nullptr;
   ORMSlider *mBpoSlider = nullptr;
   ORMSlider *mResSlider = nullptr;
-  ORMSlider *mRangeSlider = nullptr;
+  FlatCycleButton *mRangeBtn = nullptr; // 动态范围循环按钮 (刻度底部 80/100/120)
   ORMSlider *mAttackSlider = nullptr;
   ORMSlider *mReleaseSlider = nullptr;
   ORMSlider *mMixSlider = nullptr;
@@ -133,6 +133,12 @@ private:
   int CurrentBpo() const {
     const int idx = (int)std::clamp(GetParam(kBpo)->Value(), 0.0, (double)kNumBpoOptions - 1);
     return kBpoOptions[idx];
+  }
+  // 频谱显示范围 (刻度底部 dB): 离散三档 80/100/120, 由 Range 循环按钮切换
+  float CurrentRangeDb() const {
+    const int idx = (int)std::clamp(GetParam(kRange)->Value(), 0.0, 2.0);
+    static constexpr float kRangeDb[3] = {80.f, 100.f, 120.f};
+    return kRangeDb[idx];
   }
   void SendVQTBandFreqs();
   void UpdateResHeader();

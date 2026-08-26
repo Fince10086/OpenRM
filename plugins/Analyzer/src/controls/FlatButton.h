@@ -108,6 +108,10 @@ public:
   // 快速连击: 偶数次点击走双击, 转发为按下 (循环切换), 避免重置默认
   void OnMouseDblClick(float x, float y, const IMouseMod &mod) override { OnMouseDown(x, y, mod); }
 
+  // 刻度样式: 按钮伪装成刻度文字 (如频谱图底部 Range 按钮) —— 背景方块 + 与刻度一致的
+  // 14px 文字 (右对齐, 右缘/底缘与刻度文字重合), 只是多出一个背景色块。
+  void SetScaleLabelStyle(bool b) { mScaleStyle = b; }
+
   // 与界面背景色同灰度的按钮文字色 (浅色主题接近白但非纯白, 深色主题对应变深)
   static IColor SplitBtnTextColor() {
     const IColor bg = COL_100();
@@ -142,6 +146,19 @@ public:
       return;
     }
 
+    if (mScaleStyle) {
+      // 刻度样式: 背景方块 + 与刻度文字相同的位置/字号/颜色/对齐。
+      // 文字矩形 = (L+4, T, R-3, B-1): 右缘/底缘与 SpectrumPad DrawDbGrid 的
+      // 最底部刻度文字完全重合 (kTickRight=3, 底部贴线留 1px)。
+      const IColor fill = GetMouseIsOver() ? COL_500() : COL_300();
+      g.FillRect(fill, b);
+      if (idx >= 0 && idx < num) {
+        const IText t(14, COL_700(), kFontRegular, EAlign::Far, EVAlign::Bottom);
+        g.DrawText(t, mLabels[idx], IRECT(b.L + 4.f, b.T, b.R - 3.f, b.B - 1.f));
+      }
+      return;
+    }
+
     const IColor fill = GetMouseIsOver() ? COL_500() : COL_300();
     g.FillRect(fill, b);
     IText t = mStyle.valueText;
@@ -155,6 +172,7 @@ private:
   std::vector<const char *> mLabels;
   IVStyle mStyle;
   bool mSplitChannels = false;
+  bool mScaleStyle = false;
 };
 
 END_IGRAPHICS_NAMESPACE

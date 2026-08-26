@@ -76,7 +76,7 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
   // 初始化参数（默认值、范围与步长）
   GetParam(kMix)->InitDouble("Mix", 1., 0., 1., 0.01, "");
   GetParam(kRelease)->InitDouble("Release", 0.2, 0.05, 0.5, 0.01, "s");
-  GetParam(kRange)->InitDouble("Range", 90, 80, 120, 10, "");
+  GetParam(kRange)->InitInt("Range", 1, 0, 2, ""); // 档位索引: 0=80, 1=100, 2=120 (刻度底部 dB), 默认 100
   GetParam(kAttack)->InitDouble("Attack", 0.05, 0.001, 0.1, 0.001, "s");
   GetParam(kRes)->InitInt("Res", kNumResOptions - 1, 0, kNumResOptions - 1, "");
   GetParam(kLfRes)->InitInt("LfRes", 0, 0, kNumLfResOptions - 1, "");
@@ -183,6 +183,20 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     mSpectrumPad = new SpectrumPad(IRECT(20, 58, 668, 328));
     pGraphics->AttachControl(mSpectrumPad, kCtrlTagPad);
 
+    // 动态范围循环按钮: 位于频谱图底部右缘 (电平表竖条左侧), 顶替最底部刻度标签
+    // (DrawDbGrid 跳过底部一条的文字)。右下角与频谱图右下对齐不留缝, 文字样式/位置
+    // 与刻度文字完全一致 (刻度样式), 仅多一个背景方块。点击循环切换 80/100/120 dB。
+    // attach 在 pad 之后 → 覆盖于频谱之上, 命中测试优先。
+    constexpr float kRangeBtnW = 38.f; // 收紧方块: 仅比文字 (-120 @14px ≈ 31px) 多出少量左右 padding
+    constexpr float kRangeBtnH = 19.f; // 贴住文字行高 (14px 字 ≈ 17px 高)
+    const float plotR = 668.f - 2.f * kGainBarW; // 频谱图形区右缘 (与 pad 内几何一致)
+    const float plotB = 328.f;
+    mRangeBtn = new FlatCycleButton(IRECT(plotR - kRangeBtnW, plotB - kRangeBtnH, plotR, plotB), kRange,
+                                    {"-80", "-100", "-120"}, btnStyle);
+    pGraphics->AttachControl(mRangeBtn);
+    mRangeBtn->SetScaleLabelStyle(true);
+    bindTip(mRangeBtn, orm::kTxtTipRange);
+
     // CPU 占用率显示
     mCpuMeter = new CpuMeterControl(IRECT(kCol1X, 30, kPanelR, 60));
     pGraphics->AttachControl(mCpuMeter, kCtrlTagCpu);
@@ -211,56 +225,49 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     bindText(orm::kTxtLfRes, [this](const char *) { UpdateResHeader(); });
     bindTip(mResSlider, orm::kTxtTipRes);
 
-    // 动态范围滑块 (dBFS 下限)
-    mRangeSlider =
-        new ORMSlider(IRECT(kCol1X, 210, kPanelR, 252), kRange, "RANGE", style, EDirection::Horizontal);
-    pGraphics->AttachControl(mRangeSlider);
-    bindText(orm::kTxtRange, [this](const char *s) { mRangeSlider->SetHeaderLabel(s); });
-    bindTip(mRangeSlider, orm::kTxtTipRange);
-
     // 上升响应时间滑块 (s)
     mAttackSlider =
-        new ORMSlider(IRECT(kCol1X, 261, kPanelR, 303), kAttack, "ATTACK", style, EDirection::Horizontal);
+        new ORMSlider(IRECT(kCol1X, 219, kPanelR, 261), kAttack, "ATTACK", style, EDirection::Horizontal);
     pGraphics->AttachControl(mAttackSlider);
     bindText(orm::kTxtAttack, [this](const char *s) { mAttackSlider->SetHeaderLabel(s); });
     bindTip(mAttackSlider, orm::kTxtTipAttack);
 
     // 释放衰减时间滑块 (s)
     mReleaseSlider =
-        new ORMSlider(IRECT(kCol1X, 312, kPanelR, 354), kRelease, "RELEASE", style, EDirection::Horizontal);
+        new ORMSlider(IRECT(kCol1X, 270, kPanelR, 312), kRelease, "RELEASE", style, EDirection::Horizontal);
     pGraphics->AttachControl(mReleaseSlider);
     bindText(orm::kTxtRelease, [this](const char *s) { mReleaseSlider->SetHeaderLabel(s); });
     bindTip(mReleaseSlider, orm::kTxtTipRelease);
 
     // MIX 滑块
-    mMixSlider = new ORMSlider(IRECT(kCol1X, 363, kPanelR, 405), kMix, "MIX", style, EDirection::Horizontal);
+    mMixSlider = new ORMSlider(IRECT(kCol1X, 321, kPanelR, 363), kMix, "MIX", style, EDirection::Horizontal);
     pGraphics->AttachControl(mMixSlider);
     bindText(orm::kTxtMix, [this](const char *s) { mMixSlider->SetHeaderLabel(s); });
     bindTip(mMixSlider, orm::kTxtTipMix);
 
     IVButtonControl *undoBtn =
-        MakeMomentary(IRECT(kCol1X, 414, kCol1X + kBtnW, 444), [this](IControl *) { Undo(); }, "UNDO", btnStyle);
+        MakeMomentary(IRECT(kCol1X, 372, kCol1X + kBtnW, 402), [this](IControl *) { Undo(); }, "UNDO", btnStyle);
     pGraphics->AttachControl(undoBtn);
     bindText(orm::kTxtUndo, [undoBtn](const char *s) {
       undoBtn->SetLabelStr(s);
       undoBtn->SetDirty(false);
     });
     IVButtonControl *redoBtn =
-        MakeMomentary(IRECT(kCol2X, 414, kPanelR, 444), [this](IControl *) { Redo(); }, "REDO", btnStyle);
+        MakeMomentary(IRECT(kCol2X, 372, kPanelR, 402), [this](IControl *) { Redo(); }, "REDO", btnStyle);
     pGraphics->AttachControl(redoBtn);
     bindText(orm::kTxtRedo, [redoBtn](const char *s) {
       redoBtn->SetLabelStr(s);
       redoBtn->SetDirty(false);
     });
     IVButtonControl *saveBtn =
-        MakeMomentary(IRECT(kCol1X, 453, kCol1X + kBtnW, 483), [this](IControl *) { SaveFile(); }, "SAVE", btnStyle);
+        MakeMomentary(IRECT(kCol1X, 411, kCol1X + kBtnW, 441), [this](IControl *) { SaveFile(); }, "SAVE", btnStyle);
     pGraphics->AttachControl(saveBtn);
     bindText(orm::kTxtSave, [saveBtn](const char *s) {
       saveBtn->SetLabelStr(s);
       saveBtn->SetDirty(false);
     });
     IVButtonControl *loadBtn =
-        MakeMomentary(IRECT(kCol2X, 453, kPanelR, 483), [this](IControl *) { LoadFile(); }, "LOAD", btnStyle);
+        MakeMomentary(IRECT(kCol2X, 411, kPanelR, 441), [this](IControl *) { LoadFile(); }, "LOAD", btnStyle);
     pGraphics->AttachControl(loadBtn);
     bindText(orm::kTxtLoad, [loadBtn](const char *s) {
       loadBtn->SetLabelStr(s);
@@ -268,14 +275,14 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     });
 
     // 电平表模式循环按钮 (dBTP -> dBFS -> VU)
-    mLevelModeBtn = new FlatCycleButton(IRECT(kCol1X, 492, kCol1X + kBtnW, 522), kLevelMode,
+    mLevelModeBtn = new FlatCycleButton(IRECT(kCol1X, 450, kCol1X + kBtnW, 480), kLevelMode,
                                         {"dBTP", "dBFS", "VU"}, btnStyle);
     pGraphics->AttachControl(mLevelModeBtn);
     bindTip(mLevelModeBtn, orm::kTxtTipLevelMode);
 
     // 电平表 RESET (清除峰值保持与过载锁存)
     mLevelResetBtn =
-        MakeMomentary(IRECT(kCol2X, 492, kPanelR, 522), [this](IControl *) { mLevelResetFlag.store(true); },
+        MakeMomentary(IRECT(kCol2X, 450, kPanelR, 480), [this](IControl *) { mLevelResetFlag.store(true); },
                       "RESET", btnStyle);
     pGraphics->AttachControl(mLevelResetBtn);
     bindText(orm::kTxtReset, [this](const char *s) {
@@ -288,7 +295,7 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
 
     // 电平表峰值保持时长滑块 (s)
     mLevelHoldSlider =
-        new ORMSlider(IRECT(kCol1X, 531, kPanelR, 573), kLevelHold, "HOLD", style, EDirection::Horizontal);
+        new ORMSlider(IRECT(kCol1X, 489, kPanelR, 531), kLevelHold, "HOLD", style, EDirection::Horizontal);
     pGraphics->AttachControl(mLevelHoldSlider);
     bindText(orm::kTxtLevelHold, [this](const char *s) {
       if (mLevelHoldSlider)
@@ -469,7 +476,7 @@ void ORMAnalyzer::SendSpectrumConfig() {
   const double sr = GetSampleRate();
   const int fftSize = CurrentFFTSize();
   const float release = (float)GetParam(kRelease)->Value();
-  const float range = (float)GetParam(kRange)->Value();
+  const float range = CurrentRangeDb();
   const float attack = (float)GetParam(kAttack)->Value();
   const int chanTri = (int)GetParam(kChannelMode)->Value();
   const int chanMode = (chanTri == kChanModeLR) ? 0 : 1;
@@ -650,7 +657,7 @@ void ORMAnalyzer::OnUIClose() {
   mSpectrumPad = nullptr;
   mBpoSlider = nullptr;
   mResSlider = nullptr;
-  mRangeSlider = nullptr;
+  mRangeBtn = nullptr;
   mAttackSlider = nullptr;
   mReleaseSlider = nullptr;
   mMixSlider = nullptr;
