@@ -229,14 +229,18 @@ private:
       return kVDbTop + (kVDbBottom - kVDbTop) * t;
     };
 
-    // 绘制二维网格
-    for (size_t r = 0; r + 1 < dbBounds.size(); ++r) {
+    // 绘制二维网格 (相邻 cell 各向右侧/下侧重叠 1px, 消除抗锯齿亚像素间隙)
+    const size_t nRows = dbBounds.size();
+    const size_t nCols = freqCells.size();
+    for (size_t r = 0; r + 1 < nRows; ++r) {
       const float yHigh = dbToY(dbBounds[r]);
-      const float yLow = dbToY(dbBounds[r + 1]);
+      const float yLow = (r + 2 < nRows) ? dbToY(dbBounds[r + 1]) + 1.f : plot.B;
       const float vDb = vDbAt((dbBounds[r] + dbBounds[r + 1]) * 0.5f);
-      for (const auto &fc : freqCells) {
+      for (size_t i = 0; i < nCols; ++i) {
+        const auto &fc = freqCells[i];
+        const float xR = (i + 1 < nCols) ? fc.xR + 1.f : plot.R;
         const int v = (int)std::lround((fc.vFreq + vDb) * 0.5f);
-        g.FillRect(WarmGray(v), IRECT(fc.xL, yHigh, fc.xR, yLow));
+        g.FillRect(WarmGray(v), IRECT(fc.xL, yHigh, xR, yLow));
       }
     }
   }
