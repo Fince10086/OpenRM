@@ -42,6 +42,10 @@ public:
     mBufCount = 0;
   }
 
+  void SetChannelMode(int chanTri) {
+    mChanTri = std::clamp(chanTri, 0, 2);
+  }
+
   void SetFFTSize(int fftSize) { SetFFTSizeAndOverlap(fftSize, mOverlap); }
 
   int GetFFTSize() const { return mFFTSize; }
@@ -65,7 +69,17 @@ public:
 protected:
   void PrepareDataForUI(Data &d) override {
     const int nCh = std::min(d.nChans, MAXNC);
+    const bool needL = (mChanTri != 2);
+    const bool needR = (mChanTri != 2);
+    const bool needSum = (mChanTri == 2);
+
     for (int c = d.chanOffset; c < d.chanOffset + nCh; ++c) {
+      if ((c == 0 && !needL) || (c == 1 && !needR) || (c == 2 && !needSum)) {
+        for (int i = 0; i < MAX_FFT_SIZE; ++i)
+          d.vals[c][i] = 0.0f;
+        continue;
+      }
+
       std::memmove(mHistory[c].data(), mHistory[c].data() + mHop, (mFFTSize - mHop) * sizeof(float));
       std::memcpy(mHistory[c].data() + mFFTSize - mHop, d.vals[c].data(), mHop * sizeof(float));
 
@@ -92,6 +106,7 @@ private:
   int mHop = 1024;
   int mNumBins = 2048;
   int mBufCount = 0;
+  int mChanTri = 0; // 0=LR, 1=PWR, 2=SUM
   float mScaling = 0.f;
   std::array<float, MAX_FFT_SIZE> mWindow{};
   std::array<std::array<float, MAX_FFT_SIZE>, MAXNC> mHistory{};

@@ -127,6 +127,11 @@ public:
     return false;
   }
 
+  // 设置声道显示模式 (0: LR, 1: PWR, 2: SUM) 以启用声道惰性计算
+  void SetChannelMode(int chanTri) {
+    mChanTri = std::clamp(chanTri, 0, 2);
+  }
+
   void CheckRebuild() {
     if (mNeedRebuild.exchange(false, std::memory_order_acq_rel)) {
       RebuildBands();
@@ -161,16 +166,26 @@ public:
 
 protected:
   // UI 线程 (OnIdle / TransmitData):
-  // 1. 生成多速率降采样金字塔 (Layer 0..9)
-  // 2. 各 band 仅在其对应降采样层上进行 4 阶 TPT SVF 滤波 (样本内层, 寄存器常驻)
+  // 1. 声道惰性分派: LR/PWR 模式跳过 Sum (节省 33%), SUM 模式跳过 L/R (节省 66%)
+  // 2. 生成多速率降采样金字塔 (Layer 0..9)
+  // 3. 各 band 仅在其对应降采样层上进行 4 阶 TPT SVF 滤波 (样本内层, 寄存器常驻)
   void PrepareDataForUI(Data &d) override {
     CheckRebuild();
     const int nb = NumBands();
     if (nb <= 0)
       return;
     const int nCh = std::min(d.nChans, MAXNC);
+    const bool needL = (mChanTri != 2);
+    const bool needR = (mChanTri != 2);
+    const bool needSum = (mChanTri == 2);
 
     for (int c = 0; c < nCh; ++c) {
+      if ((c == 0 && !needL) || (c == 1 && !needR) || (c == 2 && !needSum)) {
+        for (int b = 0; b < MAX_BANDS; ++b)
+          d.vals[c][b] = 0.f;
+        continue;
+      }
+
       // 1. 构建该通道的多速率降采样金字塔
       float *l0 = mLayers[c][0].data();
       std::copy(d.vals[c].begin(), d.vals[c].begin() + kHop, l0);
@@ -348,6 +363,7 @@ private:
 
   double mSampleRate = 48000.0;
   int mLfMode = 0; // 0=40Hz, 1=20Hz, 2=10Hz
+  int mChanTri = 0; // 0=LR, 1=PWR, 2=SUM
   std::atomic<bool> mNeedRebuild{false};
 
   std::vector<BandCoef> mBands;

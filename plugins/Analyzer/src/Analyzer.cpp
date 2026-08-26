@@ -663,8 +663,11 @@ void ORMAnalyzer::OnIdle() {
       SendPAZBandFreqs();
   }
 
-  // 声道显示模式 (三态 LR/PWR/SUM) 变动检测, 派生 chanMode + mergeAlgo 一并下发
+  // 声道显示模式 (三态 LR/PWR/SUM) 变动检测, 派生 chanMode + mergeAlgo 一并下发, 并同步各分析引擎启用声道惰性计算
   const int chanTri = (int)GetParam(kChannelMode)->Value();
+  mSpectrum.SetChannelMode(chanTri);
+  mVQT.SetChannelMode(chanTri);
+  mPAZ.SetChannelMode(chanTri);
   if (chanTri != mSentChanMode) {
     mSentChanMode = chanTri;
     const int chanMode = (chanTri == kChanModeLR) ? 0 : 1;
@@ -699,10 +702,13 @@ void ORMAnalyzer::OnIdle() {
     SendSpectrumConfig();
   }
 
-  // 执行频谱分析计算并将数据发送给 UI 控件
-  mSpectrum.TransmitData(*this);
-  mVQT.TransmitData(*this);
-  mPAZ.TransmitData(*this);
+  // 仅对当前处于激活状态的引擎执行频谱分析与数据分发 (非激活引擎零开销)
+  if (mode == kModeVQT)
+    mVQT.TransmitData(*this);
+  else if (mode == kModePAZ)
+    mPAZ.TransmitData(*this);
+  else
+    mSpectrum.TransmitData(*this);
 
   // 转发电平表数据给表头区 (LevelMeterUiData, 含模式/保持时长/过载锁存)
   {

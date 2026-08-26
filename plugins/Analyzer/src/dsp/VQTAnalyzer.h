@@ -136,6 +136,10 @@ public:
     return false;
   }
 
+  void SetChannelMode(int chanTri) {
+    mChanTri = std::clamp(chanTri, 0, 2);
+  }
+
   // UI 线程: 若音频线程请求了重建 (γ/BPO/采样率变化), 惰性重建 band 表与金字塔。
   void CheckRebuild() {
     if (mNeedRebuild.exchange(false))
@@ -172,8 +176,17 @@ protected:
     if (nb <= 0)
       return;
     const int nCh = std::min(d.nChans, MAXNC);
+    const bool needL = (mChanTri != 2);
+    const bool needR = (mChanTri != 2);
+    const bool needSum = (mChanTri == 2);
 
     for (int c = 0; c < nCh; ++c) {
+      if ((c == 0 && !needL) || (c == 1 && !needR) || (c == 2 && !needSum)) {
+        for (int b = 0; b < MAX_BANDS; ++b)
+          d.vals[c][b] = 0.f;
+        continue;
+      }
+
       const float *raw = d.vals[c].data();
 
       // 金字塔: 原始样本进层 0 历史, 同时逐级降采样, 各层历史追加 (仅保留最近所需窗长)。
@@ -371,6 +384,7 @@ private:
 
   int mBpo = 24;                          // bins per octave (12/24); 音频线程写, UI 线程读
   int mGamma = 20;                        // 低频带宽下限 Hz (低/中/高: 20/10/5)
+  int mChanTri = 0;                       // 0=LR, 1=PWR, 2=SUM
   double mSampleRate = 48000.0;
   std::atomic<bool> mNeedRebuild{false};  // 音频线程置位, UI 线程读取并清除
   std::vector<Band> mBands;               // UI 线程独占
