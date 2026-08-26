@@ -15,12 +15,22 @@ BEGIN_IGRAPHICS_NAMESPACE
 
 // 频谱右侧布局 (Analyzer.cpp 图例与 SpectrumPad 共用):
 // - kDbTickW: dB 刻度文字区宽度
-// - kReadoutW: 电平表数字读数区宽度 (模式单位 + L/R 读数)
 // - kGainBarW: 电平表竖条单条横向宽度 (px)；L/R 两条紧挨无间隙, 总宽 = 2 × kGainBarW
-// 表头区总宽 = kDbTickW + kReadoutW + 2 × kGainBarW
+// 表头区总宽 = kDbTickW + 2 × kGainBarW (读数已上移到顶部图例行)
 constexpr float kDbTickW = 52.f;
-constexpr float kReadoutW = 52.f;
-constexpr float kGainBarW = 22.f;
+constexpr float kGainBarW = 16.f;
+
+// 电平表 UI 数据 (插件 OnIdle 每帧下发; 全 4 字节字段, 打包/解析安全)
+struct LevelMeterUiData {
+  float peakL, peakR; // dBFS 样本峰值 (已平滑)
+  float trueL, trueR; // dBTP 真峰值 (已平滑)
+  float rmsL, rmsR;   // RMS dBFS (300ms 积分)
+  float vuL, vuR;     // VU 对应 dBFS (0 VU = -18 dBFS)
+  float holdL, holdR; // 峰值保持 (显示域 dB; -1000 = 无效)
+  float holdSec;      // 保持时长 (s, 0 = 关)
+  int mode;           // 0: dBTP, 1: dBFS+RMS, 2: VU
+  int overL, overR;   // 过载锁存
+};
 
 // 标准旋钮手柄: 白环 + 深色核心
 inline void DrawKnob(IGraphics &g, float cx, float cy) {

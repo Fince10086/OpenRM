@@ -167,8 +167,8 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     constexpr float kBtnH = 30.f;
     constexpr float kPanelR = kCol2X + kBtnW;
 
-    // 三通道色块图例 (L / R / M, 颜色跟随主题), 与频谱图形区左缘对齐
-    pGraphics->AttachControl(new ChannelLegendControl(IRECT(20, 32, 668, 54)));
+    // 三通道色块图例 (L / R / M, 颜色跟随主题) + 电平表读数, 与频谱图形区左缘对齐
+    pGraphics->AttachControl(new ChannelLegendControl(IRECT(20, 32, 668, 54)), kCtrlTagLegend);
 
     // 主频谱绘制区域
     mSpectrumPad = new SpectrumPad(IRECT(20, 58, 668, 328));
@@ -629,6 +629,7 @@ void ORMAnalyzer::OnIdle() {
     d.overL = mOverL.load(std::memory_order_relaxed);
     d.overR = mOverR.load(std::memory_order_relaxed);
     SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagLevelMeter, sizeof(d), &d);
+    SendControlMsgFromDelegate(kCtrlTagLegend, ChannelLegendControl::kMsgTagLevelReadout, sizeof(d), &d);
   }
 
   // 统计 UI 线程耗时并计算综合 CPU 占用率

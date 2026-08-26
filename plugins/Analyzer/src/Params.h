@@ -43,4 +43,4 @@ enum EMergeAlgo { kMergeAlgoPWR = 0, kMergeAlgoSUM = 1, kNumMergeAlgos = 2 };
 enum ELevelMode { kLevelModeDBTP = 0, kLevelModeDBFS = 1, kLevelModeVU = 2, kNumLevelModes = 3 };
 
 // UI 控件消息标签
-enum EControlTags { kCtrlTagPad = 100, kCtrlTagCpu = 101 };
+enum EControlTags { kCtrlTagPad = 100, kCtrlTagCpu = 101, kCtrlTagLegend = 102 };

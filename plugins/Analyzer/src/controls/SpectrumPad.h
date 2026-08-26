@@ -23,18 +23,6 @@
 BEGIN_IPLUG_NAMESPACE
 BEGIN_IGRAPHICS_NAMESPACE
 
-// 电平表 UI 数据 (插件 OnIdle 每帧下发; 全 4 字节字段, 打包/解析安全)
-struct LevelMeterUiData {
-  float peakL, peakR; // dBFS 样本峰值 (已平滑)
-  float trueL, trueR; // dBTP 真峰值 (已平滑)
-  float rmsL, rmsR;   // RMS dBFS (300ms 积分)
-  float vuL, vuR;     // VU 对应 dBFS (0 VU = -18 dBFS)
-  float holdL, holdR; // 峰值保持 (显示域 dB; -1000 = 无效)
-  float holdSec;      // 保持时长 (s, 0 = 关)
-  int mode;           // 0: dBTP, 1: dBFS+RMS, 2: VU
-  int overL, overR;   // 过载锁存
-};
-
 class SpectrumPad : public IControl {
 public:
   using TDataPacket = std::array<float, 4096>;
@@ -164,8 +152,8 @@ public:
 
   void Draw(IGraphics &g) override {
     g.FillRect(COL_100(), mRECT);
-    // 图形区左对齐, 右侧让出刻度文字区 + 读数区 + L/R 两条电平表竖条
-    const IRECT plot = mRECT.GetReducedFromRight(kDbTickW + kReadoutW + 2.f * kGainBarW);
+    // 图形区左对齐, 右侧让出刻度文字区 + L/R 两条电平表竖条 (读数在顶部图例行)
+    const IRECT plot = mRECT.GetReducedFromRight(kDbTickW + 2.f * kGainBarW);
     DrawBackground(g, plot);
     DrawDbGrid(g, plot);
     DrawSpectrum(g, plot);
@@ -285,18 +273,17 @@ private:
     return plot.B - (db - mBottomDb) / (kTopDb - mBottomDb) * plot.H();
   }
 
-  // L/R 双电平表条 + 读数区 + over LED
+  // L/R 双电平表条 + over 指示 (读数在顶部图例行, 由 ChannelLegendControl 绘制)
   void DrawLevelMeter(IGraphics &g, const IRECT &plot) {
     IColor cL, cR, cM;
     GetChannelColors(cL, cR, cM);
 
-    const float barL0 = plot.R + kDbTickW + kReadoutW;
+    const float barL0 = plot.R + kDbTickW;
     const IRECT barL(barL0, plot.T, barL0 + kGainBarW, plot.B);
     const IRECT barR(barL.R, plot.T, barL.R + kGainBarW, plot.B);
 
     DrawMeterBar(g, plot, barL, cL, 0);
     DrawMeterBar(g, plot, barR, cR, 1);
-    DrawReadout(g, plot);
   }
 
   void DrawMeterBar(IGraphics &g, const IRECT &plot, const IRECT &bar, const IColor &chan, int ch) {
@@ -322,29 +309,30 @@ private:
 
     g.FillRect(COL_300(), bar); // 轨道底色 (与滑块条一致)
 
-    // dBFS+RMS 模式: RMS 全宽半透明通道色芯
-    if (mMeterMode == 1 && rmsVal > mBottomDb) {
-      const float yRms = YOf(plot, std::clamp(rmsVal, mBottomDb, kTopDb));
-      const IColor rc(120, chan.R, chan.G, chan.B);
-      g.FillRect(rc, IRECT(bar.L, yRms, bar.R, bar.B));
-    }
+    // 分段填充: 绿区通道色 / 黄区固定黄 / 红区固定红, 统一 alpha (深浅由层决定)
+    auto fillSeg = [&](float yTop, const IColor &base, int alpha) {
+      const float yM18 = YOf(plot, -18.f);
+      const float yM6 = YOf(plot, -6.f);
+      const IColor cRed(alpha, MeterRed().R, MeterRed().G, MeterRed().B);
+      const IColor cYellow(alpha, MeterYellow().R, MeterYellow().G, MeterYellow().B);
+      const IColor cGreen(alpha, base.R, base.G, base.B);
+      if (yTop < yM6)
+        g.FillRect(cRed, IRECT(bar.L, yTop, bar.R, yM6));
+      if (yTop < yM18)
+        g.FillRect(cYellow, IRECT(bar.L, std::max(yTop, yM6), bar.R, yM18));
+      if (yTop < bar.B)
+        g.FillRect(cGreen, IRECT(bar.L, std::max(yTop, yM18), bar.R, bar.B));
+    };
 
-    // 主填充 (分段着色: 绿区通道色不动, 黄/红区换固定语义色)
-    const float yTop = YOf(plot, val);
-    const float yM18 = YOf(plot, -18.f);
-    const float yM6 = YOf(plot, -6.f);
-    IRECT fill = bar;
     if (mMeterMode == 1) {
-      // dBFS: peak 为 6px 窄芯, 与 RMS 全宽芯叠加区分 (峰值表惯例)
-      const float cx = bar.MW();
-      fill = IRECT(cx - 3.f, bar.T, cx + 3.f, bar.B);
+      // dBFS+RMS: 下层 dBFS 全宽浅色, 上层 RMS 全宽深色, 粗细一致
+      const float yPeak = YOf(plot, val);
+      const float yRms = YOf(plot, std::clamp(rmsVal, mBottomDb, kTopDb));
+      fillSeg(yPeak, chan, 90);
+      fillSeg(yRms, chan, 235);
+    } else {
+      fillSeg(YOf(plot, val), chan, 255); // dBTP / VU 单层实色
     }
-    if (yTop < yM6)
-      g.FillRect(MeterRed(), IRECT(fill.L, yTop, fill.R, yM6));
-    if (yTop < yM18)
-      g.FillRect(MeterYellow(), IRECT(fill.L, std::max(yTop, yM6), fill.R, yM18));
-    if (yTop < bar.B)
-      g.FillRect(chan, IRECT(fill.L, std::max(yTop, yM18), fill.R, bar.B));
 
     // 峰值保持亮线
     if (mHoldSec > 0.f && hold > mBottomDb) {
@@ -352,32 +340,16 @@ private:
       g.FillRect(COL_900(), IRECT(bar.L, yH - 1.f, bar.R, yH + 1.f));
     }
 
-    // over LED: 满刻度上方空白处
-    const float yLed = std::clamp(YOf(plot, top) - 5.f, plot.T + 5.f, bar.B - 5.f);
-    g.FillCircle(over ? MeterOverLed() : COL_500(), bar.MW(), yLed, 4.f);
-  }
-
-  // 读数区: 模式单位 + L/R 当前值 (全部 20px, 与界面其余文字一致)
-  void DrawReadout(IGraphics &g, const IRECT &plot) {
-    const IRECT ro(plot.R + kDbTickW, plot.T, plot.R + kDbTickW + kReadoutW, plot.B);
-    const char *unit = (mMeterMode == 0) ? "dBTP" : (mMeterMode == 1) ? "dBFS" : "VU";
-    char bufL[16], bufR[16];
-    if (mMeterMode == 2) {
-      std::snprintf(bufL, sizeof(bufL), "%+d", (int)std::lround(mVuL + 18.f));
-      std::snprintf(bufR, sizeof(bufR), "%+d", (int)std::lround(mVuR + 18.f));
-    } else if (mMeterMode == 0) {
-      std::snprintf(bufL, sizeof(bufL), "%.1f", mTrueL);
-      std::snprintf(bufR, sizeof(bufR), "%.1f", mTrueR);
-    } else {
-      std::snprintf(bufL, sizeof(bufL), "%.1f", mPeakL);
-      std::snprintf(bufR, sizeof(bufR), "%.1f", mPeakR);
+    // over 指示 (仅 dBFS): 0 dB 以上完全留空 (盖掉背景/灰色), over 时方形块顶对齐频谱表顶部
+    if (mMeterMode == 1) {
+      const float y0 = YOf(plot, 0.f);
+      g.FillRect(COL_100(), IRECT(bar.L, plot.T, bar.R, y0));
+      if (over) {
+        constexpr float kGap = 3.f;
+        if (y0 - kGap > plot.T + 1.f)
+          g.FillRect(MeterOverLed(), IRECT(bar.L, plot.T, bar.R, y0 - kGap));
+      }
     }
-    g.DrawText(IText(20, COL_500(), kFontSemiBold, EAlign::Far, EVAlign::Top), unit,
-               IRECT(ro.L, ro.T + 2.f, ro.R, ro.T + 26.f));
-    g.DrawText(IText(20, COL_900(), kFontRegular, EAlign::Far, EVAlign::Top), bufL,
-               IRECT(ro.L, ro.T + 30.f, ro.R, ro.T + 54.f));
-    g.DrawText(IText(20, COL_900(), kFontRegular, EAlign::Far, EVAlign::Top), bufR,
-               IRECT(ro.L, ro.T + 58.f, ro.R, ro.T + 82.f));
   }
 
   // 每 20dB 一档的右侧刻度文字 (网格线已由 DrawBackground 色块替代)
