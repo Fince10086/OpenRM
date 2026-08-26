@@ -168,14 +168,32 @@ public:
     g.FillRect(COL_100(), mRECT);
     // 图形区左对齐, 右侧让出 L/R 两条电平表竖条 (刻度文字绘制在频谱区域内部右侧)
     const IRECT plot = mRECT.GetReducedFromRight(2.f * kGainBarW);
-    DrawBackground(g, plot);
-    DrawDbGrid(g, plot);
-    DrawFreqGrid(g, plot);
+    DrawGridLayer(g, plot);
     DrawSpectrum(g, plot);
     DrawLevelMeter(g, plot);
   }
 
 private:
+  // 静态网格 (背景色块 + dB/频率刻度) 绘制进离屏 Layer 缓存:
+  // 内容只依赖 Range 底限 / 电平表模式 (VU 参考线) / 主题三值, 任一变化才重建, 平时每帧 1 次纹理 blit。
+  void DrawGridLayer(IGraphics &g, const IRECT &plot) {
+    const int hue = ThemeHue(), sat = ThemeSatMax(), mode = ThemeMode();
+    if (!g.CheckLayer(mGridLayer) || mBottomDb != mGridBottomDb || mMeterMode != mGridMeterMode ||
+        hue != mGridHue || sat != mGridSat || mode != mGridMode) {
+      g.StartLayer(this, plot);
+      DrawBackground(g, plot);
+      DrawDbGrid(g, plot);
+      DrawFreqGrid(g, plot);
+      mGridLayer = g.EndLayer();
+      mGridBottomDb = mBottomDb;
+      mGridMeterMode = mMeterMode;
+      mGridHue = hue;
+      mGridSat = sat;
+      mGridMode = mode;
+    }
+    g.DrawLayer(mGridLayer);
+  }
+
   struct Pt {
     float x, y;
   };
@@ -625,6 +643,14 @@ private:
   std::vector<Pt> mSpecPtsR;    // 预分配: R 填充点
   std::vector<Pt> mSpecPtsM;    // 预分配: 合并声道 (L+R) 填充点
   std::vector<BandAcc> mBandAcc; // 预分配: 每 band 双通道峰值
+
+  // 静态网格离屏缓存; 状态哨兵初值保证首帧重建
+  ILayerPtr mGridLayer;
+  float mGridBottomDb = -1000.f;
+  int mGridMeterMode = -1;
+  int mGridHue = -1;
+  int mGridSat = -1;
+  int mGridMode = -1;
 };
 
 END_IGRAPHICS_NAMESPACE
