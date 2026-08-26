@@ -19,6 +19,8 @@
 
 BEGIN_IPLUG_NAMESPACE
 
+#ifndef O_RM_HALFBAND_DEC2_DEFINED
+#define O_RM_HALFBAND_DEC2_DEFINED
 namespace detail {
 
 // 半带 ×2 抽取器 (跨帧保持滤波状态)。系数为 17 抽头 Hamming 窗半带 (截止 π/2, DC 增益 1),
@@ -77,6 +79,7 @@ struct HalfbandDec2 {
 };
 
 } // namespace detail
+#endif
 
 template <int MAXNC = 3, int QUEUE_SIZE = 64, int MAX_BANDS = 4096>
 class VQTAnalyzer : public ISender<MAXNC, QUEUE_SIZE, std::array<float, MAX_BANDS>> {

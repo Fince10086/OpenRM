@@ -75,13 +75,32 @@ public:
       mReleaseCoeff = (float)std::exp(-updatePeriod / mReleaseSec);
 
       const float a = mAttackCoeff, r = mReleaseCoeff;
-      for (int c = 0; c < 3; ++c) {
-        if (mSpectrum[c].size() != (size_t)nVals)
-          mSpectrum[c].assign(nVals, 0.f);
-        for (int i = 0; i < nVals; ++i) {
-          const float raw = d.vals[c][i], prev = mSpectrum[c][i];
-          const float coef = (raw > prev) ? a : r;
-          mSpectrum[c][i] = coef * prev + (1.f - coef) * raw;
+      if (mMode == 2 && mPAZFreqs.size() == (size_t)nVals) {
+        for (int c = 0; c < 3; ++c) {
+          if (mSpectrum[c].size() != (size_t)nVals)
+            mSpectrum[c].assign(nVals, 0.f);
+          for (int i = 0; i < nVals; ++i) {
+            const float raw = d.vals[c][i], prev = mSpectrum[c][i];
+            const float fc = mPAZFreqs[i];
+            const float bw = (fc < 250.f)
+                ? ((i > 0 && mPAZFreqs[i] < 250.f) ? (mPAZFreqs[i] - mPAZFreqs[i - 1]) : 40.f)
+                : (fc * 0.1f);
+            // 物理起振时间常数 τ = 1 / (π · bw): 窄带低频展现自然蓄力爬坡感
+            const float tauBand = std::max(mAttackSec, 1.f / (3.14159f * std::max(bw, 5.f)));
+            const float aBand = (float)std::exp(-updatePeriod / tauBand);
+            const float coef = (raw > prev) ? aBand : r;
+            mSpectrum[c][i] = coef * prev + (1.f - coef) * raw;
+          }
+        }
+      } else {
+        for (int c = 0; c < 3; ++c) {
+          if (mSpectrum[c].size() != (size_t)nVals)
+            mSpectrum[c].assign(nVals, 0.f);
+          for (int i = 0; i < nVals; ++i) {
+            const float raw = d.vals[c][i], prev = mSpectrum[c][i];
+            const float coef = (raw > prev) ? a : r;
+            mSpectrum[c][i] = coef * prev + (1.f - coef) * raw;
+          }
         }
       }
       // VQT 模式: 频带方向 3 点平滑 (0.25/0.5/0.25), 抹掉跨层边界 band 起振首帧的瞬时缺口
