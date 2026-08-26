@@ -47,6 +47,14 @@ public:
     mSpecPtsR.reserve(kSpectrumBands);
     mSpecPtsM.reserve(kSpectrumBands);
     RebuildBinToBand();
+    // 预计算 256 个 band 的频率归一化位置 (对数频率轴恒定点), 绘制时只做一次乘加
+    const double logLo = std::log2(kSpecFreqLo);
+    const double logHi = std::log2(kSpecFreqHi);
+    const double logBand = (logHi - logLo) / kSpectrumBands;
+    for (int b = 0; b < kSpectrumBands; ++b) {
+      const double fCenter = kSpecFreqLo * std::exp2(logBand * (b + 0.5));
+      mBandNormX[b] = FreqNorm(fCenter);
+    }
   }
 
   void OnMsgFromDelegate(int msgTag, int dataSize, const void *pData) override {
@@ -136,6 +144,9 @@ public:
       mVQTFreqs.resize(n);
       if (n > 0)
         std::memcpy(mVQTFreqs.data(), pData, (size_t)n * sizeof(float));
+      mVQTFreqNorm.resize(n);
+      for (int i = 0; i < n; ++i)
+        mVQTFreqNorm[i] = FreqNorm(mVQTFreqs[i]);
       SetDirty(false);
     } else if (msgTag == kMsgTagLevelMeter) {
       if (dataSize != (int)sizeof(LevelMeterUiData))
@@ -453,10 +464,6 @@ private:
     IColor cL, cR, cO;
     GetChannelColors(cL, cR, cO);
 
-    const double logLo = std::log2(kSpecFreqLo);
-    const double logHi = std::log2(kSpecFreqHi);
-    const double logBand = (logHi - logLo) / kSpectrumBands;
-
     auto ampToY = [&](float amp) -> float {
       const float db =
           (amp > 1e-6f) ? std::clamp(20.f * std::log10(amp), mBottomDb, kTopDb) : mBottomDb;
@@ -471,7 +478,7 @@ private:
       const int nb = (int)mVQTFreqs.size();
       const int have = std::min(nb, (int)mSpectrum[0].size());
       for (int b = 0; b < have; ++b) {
-        const float x = plot.L + FreqNorm(mVQTFreqs[b]) * plot.W();
+        const float x = plot.L + mVQTFreqNorm[b] * plot.W();
         const float aL = mSpectrum[0][b];
         const float aR = mSpectrum[1][b];
         const float aSum = (mSpectrum[2].size() > (size_t)b) ? mSpectrum[2][b] : 0.f;
@@ -523,8 +530,7 @@ private:
 
     for (int b = 0; b < kSpectrumBands; ++b) {
       const BandAcc &acc = mBandAcc[b];
-      const double fCenter = kSpecFreqLo * std::exp2(logBand * (b + 0.5));
-      const float x = plot.L + FreqNorm(fCenter) * plot.W();
+      const float x = plot.L + mBandNormX[b] * plot.W();
       const float aL = acc.max[0], aR = acc.max[1], aSum = acc.max[2];
       const float yL = ampToY(aL);
       const float yR = ampToY(aR);
@@ -585,23 +591,35 @@ private:
     for (const Pt &p : pts)
       topY = std::min(topY, p.y);
     const IRECT gradRect(plot.L, topY, plot.R, plot.B);
-    // 指数衰减渐变: 顶部接近实色, 按指数曲线快速向底部透明 (多 stops 近似)
-    constexpr int kGradientStops = 12;
-    constexpr float kGradientDecay = 3.5f;
+    // 指数衰减渐变: 顶部接近实色, 按指数曲线快速向底部透明 (多 stops 近似)。
+    // alpha 权重为固定序列 (GradW 首帧预计算), 每帧只做乘加与取整, 不再逐帧算 exp。
+    const auto &gradW = GradW();
     IPattern fill = IPattern::CreateLinearGradient(gradRect, EDirection::Vertical);
     for (int i = 0; i < kGradientStops; ++i) {
       const float t = (float)i / (float)(kGradientStops - 1);
-      const float alphaF =
-          (float)minAlpha + (float)(topAlpha - minAlpha) * std::exp(-kGradientDecay * t);
-      fill.AddStop(IColor((int)std::lround(std::clamp(alphaF, 0.f, 255.f)), color.R, color.G,
-                          color.B),
-                   t);
+      const int alpha = (int)std::lround(
+          std::clamp((float)minAlpha + (float)(topAlpha - minAlpha) * gradW[i], 0.f, 255.f));
+      fill.AddStop(IColor(alpha, color.R, color.G, color.B), t);
     }
     g.PathFill(fill);
   }
 
   static constexpr int kGradientMinAlpha = 10; // L/R 实体填充底部最小不透明度
   static constexpr int kLayerTopAlpha = 160;   // L/R 顶部不透明度 (从 255 降低, 更透明)
+  static constexpr int kGradientStops = 12;    // 渐变 stops 数 (指数近似精度)
+  static constexpr float kGradientDecay = 3.5f;
+  // 渐变 alpha 权重 exp(-kGradientDecay·t), 与绘制参数无关, 静态局部只在首帧初始化一次
+  static const std::array<float, kGradientStops> &GradW() {
+    static const std::array<float, kGradientStops> w = [] {
+      std::array<float, kGradientStops> a{};
+      for (int i = 0; i < kGradientStops; ++i) {
+        const float t = (float)i / (float)(kGradientStops - 1);
+        a[i] = std::exp(-kGradientDecay * t);
+      }
+      return a;
+    }();
+    return w;
+  }
   static constexpr int kSpectrumBands = 256;
   static constexpr float kSpecFreqLo = 20.f;
   static constexpr float kSpecFreqHi = 20000.f;
@@ -642,7 +660,9 @@ private:
   int mMode = 0;                   // 分析模式: 0=FFT, 1=VQT
   int mChanMode = 0;               // 声道显示模式: 0=L/R, 1=MERGE
   int mMergeAlgo = 0;              // 合并算法: 0=PWR 功率和, 1=SUM 单声道和
-  std::vector<float> mVQTFreqs; // VQT band 中心频率 (Hz), 由插件下发
+  std::vector<float> mVQTFreqs;     // VQT band 中心频率 (Hz), 由插件下发
+  std::vector<float> mVQTFreqNorm;  // VQT band 频率归一化位置 (预计算, 与 mVQTFreqs 同步)
+  std::array<float, kSpectrumBands> mBandNormX{}; // FFT 256 band 频率归一化位置 (预计算)
   float mAttackCoeff = 0.2f;
   float mReleaseCoeff = 0.9f;
   float mAttackSec = 0.05f; // 上升时间常数 (s), 由插件 Attack 参数下发
