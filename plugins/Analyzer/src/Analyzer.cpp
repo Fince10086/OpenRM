@@ -168,16 +168,45 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     constexpr float kCol2X = kCol1X + kBtnW + kBtnGap; // 右列按钮左缘
     constexpr float kPanelR = kCol2X + kBtnW;
 
+    // 顶部三按钮 (LR / FFT·VQT / RES) 统一尺寸: 宽 62 高 26, 容纳 HIGH/PWR 文字 + 基础内边距
+    constexpr float kTopBtnW = 62.f;
+    constexpr float kTopBtnH = 26.f;
+    constexpr float kTopBtnY = 22.f;
+    constexpr float kTopBtnGap = 6.f; // LR 与 FFT 之间留空隙, FFT 与 RES 紧贴
+
     // 三通道色块图例 (L / R / M, 颜色跟随主题) + 电平表读数, 与频谱图形区左缘对齐
     pGraphics->AttachControl(new ChannelLegendControl(IRECT(20, 32, 668, 54)), kCtrlTagLegend);
 
     // 声道显示模式循环按钮 (三态: LR / PWR / SUM).
     // L/R 样式: 左半 L 色右半 R 色; PWR/SUM 样式: 整块 M 色 (Merge 色) + 居中标签。
-    // 左缘与频谱图左缘 (x=20) 对齐, 底部与频谱图顶部 (y=58) 留 6px 间距。
-    mChanModeBtn = new FlatCycleButton(IRECT(20.f, 22.f, 20.f + kBtnW, 52.f), kChannelMode,
-                                       {"L/R", "PWR", "SUM"}, btnStyle, true);
+    mChanModeBtn = new FlatCycleButton(IRECT(20.f, kTopBtnY, 20.f + kTopBtnW, kTopBtnY + kTopBtnH),
+                                       kChannelMode, {"L/R", "PWR", "SUM"}, btnStyle, true);
     pGraphics->AttachControl(mChanModeBtn);
     bindTip(mChanModeBtn, orm::kTxtTipChanMode);
+
+    // 分析引擎切换按钮 (FFT / VQT) — LR 右侧, 留 kTopBtnGap 空隙
+    constexpr float kModeX = 20.f + kTopBtnW + kTopBtnGap;
+    IVStyle toggleStyle = btnStyle;
+    toggleStyle.showLabel = false;
+    toggleStyle.showValue = false;
+    mModeToggle = new FlatToggleControl(IRECT(kModeX, kTopBtnY, kModeX + kTopBtnW, kTopBtnY + kTopBtnH),
+                                        kMode, " ", toggleStyle, "FFT", "VQT");
+    pGraphics->AttachControl(mModeToggle);
+    bindTip(mModeToggle, orm::kTxtTipMode);
+
+    // FFT 分辨率循环按钮 (LOW/MID/HIGH = 2048/4096/8192) — 紧贴 FFT 按钮右侧, 仅 FFT 模式可见
+    constexpr float kResX = kModeX + kTopBtnW;
+    mResBtn = new FlatCycleButton(IRECT(kResX, kTopBtnY, kResX + kTopBtnW, kTopBtnY + kTopBtnH), kRes,
+                                  {"LOW", "MID", "HIGH"}, btnStyle);
+    pGraphics->AttachControl(mResBtn);
+    bindTip(mResBtn, orm::kTxtTipRes);
+
+    // VQT 低频分辨率循环按钮 (LOW/MID/HIGH = 20/10/5 Hz) — 同位置, 仅 VQT 模式可见
+    mLfResBtn = new FlatCycleButton(IRECT(kResX, kTopBtnY, kResX + kTopBtnW, kTopBtnY + kTopBtnH), kLfRes,
+                                    {"LOW", "MID", "HIGH"}, btnStyle);
+    pGraphics->AttachControl(mLfResBtn);
+    bindTip(mLfResBtn, orm::kTxtTipLfRes);
+    mLfResBtn->Hide(true); // 默认 FFT 模式, 初始隐藏
 
     // 主频谱绘制区域
     mSpectrumPad = new SpectrumPad(IRECT(20, 58, 668, 328));
@@ -208,71 +237,49 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     bindText(orm::kTxtBpo, [this](const char *s) { mBpoSlider->SetHeaderLabel(s); });
     bindTip(mBpoSlider, orm::kTxtTipBpo);
 
-    constexpr float kMidX = kCol1X + (kPanelR - kCol1X) * 0.5f; // 右栏水平中点 (Mode/Res 按钮分界)
-
-    // 分析引擎切换按钮 (FFT / VQT) — 占左半
-    IVStyle toggleStyle = btnStyle;
-    toggleStyle.showLabel = false;
-    toggleStyle.showValue = false;
-    mModeToggle = new FlatToggleControl(IRECT(kCol1X, 120, kMidX, 150), kMode, " ", toggleStyle, "FFT",
-                                        "VQT");
-    pGraphics->AttachControl(mModeToggle);
-    bindTip(mModeToggle, orm::kTxtTipMode);
-
-    // FFT 分辨率循环按钮 (LOW/MID/HIGH = 2048/4096/8192) — 占右半, 仅 FFT 模式可见
-    mResBtn = new FlatCycleButton(IRECT(kMidX, 120, kPanelR, 150), kRes, {"LOW", "MID", "HIGH"}, btnStyle);
-    pGraphics->AttachControl(mResBtn);
-    bindTip(mResBtn, orm::kTxtTipRes);
-
-    // VQT 低频分辨率循环按钮 (LOW/MID/HIGH = 20/10/5 Hz) — 同位置, 仅 VQT 模式可见
-    mLfResBtn = new FlatCycleButton(IRECT(kMidX, 120, kPanelR, 150), kLfRes, {"LOW", "MID", "HIGH"}, btnStyle);
-    pGraphics->AttachControl(mLfResBtn);
-    bindTip(mLfResBtn, orm::kTxtTipLfRes);
-    mLfResBtn->Hide(true); // 默认 FFT 模式, 初始隐藏
-
     // 上升响应时间滑块 (s)
     mAttackSlider =
-        new ORMSlider(IRECT(kCol1X, 159, kPanelR, 201), kAttack, "ATTACK", style, EDirection::Horizontal);
+        new ORMSlider(IRECT(kCol1X, 120, kPanelR, 162), kAttack, "ATTACK", style, EDirection::Horizontal);
     pGraphics->AttachControl(mAttackSlider);
     bindText(orm::kTxtAttack, [this](const char *s) { mAttackSlider->SetHeaderLabel(s); });
     bindTip(mAttackSlider, orm::kTxtTipAttack);
 
     // 释放衰减时间滑块 (s)
     mReleaseSlider =
-        new ORMSlider(IRECT(kCol1X, 210, kPanelR, 252), kRelease, "RELEASE", style, EDirection::Horizontal);
+        new ORMSlider(IRECT(kCol1X, 171, kPanelR, 213), kRelease, "RELEASE", style, EDirection::Horizontal);
     pGraphics->AttachControl(mReleaseSlider);
     bindText(orm::kTxtRelease, [this](const char *s) { mReleaseSlider->SetHeaderLabel(s); });
     bindTip(mReleaseSlider, orm::kTxtTipRelease);
 
     // MIX 滑块
-    mMixSlider = new ORMSlider(IRECT(kCol1X, 261, kPanelR, 303), kMix, "MIX", style, EDirection::Horizontal);
+    mMixSlider = new ORMSlider(IRECT(kCol1X, 222, kPanelR, 264), kMix, "MIX", style, EDirection::Horizontal);
     pGraphics->AttachControl(mMixSlider);
     bindText(orm::kTxtMix, [this](const char *s) { mMixSlider->SetHeaderLabel(s); });
     bindTip(mMixSlider, orm::kTxtTipMix);
 
     IVButtonControl *undoBtn =
-        MakeMomentary(IRECT(kCol1X, 312, kCol1X + kBtnW, 342), [this](IControl *) { Undo(); }, "UNDO", btnStyle);
+        MakeMomentary(IRECT(kCol1X, 273, kCol1X + kBtnW, 303), [this](IControl *) { Undo(); }, "UNDO", btnStyle);
     pGraphics->AttachControl(undoBtn);
     bindText(orm::kTxtUndo, [undoBtn](const char *s) {
       undoBtn->SetLabelStr(s);
       undoBtn->SetDirty(false);
     });
     IVButtonControl *redoBtn =
-        MakeMomentary(IRECT(kCol2X, 312, kPanelR, 342), [this](IControl *) { Redo(); }, "REDO", btnStyle);
+        MakeMomentary(IRECT(kCol2X, 273, kPanelR, 303), [this](IControl *) { Redo(); }, "REDO", btnStyle);
     pGraphics->AttachControl(redoBtn);
     bindText(orm::kTxtRedo, [redoBtn](const char *s) {
       redoBtn->SetLabelStr(s);
       redoBtn->SetDirty(false);
     });
     IVButtonControl *saveBtn =
-        MakeMomentary(IRECT(kCol1X, 351, kCol1X + kBtnW, 381), [this](IControl *) { SaveFile(); }, "SAVE", btnStyle);
+        MakeMomentary(IRECT(kCol1X, 312, kCol1X + kBtnW, 342), [this](IControl *) { SaveFile(); }, "SAVE", btnStyle);
     pGraphics->AttachControl(saveBtn);
     bindText(orm::kTxtSave, [saveBtn](const char *s) {
       saveBtn->SetLabelStr(s);
       saveBtn->SetDirty(false);
     });
     IVButtonControl *loadBtn =
-        MakeMomentary(IRECT(kCol2X, 351, kPanelR, 381), [this](IControl *) { LoadFile(); }, "LOAD", btnStyle);
+        MakeMomentary(IRECT(kCol2X, 312, kPanelR, 342), [this](IControl *) { LoadFile(); }, "LOAD", btnStyle);
     pGraphics->AttachControl(loadBtn);
     bindText(orm::kTxtLoad, [loadBtn](const char *s) {
       loadBtn->SetLabelStr(s);
@@ -280,14 +287,14 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     });
 
     // 电平表模式循环按钮 (dBTP -> dBFS -> VU)
-    mLevelModeBtn = new FlatCycleButton(IRECT(kCol1X, 390, kCol1X + kBtnW, 420), kLevelMode,
+    mLevelModeBtn = new FlatCycleButton(IRECT(kCol1X, 351, kCol1X + kBtnW, 381), kLevelMode,
                                         {"dBTP", "dBFS", "VU"}, btnStyle);
     pGraphics->AttachControl(mLevelModeBtn);
     bindTip(mLevelModeBtn, orm::kTxtTipLevelMode);
 
     // 电平表 RESET (清除峰值保持与过载锁存)
     mLevelResetBtn =
-        MakeMomentary(IRECT(kCol2X, 390, kPanelR, 420), [this](IControl *) { mLevelResetFlag.store(true); },
+        MakeMomentary(IRECT(kCol2X, 351, kPanelR, 381), [this](IControl *) { mLevelResetFlag.store(true); },
                       "RESET", btnStyle);
     pGraphics->AttachControl(mLevelResetBtn);
     bindText(orm::kTxtReset, [this](const char *s) {
@@ -300,7 +307,7 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
 
     // 电平表峰值保持时长滑块 (s)
     mLevelHoldSlider =
-        new ORMSlider(IRECT(kCol1X, 429, kPanelR, 471), kLevelHold, "HOLD", style, EDirection::Horizontal);
+        new ORMSlider(IRECT(kCol1X, 390, kPanelR, 432), kLevelHold, "HOLD", style, EDirection::Horizontal);
     pGraphics->AttachControl(mLevelHoldSlider);
     bindText(orm::kTxtLevelHold, [this](const char *s) {
       if (mLevelHoldSlider)
