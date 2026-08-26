@@ -25,9 +25,43 @@
 
 #if defined(OS_MAC)
 #include <CoreFoundation/CoreFoundation.h>
+#include <mach/mach.h>
 #elif defined(OS_WIN)
 #include <windows.h>
+#elif defined(__linux__)
+#include <ctime>
 #endif
+
+// 线程 CPU 时间 (纳秒): 只累计本线程实际执行时间, 排除被抢占/调度延迟。
+// CPU 占用测量用它替代墙钟, 避免系统瞬时负载 (其他进程抢占) 导致读数虚高。
+// 非 mac/win/linux 平台回退墙钟 (等效旧行为)。
+static uint64_t ThreadCpuNs() {
+#if defined(OS_MAC)
+  thread_basic_info_data_t tbi;
+  mach_msg_type_number_t count = THREAD_BASIC_INFO_COUNT;
+  if (thread_info(mach_thread_self(), THREAD_BASIC_INFO, (thread_info_t)&tbi, &count) == KERN_SUCCESS) {
+    const auto us = [](time_value_t t) { return (uint64_t)t.seconds * 1000000ULL + (uint64_t)t.microseconds; };
+    return (us(tbi.user_time) + us(tbi.system_time)) * 1000ULL;
+  }
+  return 0;
+#elif defined(OS_WIN)
+  FILETIME create, exit, kernel, user;
+  if (GetThreadTimes(GetCurrentThread(), &create, &exit, &kernel, &user)) {
+    const auto ft = [](FILETIME f) { return (((uint64_t)f.dwHighDateTime << 32) | f.dwLowDateTime) * 100ULL; };
+    return ft(kernel) + ft(user);
+  }
+  return 0;
+#elif defined(__linux__)
+  timespec ts;
+  if (clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts) == 0)
+    return (uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec;
+  return 0;
+#else
+  return (uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(
+             std::chrono::steady_clock::now().time_since_epoch())
+      .count();
+#endif
+}
 
 // 手势撤销的时间窗: 两次 UI 改动间隔超过该值时, 下一次改动前推一次撤销快照
 static constexpr double kGestureGapSec = 0.4;
@@ -400,7 +434,7 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
 
 #if IPLUG_DSP
 void ORMAnalyzer::ProcessBlock(sample **inputs, sample **outputs, int nFrames) {
-  const auto cpuT0 = std::chrono::steady_clock::now();
+  const uint64_t cpuT0 = ThreadCpuNs(); // 线程实际 CPU 时间基线 (不含被抢占)
   nFrames = std::min(nFrames, kMaxBlock);
 
   const int nOuts = NOutChansConnected();
@@ -477,10 +511,9 @@ void ORMAnalyzer::ProcessBlock(sample **inputs, sample **outputs, int nFrames) {
     mOverR.store(s.overR, std::memory_order_relaxed);
   }
 
-  // 统计音频线程耗时（一阶平滑）
+  // 统计音频线程耗时（一阶平滑）: 用线程 CPU 时间差值, 抢占/调度延迟不纳入
   {
-    using namespace std::chrono;
-    const double processMs = duration<double, std::milli>(steady_clock::now() - cpuT0).count();
+    const double processMs = (double)(ThreadCpuNs() - cpuT0) / 1e6;
     const double blockMs = (double)nFrames / std::max(GetSampleRate(), 1.0) * 1000.0;
     if (blockMs > 0.0)
       mCpuAudio += (processMs / blockMs - mCpuAudio) * 0.1;
@@ -575,7 +608,7 @@ void ORMAnalyzer::OnIdle() {
   const auto wallNow = steady_clock::now();
   const double idleGapMs = duration<double, std::milli>(wallNow - mLastIdleTp).count();
   mLastIdleTp = wallNow;
-  const auto workT0 = wallNow;
+  const uint64_t workT0 = ThreadCpuNs(); // UI 线程实际 CPU 时间基线 (不含被抢占)
 
   // 若 VQT 参数发生变动，按需重建频带表与多速率金字塔
   mVQT.CheckRebuild();
@@ -656,9 +689,9 @@ void ORMAnalyzer::OnIdle() {
     SendControlMsgFromDelegate(kCtrlTagLegend, ChannelLegendControl::kMsgTagLevelReadout, sizeof(d), &d);
   }
 
-  // 统计 UI 线程耗时并计算综合 CPU 占用率
+  // 统计 UI 线程耗时并计算综合 CPU 占用率: 工作量为线程 CPU 时间差值 (抢占不计), 分母为墙钟窗口
   {
-    const double uiMs = duration<double, std::milli>(steady_clock::now() - workT0).count();
+    const double uiMs = (double)(ThreadCpuNs() - workT0) / 1e6;
     mUiWorkMs += uiMs;
     mUiWinMs += idleGapMs;
     if (mUiWinMs >= 500.0) {
