@@ -1,5 +1,11 @@
 cmake_minimum_required(VERSION 3.14)
 
+# 构建类型默认 Release (-O3 -DNDEBUG)
+if(NOT CMAKE_BUILD_TYPE)
+  set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type (Release/Debug/RelWithDebInfo)" FORCE)
+  message(STATUS "CMAKE_BUILD_TYPE 未指定, 默认使用 Release (优化构建)")
+endif()
+
 # 版本单一来源: plugins/BandPass/config.h (PLUG_VERSION_STR)
 file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/plugins/BandPass/config.h" _orm_version REGEX "PLUG_VERSION_STR \"[0-9.]+\"")
 string(REGEX MATCH "\"([0-9.]+)\"" _orm_version_match "${_orm_version}")
