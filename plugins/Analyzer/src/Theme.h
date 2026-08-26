@@ -94,7 +94,6 @@ inline IColor WarmGray(int v) {
   return HSBToIColor(ThemeHue(), s, b);
 }
 
-static constexpr float BLOCK_GAP = 1.5f;
 static constexpr float HANDLE_R = 7.f;
 static constexpr float HANDLE_RING = 1.5f;
 static constexpr float LABEL_VALUE_GAP = 12.f;

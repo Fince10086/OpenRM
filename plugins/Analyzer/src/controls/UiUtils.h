@@ -14,10 +14,8 @@ BEGIN_IPLUG_NAMESPACE
 BEGIN_IGRAPHICS_NAMESPACE
 
 // 频谱右侧布局 (Analyzer.cpp 图例与 SpectrumPad 共用):
-// - kDbTickW: dB 刻度文字区宽度
 // - kGainBarW: 电平表竖条单条横向宽度 (px)；L/R 两条紧挨无间隙, 总宽 = 2 × kGainBarW
-// 表头区总宽 = kDbTickW + 2 × kGainBarW (读数已上移到顶部图例行)
-constexpr float kDbTickW = 52.f;
+// - 表头区总宽 = 2 × kGainBarW (dB 刻度文字已移入频谱区域内部右侧)
 constexpr float kGainBarW = 16.f;
 
 // 电平表 UI 数据 (插件 OnIdle 每帧下发; 全 4 字节字段, 打包/解析安全)

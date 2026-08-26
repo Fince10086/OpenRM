@@ -152,10 +152,11 @@ public:
 
   void Draw(IGraphics &g) override {
     g.FillRect(COL_100(), mRECT);
-    // 图形区左对齐, 右侧让出刻度文字区 + L/R 两条电平表竖条 (读数在顶部图例行)
-    const IRECT plot = mRECT.GetReducedFromRight(kDbTickW + 2.f * kGainBarW);
+    // 图形区左对齐, 右侧让出 L/R 两条电平表竖条 (刻度文字绘制在频谱区域内部右侧)
+    const IRECT plot = mRECT.GetReducedFromRight(2.f * kGainBarW);
     DrawBackground(g, plot);
     DrawDbGrid(g, plot);
+    DrawFreqGrid(g, plot);
     DrawSpectrum(g, plot);
     DrawLevelMeter(g, plot);
   }
@@ -278,7 +279,7 @@ private:
     IColor cL, cR, cM;
     GetChannelColors(cL, cR, cM);
 
-    const float barL0 = plot.R + kDbTickW;
+    const float barL0 = plot.R;
     const IRECT barL(barL0, plot.T, barL0 + kGainBarW, plot.B);
     const IRECT barR(barL.R, plot.T, barL.R + kGainBarW, plot.B);
 
@@ -352,39 +353,45 @@ private:
     }
   }
 
-  // 每 20dB 一档的右侧刻度文字 (网格线已由 DrawBackground 色块替代)
+  // 每 20dB 一档的刻度文字: 绘制在频谱区域内部右侧靠边, 字号略小, 文字在线的上方
   void DrawDbGrid(IGraphics &g, const IRECT &plot) {
     if (mBottomDb >= 0.f)
       return;
 
     const int bottomDb = (int)mBottomDb;
+    constexpr float kLabelH = 16.f; // 14px 字行高
+    constexpr float kTickRight = 3.f; // 文字右缘距频谱区域右缘的边距
 
     for (int db = 0; db >= bottomDb; db -= 20) {
       const float y = plot.B - (float)(db - bottomDb) / (kTopDb - (float)bottomDb) * plot.H();
 
-      // 刻度文字: 位于 plot 右侧刻度区, 右对齐, 字号/字重/颜色与滑块参数值一致。
-      // 顶部 0dB / 底部最后一条刻度避开控件边界, 防止文字被裁剪。
       char buf[16];
       std::snprintf(buf, sizeof(buf), "%d", db);
-      const float labelH = 28.f;
-      IRECT labelR(plot.R, y - labelH * 0.5f, plot.R + kDbTickW - 4.f, y + labelH * 0.5f);
-      EVAlign valign = EVAlign::Middle;
-      if (labelR.T < plot.T) {
-        labelR.T = plot.T + 2.f; // 贴顶: 文字整体移到刻度线下方
-        labelR.B = labelR.T + labelH;
-        valign = EVAlign::Top;
-      } else if (labelR.B > plot.B) {
-        labelR.B = plot.B - 2.f; // 贴底: 文字整体移到刻度线上方
-        labelR.T = labelR.B - labelH;
-        valign = EVAlign::Bottom;
-      }
-      g.DrawText(IText(20, COL_700(), kFontRegular, EAlign::Far, valign), buf, labelR);
+      // 文字在线的上边: 底部贴线 (留 1px), 右对齐到频谱区域右缘内侧 (0 也保持在上方)
+      const IRECT labelR(plot.R - 52.f, y - kLabelH - 1.f, plot.R - kTickRight, y - 1.f);
+      g.DrawText(IText(14, COL_700(), kFontRegular, EAlign::Far, EVAlign::Bottom), buf, labelR);
     }
 
-    // VU 模式: 0 VU (-18 dBFS) 参考刻度线
+    // VU 模式: 0 VU (-18 dBFS) 参考刻度线 (位于频谱区域内部右侧, 与刻度文字同区)
     if (mMeterMode == 2 && mBottomDb <= -18.f) {
       const float y18 = YOf(plot, -18.f);
-      g.FillRect(COL_700(), IRECT(plot.R + 2.f, y18 - 1.f, plot.R + kDbTickW - 4.f, y18 + 1.f));
+      g.FillRect(COL_700(), IRECT(plot.R - 52.f, y18 - 1.f, plot.R - kTickRight, y18 + 1.f));
+    }
+  }
+
+  // 频率刻度: 20Hz / 100Hz / 1kHz / 10kHz, 位于频谱内部顶端, 文字在竖线右侧 (14px 与 dB 刻度一致)
+  void DrawFreqGrid(IGraphics &g, const IRECT &plot) {
+    constexpr float kLabelH = 16.f;
+    struct FreqLabel {
+      double hz;
+      const char *txt;
+    };
+    static const FreqLabel kLabels[] = {{20., "20Hz"}, {100., "100Hz"}, {1000., "1kHz"}, {10000., "10kHz"}};
+    const IText t(14, COL_700(), kFontRegular, EAlign::Near, EVAlign::Top);
+    for (const auto &lbl : kLabels) {
+      const float x = XOf(plot, lbl.hz);
+      // 文字在线的右边: 左缘贴线 (留 5px), 顶部贴频谱顶端
+      g.DrawText(t, lbl.txt, IRECT(x + 5.f, plot.T + 2.f, plot.R, plot.T + 2.f + kLabelH));
     }
   }
 
@@ -551,7 +558,7 @@ private:
   static constexpr int kSpectrumBands = 256;
   static constexpr float kSpecFreqLo = 20.f;
   static constexpr float kSpecFreqHi = 20000.f;
-  static constexpr float kTopDb = 6.f;         // 显示范围顶部 (dBFS), 刻度线仍从 0 dB 开始
+  static constexpr float kTopDb = 9.f;         // 显示范围顶部 (dBFS), 刻度线仍从 0 dB 开始
 
   // 预计算 bin -> 对数 band 映射表: 只在采样率/FFT 尺寸变化时重建,
   // 绘制聚合循环直接查表, 省去每帧 2048*2 次 log2。

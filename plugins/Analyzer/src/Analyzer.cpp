@@ -160,15 +160,25 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     };
     auto bindTip = [this](IControl *c, int id) { mTooltipBindings.push_back({c, id}); };
 
-    // 右栏锚定窗口右下 (窗口 960x720): 右缘 kPanelR=940 距右 20, 底部标题区到底 36
+    // 右栏锚定窗口右下 (窗口 960x720): 右缘 kPanelR=940 距右 20, 底部标题区到底 36。
+    // 按钮无绘制内缩 (mRECT = 实际显示尺寸), 并排按钮间用 kBtnGap 补偿原内缩间距。
     constexpr float kCol1X = 784.f;
-    constexpr float kCol2X = 868.f;
-    constexpr float kBtnW = 72.f;
+    constexpr float kBtnW = 76.f;  // 按钮显示宽度
+    constexpr float kBtnGap = 4.f; // 并排按钮间隙 (替代原 BLOCK_GAP 内缩间距)
     constexpr float kBtnH = 30.f;
+    constexpr float kCol2X = kCol1X + kBtnW + kBtnGap; // 右列按钮左缘
     constexpr float kPanelR = kCol2X + kBtnW;
 
     // 三通道色块图例 (L / R / M, 颜色跟随主题) + 电平表读数, 与频谱图形区左缘对齐
     pGraphics->AttachControl(new ChannelLegendControl(IRECT(20, 32, 668, 54)), kCtrlTagLegend);
+
+    // 声道显示模式循环按钮: 与顶部色块图例合二为一 (图例色块移除, 由按钮着色代替)。
+    // L/R 样式: 左半 L 色右半 R 色, L/R 各半居中 (无斜杠); MERGE 样式: 整块 M 色。
+    // 左缘与频谱图左缘 (x=20) 对齐, 底部与频谱图顶部 (y=58) 留 6px 间距。
+    mChanModeBtn = new FlatCycleButton(IRECT(20.f, 22.f, 20.f + kBtnW, 52.f), kChannelMode, {"L/R", "MERGE"},
+                                       btnStyle, true);
+    pGraphics->AttachControl(mChanModeBtn);
+    bindTip(mChanModeBtn, orm::kTxtTipChanMode);
 
     // 主频谱绘制区域
     mSpectrumPad = new SpectrumPad(IRECT(20, 58, 668, 328));
@@ -178,17 +188,11 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     mCpuMeter = new CpuMeterControl(IRECT(kCol1X, 30, kPanelR, 60));
     pGraphics->AttachControl(mCpuMeter, kCtrlTagCpu);
 
-    // 声道显示模式循环切换按钮 (L/R -> MERGE)
-    mChanModeBtn = new FlatCycleButton(IRECT(kCol1X, 69, kCol1X + 78, 99), kChannelMode,
-                                       {"L/R", "MERGE"}, btnStyle);
-    pGraphics->AttachControl(mChanModeBtn);
-    bindTip(mChanModeBtn, orm::kTxtTipChanMode);
-
-    // 合并算法切换按钮 (PWR / SUM)
+    // 合并算法切换按钮 (PWR / SUM) — 声道按钮已上移, 本按钮移至左半保持左缘对齐
     IVStyle algoStyle = btnStyle;
     algoStyle.showLabel = false;
     algoStyle.showValue = false;
-    mMergeAlgoToggle = new FlatToggleControl(IRECT(kCol1X + 78, 69, kPanelR, 99), kMergeAlgo, " ", algoStyle,
+    mMergeAlgoToggle = new FlatToggleControl(IRECT(kCol1X, 69, kCol1X + kBtnW, 99), kMergeAlgo, " ", algoStyle,
                                             "PWR", "SUM");
     pGraphics->AttachControl(mMergeAlgoToggle);
     bindTip(mMergeAlgoToggle, orm::kTxtTipMergeAlgo);
@@ -245,28 +249,28 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     bindTip(mMixSlider, orm::kTxtTipMix);
 
     IVButtonControl *undoBtn =
-        MakeMomentary(IRECT(kCol1X, 453, kCol1X + 78, 483), [this](IControl *) { Undo(); }, "UNDO", btnStyle);
+        MakeMomentary(IRECT(kCol1X, 453, kCol1X + kBtnW, 483), [this](IControl *) { Undo(); }, "UNDO", btnStyle);
     pGraphics->AttachControl(undoBtn);
     bindText(orm::kTxtUndo, [undoBtn](const char *s) {
       undoBtn->SetLabelStr(s);
       undoBtn->SetDirty(false);
     });
     IVButtonControl *redoBtn =
-        MakeMomentary(IRECT(kCol1X + 78, 453, kPanelR, 483), [this](IControl *) { Redo(); }, "REDO", btnStyle);
+        MakeMomentary(IRECT(kCol2X, 453, kPanelR, 483), [this](IControl *) { Redo(); }, "REDO", btnStyle);
     pGraphics->AttachControl(redoBtn);
     bindText(orm::kTxtRedo, [redoBtn](const char *s) {
       redoBtn->SetLabelStr(s);
       redoBtn->SetDirty(false);
     });
     IVButtonControl *saveBtn =
-        MakeMomentary(IRECT(kCol1X, 492, kCol1X + 78, 522), [this](IControl *) { SaveFile(); }, "SAVE", btnStyle);
+        MakeMomentary(IRECT(kCol1X, 492, kCol1X + kBtnW, 522), [this](IControl *) { SaveFile(); }, "SAVE", btnStyle);
     pGraphics->AttachControl(saveBtn);
     bindText(orm::kTxtSave, [saveBtn](const char *s) {
       saveBtn->SetLabelStr(s);
       saveBtn->SetDirty(false);
     });
     IVButtonControl *loadBtn =
-        MakeMomentary(IRECT(kCol1X + 78, 492, kPanelR, 522), [this](IControl *) { LoadFile(); }, "LOAD", btnStyle);
+        MakeMomentary(IRECT(kCol2X, 492, kPanelR, 522), [this](IControl *) { LoadFile(); }, "LOAD", btnStyle);
     pGraphics->AttachControl(loadBtn);
     bindText(orm::kTxtLoad, [loadBtn](const char *s) {
       loadBtn->SetLabelStr(s);
@@ -274,14 +278,14 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     });
 
     // 电平表模式循环按钮 (dBTP -> dBFS -> VU)
-    mLevelModeBtn = new FlatCycleButton(IRECT(kCol1X, 531, kCol1X + 78, 561), kLevelMode,
+    mLevelModeBtn = new FlatCycleButton(IRECT(kCol1X, 531, kCol1X + kBtnW, 561), kLevelMode,
                                         {"dBTP", "dBFS", "VU"}, btnStyle);
     pGraphics->AttachControl(mLevelModeBtn);
     bindTip(mLevelModeBtn, orm::kTxtTipLevelMode);
 
     // 电平表 RESET (清除峰值保持与过载锁存)
     mLevelResetBtn =
-        MakeMomentary(IRECT(kCol1X + 78, 531, kPanelR, 561), [this](IControl *) { mLevelResetFlag.store(true); },
+        MakeMomentary(IRECT(kCol2X, 531, kPanelR, 561), [this](IControl *) { mLevelResetFlag.store(true); },
                       "RESET", btnStyle);
     pGraphics->AttachControl(mLevelResetBtn);
     bindText(orm::kTxtReset, [this](const char *s) {
