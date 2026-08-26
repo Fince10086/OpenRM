@@ -313,9 +313,14 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
       loadBtn->SetDirty(false);
     });
 
-    // 电平表模式循环按钮 (dBTP -> dBFS -> VU)
-    mLevelModeBtn = new FlatCycleButton(IRECT(kCol1X, 351, kCol1X + kBtnW, 381), kLevelMode,
-                                        {"dBTP", "dBFS", "VU"}, btnStyle);
+    // 电平表模式循环按钮 (dBTP -> dBFS -> VU): 移入电平条内部底部, 显示覆盖在两条电平条之上,
+    // 宽度 = 两条电平条总宽 (2 × kGainBarW), 高度与左侧 Range 循环按钮一致 (kRangeBtnH)。
+    // 本按钮 attach 在 SpectrumPad 之后 → 绘制于电平条上方且命中测试优先;
+    // 底座窄, 缩小文字字号以容纳 "dBTP"/"dBFS"。
+    mLevelModeBtn =
+        new FlatCycleButton(IRECT(plotR, plotB - kRangeBtnH, plotR + 2.f * kGainBarW, plotB), kLevelMode,
+                            {"dBTP", "dBFS", "VU"}, btnStyle);
+    mLevelModeBtn->SetTextSize(12.f);
     pGraphics->AttachControl(mLevelModeBtn);
     bindTip(mLevelModeBtn, orm::kTxtTipLevelMode);
 

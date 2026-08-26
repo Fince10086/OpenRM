@@ -124,6 +124,10 @@ public:
   // 14px 文字 (右对齐, 右缘/底缘与刻度文字重合), 只是多出一个背景色块。
   void SetScaleLabelStyle(bool b) { mScaleStyle = b; }
 
+  // 缩小按钮文字: 默认样式 20px 字在受窄的按钮里放不下时使用
+  // (如电平条底部的模式覆盖按钮)。<=0 表示沿用样式原字号。
+  void SetTextSize(float px) { mTextSize = px; }
+
   // 与界面背景色同灰度的按钮文字色 (浅色主题接近白但非纯白, 深色主题对应变深)
   static IColor SplitBtnTextColor() {
     const IColor bg = COL_100();
@@ -179,6 +183,8 @@ public:
     if (GetMouseIsOver())
       g.FillRect(HoverOverlay(), b);
     IText t = mStyle.valueText;
+    if (mTextSize > 0.f)
+      t.mSize = mTextSize;
     t.mFGColor = COL_900();
     strcpy(t.mFont, kFontSemiBold);
     if (idx >= 0 && idx < num)
@@ -190,6 +196,7 @@ private:
   IVStyle mStyle;
   bool mSplitChannels = false;
   bool mScaleStyle = false;
+  float mTextSize = 0.f; // >0 时覆盖样式字号 (窄按钮场景)
 };
 
 END_IGRAPHICS_NAMESPACE
