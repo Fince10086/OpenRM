@@ -88,7 +88,6 @@ private:
   FlatCycleButton *mRangeBtn = nullptr; // 动态范围循环按钮 (刻度底部 80/100/120)
   ORMSlider *mAttackSlider = nullptr;
   ORMSlider *mReleaseSlider = nullptr;
-  ORMSlider *mMixSlider = nullptr;
   CpuMeterControl *mCpuMeter = nullptr;
   FlatToggleControl *mModeToggle = nullptr;
   FlatCycleButton *mChanModeBtn = nullptr;

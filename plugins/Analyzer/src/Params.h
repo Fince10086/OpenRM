@@ -5,7 +5,6 @@
 #include <array>
 
 enum EParams {
-  kMix = 0,       // 干湿比 / 状态快照占位
   kRelease,       // 频谱回落释放时间 (s)
   kRange,         // 频谱显示动态范围下限 (dBFS)
   kAttack,        // 频谱上升响应时间 (s)

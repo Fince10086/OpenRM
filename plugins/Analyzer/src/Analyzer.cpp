@@ -74,7 +74,6 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     }
   }
   // 初始化参数（默认值、范围与步长）
-  GetParam(kMix)->InitDouble("Mix", 1., 0., 1., 0.01, "");
   GetParam(kRelease)->InitDouble("Release", 0.2, 0.05, 0.5, 0.01, "s");
   GetParam(kRange)->InitInt("Range", 1, 0, 2, ""); // 档位索引: 0=80, 1=100, 2=120 (刻度底部 dB), 默认 100
   GetParam(kAttack)->InitDouble("Attack", 0.05, 0.001, 0.1, 0.001, "s");
@@ -250,12 +249,6 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     pGraphics->AttachControl(mReleaseSlider);
     bindText(orm::kTxtRelease, [this](const char *s) { mReleaseSlider->SetHeaderLabel(s); });
     bindTip(mReleaseSlider, orm::kTxtTipRelease);
-
-    // MIX 滑块
-    mMixSlider = new ORMSlider(IRECT(kCol1X, 222, kPanelR, 264), kMix, "MIX", style, EDirection::Horizontal);
-    pGraphics->AttachControl(mMixSlider);
-    bindText(orm::kTxtMix, [this](const char *s) { mMixSlider->SetHeaderLabel(s); });
-    bindTip(mMixSlider, orm::kTxtTipMix);
 
     IVButtonControl *undoBtn =
         MakeMomentary(IRECT(kCol1X, 273, kCol1X + kBtnW, 303), [this](IControl *) { Undo(); }, "UNDO", btnStyle);
@@ -687,7 +680,6 @@ void ORMAnalyzer::OnUIClose() {
   mRangeBtn = nullptr;
   mAttackSlider = nullptr;
   mReleaseSlider = nullptr;
-  mMixSlider = nullptr;
   mCpuMeter = nullptr;
   mModeToggle = nullptr;
   mChanModeBtn = nullptr;
