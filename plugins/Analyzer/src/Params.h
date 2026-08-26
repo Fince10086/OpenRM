@@ -15,6 +15,8 @@ enum EParams {
   kMode,          // 分析引擎模式 (0: FFT, 1: VQT)
   kChannelMode,   // 声道显示模式 (0: L/R, 1: MERGE)
   kMergeAlgo,     // 合并算法 (0: PWR 功率和, 1: SUM 时域单声道和)
+  kLevelMode,     // 电平表模式 (0: dBTP 真峰值, 1: dBFS+RMS, 2: VU)
+  kLevelHold,     // 峰值保持时长 (s, 0=关)
   kNumParams
 };
 
@@ -36,6 +38,9 @@ enum EChannelMode { kChanModeLR = 0, kChanModeMerge = 1, kNumChanModes = 2 };
 
 // 合并算法
 enum EMergeAlgo { kMergeAlgoPWR = 0, kMergeAlgoSUM = 1, kNumMergeAlgos = 2 };
+
+// 电平表模式
+enum ELevelMode { kLevelModeDBTP = 0, kLevelModeDBFS = 1, kLevelModeVU = 2, kNumLevelModes = 3 };
 
 // UI 控件消息标签
 enum EControlTags { kCtrlTagPad = 100, kCtrlTagCpu = 101 };

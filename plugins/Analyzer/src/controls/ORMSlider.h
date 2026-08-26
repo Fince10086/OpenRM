@@ -117,6 +117,10 @@ protected:
       std::snprintf(buf, sizeof(buf), "%.2fs", p->Value());
       ds.Set(buf);
       break;
+    case kLevelHold:
+      std::snprintf(buf, sizeof(buf), "%.1fs", p->Value());
+      ds.Set(buf);
+      break;
     case kRange:
       std::snprintf(buf, sizeof(buf), "-%.0f dBFS", p->Value());
       ds.Set(buf);

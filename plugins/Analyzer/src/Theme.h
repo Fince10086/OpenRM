@@ -160,5 +160,11 @@ inline void GetChannelColors(IColor &cL, IColor &cR, IColor &cM) {
   cM = HSBToIColor(ThemeHue(), sM, b);
 }
 
+// 电平表语义色: 黄/红段与过载 LED 使用固定安全色 (专业表惯例, 不随主题色相旋转)。
+// 绿段 (≤ -18 dB) 使用通道色, 见 SpectrumPad::MeterColorFor。
+inline IColor MeterYellow() { return IColor(255, 232, 173, 40); }
+inline IColor MeterRed() { return IColor(255, 226, 60, 52); }
+inline IColor MeterOverLed() { return IColor(255, 230, 48, 40); }
+
 } // namespace igraphics
 } // namespace iplug

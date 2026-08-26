@@ -17,10 +17,23 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdio>
 #include <vector>
 
 BEGIN_IPLUG_NAMESPACE
 BEGIN_IGRAPHICS_NAMESPACE
+
+// 电平表 UI 数据 (插件 OnIdle 每帧下发; 全 4 字节字段, 打包/解析安全)
+struct LevelMeterUiData {
+  float peakL, peakR; // dBFS 样本峰值 (已平滑)
+  float trueL, trueR; // dBTP 真峰值 (已平滑)
+  float rmsL, rmsR;   // RMS dBFS (300ms 积分)
+  float vuL, vuR;     // VU 对应 dBFS (0 VU = -18 dBFS)
+  float holdL, holdR; // 峰值保持 (显示域 dB; -1000 = 无效)
+  float holdSec;      // 保持时长 (s, 0 = 关)
+  int mode;           // 0: dBTP, 1: dBFS+RMS, 2: VU
+  int overL, overR;   // 过载锁存
+};
 
 class SpectrumPad : public IControl {
 public:
@@ -34,10 +47,10 @@ public:
     kMsgTagAttack,
     kMsgTagMode,
     kMsgTagVQTBands,
-    kMsgTagReset,     // 清空平滑缓冲, 显示从头加载 (γ/BPO/模式切换时由插件下发)
-    kMsgTagChanMode,  // 声道显示模式 (0: L/R, 1: MERGE)
-    kMsgTagMergeAlgo, // 合并算法 (0: PWR 功率和, 1: SUM 单声道和)
-    kMsgTagGainPeak,  // 时域峰值 (float[2] = {L, R}, 已平滑), 供 Gain 条显示
+    kMsgTagReset,       // 清空平滑缓冲, 显示从头加载 (γ/BPO/模式切换时由插件下发)
+    kMsgTagChanMode,    // 声道显示模式 (0: L/R, 1: MERGE)
+    kMsgTagMergeAlgo,   // 合并算法 (0: PWR 功率和, 1: SUM 单声道和)
+    kMsgTagLevelMeter,  // 电平表数据 (LevelMeterUiData)
   };
 
   SpectrumPad(const IRECT &bounds) : IControl(bounds) {
@@ -122,12 +135,25 @@ public:
       if (n > 0)
         std::memcpy(mVQTFreqs.data(), pData, (size_t)n * sizeof(float));
       SetDirty(false);
-    } else if (msgTag == kMsgTagGainPeak) {
-      // float[2] = {L, R}, 8 字节整体拷入 (IByteStream::Get 需显式偏移, 逐字段读易错)
-      float peaks[2];
-      std::memcpy(peaks, pData, sizeof(peaks));
-      mGainPeakL = peaks[0];
-      mGainPeakR = peaks[1];
+    } else if (msgTag == kMsgTagLevelMeter) {
+      if (dataSize != (int)sizeof(LevelMeterUiData))
+        return;
+      LevelMeterUiData d;
+      std::memcpy(&d, pData, sizeof(d));
+      mPeakL = d.peakL;
+      mPeakR = d.peakR;
+      mTrueL = d.trueL;
+      mTrueR = d.trueR;
+      mRmsL = d.rmsL;
+      mRmsR = d.rmsR;
+      mVuL = d.vuL;
+      mVuR = d.vuR;
+      mHoldL = d.holdL;
+      mHoldR = d.holdR;
+      mHoldSec = d.holdSec;
+      mMeterMode = std::clamp(d.mode, 0, 2);
+      mOverL = d.overL != 0;
+      mOverR = d.overR != 0;
       SetDirty(false);
     } else if (msgTag == kMsgTagReset) {
       for (int c = 0; c < 3; ++c)
@@ -138,12 +164,12 @@ public:
 
   void Draw(IGraphics &g) override {
     g.FillRect(COL_100(), mRECT);
-    // 图形区左对齐, 右侧让出 kDbTickW 刻度文字区 + L/R 两条 Gain 竖条 (2 × kGainBarW)
-    const IRECT plot = mRECT.GetReducedFromRight(kDbTickW + 2.f * kGainBarW);
+    // 图形区左对齐, 右侧让出刻度文字区 + 读数区 + L/R 两条电平表竖条
+    const IRECT plot = mRECT.GetReducedFromRight(kDbTickW + kReadoutW + 2.f * kGainBarW);
     DrawBackground(g, plot);
     DrawDbGrid(g, plot);
     DrawSpectrum(g, plot);
-    DrawGainBar(g, plot);
+    DrawLevelMeter(g, plot);
   }
 
 private:
@@ -245,25 +271,113 @@ private:
     }
   }
 
-  // L/R 双 Peak 条: 与 dB 刻度对齐 (顶部 0dB, 底部 mBottomDb)。
-  // 数值 = 音频线程的时域样本峰值 (max|sample|), 已按 attack/release 平滑, 由插件每帧下发。
-  void DrawGainBar(IGraphics &g, const IRECT &plot) {
+  // 电平表满刻度 (显示顶部): dBTP +6 dB / dBFS 0 dBFS / VU +3 VU (-15 dBFS)。
+  // 刻度网格仍固定到 kTopDb, 顶部空出的区域放置 over LED。
+  float MeterTopDb() const {
+    switch (mMeterMode) {
+    case 1: return 0.f;
+    case 2: return -15.f; // +3 VU = -15 dBFS
+    default: return kTopDb;
+    }
+  }
+
+  float YOf(const IRECT &plot, float db) const {
+    return plot.B - (db - mBottomDb) / (kTopDb - mBottomDb) * plot.H();
+  }
+
+  // L/R 双电平表条 + 读数区 + over LED
+  void DrawLevelMeter(IGraphics &g, const IRECT &plot) {
     IColor cL, cR, cM;
     GetChannelColors(cL, cR, cM);
 
-    auto fillBar = [&](const IRECT &bar, IColor color, float peak) {
-      const float db =
-          (peak > 1e-6f) ? std::clamp(20.f * std::log10(peak), mBottomDb, kTopDb) : mBottomDb;
-      const float yPeak = plot.B - (db - mBottomDb) / (kTopDb - mBottomDb) * plot.H();
-      g.FillRect(COL_300(), bar); // 轨道底色与滑块条一致
-      g.FillRect(color, IRECT(bar.L, yPeak, bar.R, bar.B));
-    };
+    const float barL0 = plot.R + kDbTickW + kReadoutW;
+    const IRECT barL(barL0, plot.T, barL0 + kGainBarW, plot.B);
+    const IRECT barR(barL.R, plot.T, barL.R + kGainBarW, plot.B);
 
-    // 两条 16px 竖条紧挨, 纵向与 plot 一致
-    const IRECT barL(mRECT.R - 2.f * kGainBarW, plot.T, mRECT.R - kGainBarW, plot.B);
-    const IRECT barR(mRECT.R - kGainBarW, plot.T, mRECT.R, plot.B);
-    fillBar(barL, cL, mGainPeakL);
-    fillBar(barR, cR, mGainPeakR);
+    DrawMeterBar(g, plot, barL, cL, 0);
+    DrawMeterBar(g, plot, barR, cR, 1);
+    DrawReadout(g, plot);
+  }
+
+  void DrawMeterBar(IGraphics &g, const IRECT &plot, const IRECT &bar, const IColor &chan, int ch) {
+    const float top = MeterTopDb();
+    float val, hold = -1000.f;
+    float rmsVal = -999.f;
+    bool over = false;
+    if (mMeterMode == 0) {
+      val = ch ? mTrueR : mTrueL;
+      hold = ch ? mHoldR : mHoldL;
+      over = ch ? mOverR : mOverL;
+    } else if (mMeterMode == 1) {
+      val = ch ? mPeakR : mPeakL;
+      rmsVal = ch ? mRmsR : mRmsL;
+      hold = ch ? mHoldR : mHoldL;
+      over = ch ? mOverR : mOverL;
+    } else {
+      val = ch ? mVuR : mVuL;
+      hold = ch ? mHoldR : mHoldL;
+      over = ch ? mOverR : mOverL;
+    }
+    val = std::clamp(val, mBottomDb, top);
+
+    g.FillRect(COL_300(), bar); // 轨道底色 (与滑块条一致)
+
+    // dBFS+RMS 模式: RMS 全宽半透明通道色芯
+    if (mMeterMode == 1 && rmsVal > mBottomDb) {
+      const float yRms = YOf(plot, std::clamp(rmsVal, mBottomDb, kTopDb));
+      const IColor rc(120, chan.R, chan.G, chan.B);
+      g.FillRect(rc, IRECT(bar.L, yRms, bar.R, bar.B));
+    }
+
+    // 主填充 (分段着色: 绿区通道色不动, 黄/红区换固定语义色)
+    const float yTop = YOf(plot, val);
+    const float yM18 = YOf(plot, -18.f);
+    const float yM6 = YOf(plot, -6.f);
+    IRECT fill = bar;
+    if (mMeterMode == 1) {
+      // dBFS: peak 为 6px 窄芯, 与 RMS 全宽芯叠加区分 (峰值表惯例)
+      const float cx = bar.MW();
+      fill = IRECT(cx - 3.f, bar.T, cx + 3.f, bar.B);
+    }
+    if (yTop < yM6)
+      g.FillRect(MeterRed(), IRECT(fill.L, yTop, fill.R, yM6));
+    if (yTop < yM18)
+      g.FillRect(MeterYellow(), IRECT(fill.L, std::max(yTop, yM6), fill.R, yM18));
+    if (yTop < bar.B)
+      g.FillRect(chan, IRECT(fill.L, std::max(yTop, yM18), fill.R, bar.B));
+
+    // 峰值保持亮线
+    if (mHoldSec > 0.f && hold > mBottomDb) {
+      const float yH = YOf(plot, std::clamp(hold, mBottomDb, top));
+      g.FillRect(COL_900(), IRECT(bar.L, yH - 1.f, bar.R, yH + 1.f));
+    }
+
+    // over LED: 满刻度上方空白处
+    const float yLed = std::clamp(YOf(plot, top) - 5.f, plot.T + 5.f, bar.B - 5.f);
+    g.FillCircle(over ? MeterOverLed() : COL_500(), bar.MW(), yLed, 4.f);
+  }
+
+  // 读数区: 模式单位 + L/R 当前值 (全部 20px, 与界面其余文字一致)
+  void DrawReadout(IGraphics &g, const IRECT &plot) {
+    const IRECT ro(plot.R + kDbTickW, plot.T, plot.R + kDbTickW + kReadoutW, plot.B);
+    const char *unit = (mMeterMode == 0) ? "dBTP" : (mMeterMode == 1) ? "dBFS" : "VU";
+    char bufL[16], bufR[16];
+    if (mMeterMode == 2) {
+      std::snprintf(bufL, sizeof(bufL), "%+d", (int)std::lround(mVuL + 18.f));
+      std::snprintf(bufR, sizeof(bufR), "%+d", (int)std::lround(mVuR + 18.f));
+    } else if (mMeterMode == 0) {
+      std::snprintf(bufL, sizeof(bufL), "%.1f", mTrueL);
+      std::snprintf(bufR, sizeof(bufR), "%.1f", mTrueR);
+    } else {
+      std::snprintf(bufL, sizeof(bufL), "%.1f", mPeakL);
+      std::snprintf(bufR, sizeof(bufR), "%.1f", mPeakR);
+    }
+    g.DrawText(IText(20, COL_500(), kFontSemiBold, EAlign::Far, EVAlign::Top), unit,
+               IRECT(ro.L, ro.T + 2.f, ro.R, ro.T + 26.f));
+    g.DrawText(IText(20, COL_900(), kFontRegular, EAlign::Far, EVAlign::Top), bufL,
+               IRECT(ro.L, ro.T + 30.f, ro.R, ro.T + 54.f));
+    g.DrawText(IText(20, COL_900(), kFontRegular, EAlign::Far, EVAlign::Top), bufR,
+               IRECT(ro.L, ro.T + 58.f, ro.R, ro.T + 82.f));
   }
 
   // 每 20dB 一档的右侧刻度文字 (网格线已由 DrawBackground 色块替代)
@@ -293,6 +407,12 @@ private:
         valign = EVAlign::Bottom;
       }
       g.DrawText(IText(20, COL_700(), kFontRegular, EAlign::Far, valign), buf, labelR);
+    }
+
+    // VU 模式: 0 VU (-18 dBFS) 参考刻度线
+    if (mMeterMode == 2 && mBottomDb <= -18.f) {
+      const float y18 = YOf(plot, -18.f);
+      g.FillRect(COL_700(), IRECT(plot.R + 2.f, y18 - 1.f, plot.R + kDbTickW - 4.f, y18 + 1.f));
     }
   }
 
@@ -483,8 +603,14 @@ private:
   }
 
   std::vector<float> mSpectrum[3]; // 平滑后的 L/R/Sum 频谱幅度 (幅度, 非 dB)
-  float mGainPeakL = 0.f;          // Gain 条 L 峰值 (时域样本峰值, 已平滑, 由插件下发)
-  float mGainPeakR = 0.f;          // Gain 条 R 峰值
+  float mPeakL = -120.f, mPeakR = -120.f;   // 电平表: 样本峰值 dBFS (已平滑)
+  float mTrueL = -120.f, mTrueR = -120.f;   // 电平表: dBTP 真峰值 (已平滑)
+  float mRmsL = -120.f, mRmsR = -120.f;     // 电平表: RMS dBFS (300ms 积分)
+  float mVuL = -120.f, mVuR = -120.f;       // 电平表: VU 对应 dBFS (0 VU = -18 dBFS)
+  float mHoldL = -1000.f, mHoldR = -1000.f; // 电平表: 峰值保持 (显示域 dB, -1000 = 无效)
+  float mHoldSec = 2.f;                     // 电平表: 保持时长 (s)
+  int mMeterMode = 0;                       // 电平表模式: 0=dBTP, 1=dBFS+RMS, 2=VU
+  bool mOverL = false, mOverR = false;      // 电平表: 过载锁存
   std::vector<int> mBinToBand;     // 预计算: bin -> band 映射 (-1 = 频段外)
   int mMode = 0;                   // 分析模式: 0=FFT, 1=VQT
   int mChanMode = 0;               // 声道显示模式: 0=L/R, 1=MERGE

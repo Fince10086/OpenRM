@@ -4,6 +4,7 @@
 #include "Params.h"
 #include "dsp/SpectrumSTFT.h"
 #include "dsp/VQTAnalyzer.h"
+#include "dsp/LevelMeter.h"
 #include "Strings.h"
 
 #include <algorithm>
@@ -22,6 +23,7 @@ using namespace igraphics;
 namespace iplug {
 namespace igraphics {
 class IControl;
+class IVButtonControl;
 class SpectrumPad;
 class ORMSlider;
 class SettingsPanelControl;
@@ -59,6 +61,16 @@ private:
   std::atomic<float> mPeakL{0.f};
   std::atomic<float> mPeakR{0.f};
 
+  // 电平表输出快照 (音频线程写入, UI 线程 OnIdle 读取)
+  LevelMeter mLevelMeter;
+  std::atomic<float> mTrueL{0.f}, mTrueR{0.f};
+  std::atomic<float> mRmsL{0.f}, mRmsR{0.f};
+  std::atomic<float> mVuL{0.f}, mVuR{0.f};
+  std::atomic<float> mHoldL{0.f}, mHoldR{0.f};
+  std::atomic<int> mOverL{0}, mOverR{0};
+  std::atomic<float> mHoldSec{2.f};
+  std::atomic<bool> mLevelResetFlag{false}; // UI 线程置位, 音频线程下一 block 清除 hold/over
+
   // 频谱配置缓存（用于在 OnIdle 中防抖去重）
   double mSentSampleRate = 0.0;
   int mSentFFTSize = 0;
@@ -81,6 +93,9 @@ private:
   FlatToggleControl *mModeToggle = nullptr;
   FlatCycleButton *mChanModeBtn = nullptr;
   FlatToggleControl *mMergeAlgoToggle = nullptr;
+  FlatCycleButton *mLevelModeBtn = nullptr;
+  IVButtonControl *mLevelResetBtn = nullptr;
+  ORMSlider *mLevelHoldSlider = nullptr;
 
   int mSentMode = -1;
 
@@ -107,7 +122,6 @@ private:
 
   void SendSpectrumConfig();
   void SendResetToPad(); // 引擎配置重建 (γ/BPO/模式) 后通知 pad 清空平滑缓冲, 显示重新加载
-  void ComputeGainPeaks(int nFrames); // 时域峰值 (block 级) + attack/release 平滑
 
   // 分析档位 -> 实际值 (参数存档位索引)
   int CurrentFFTSize() const {

@@ -15,9 +15,12 @@ BEGIN_IGRAPHICS_NAMESPACE
 
 // 频谱右侧布局 (Analyzer.cpp 图例与 SpectrumPad 共用):
 // - kDbTickW: dB 刻度文字区宽度
-// - kGainBarW: Gain 竖条单条横向宽度 (px)；L/R 两条紧挨无间隙, 总宽 = 2 × kGainBarW
+// - kReadoutW: 电平表数字读数区宽度 (模式单位 + L/R 读数)
+// - kGainBarW: 电平表竖条单条横向宽度 (px)；L/R 两条紧挨无间隙, 总宽 = 2 × kGainBarW
+// 表头区总宽 = kDbTickW + kReadoutW + 2 × kGainBarW
 constexpr float kDbTickW = 52.f;
-constexpr float kGainBarW = 16.f;
+constexpr float kReadoutW = 52.f;
+constexpr float kGainBarW = 22.f;
 
 // 标准旋钮手柄: 白环 + 深色核心
 inline void DrawKnob(IGraphics &g, float cx, float cy) {

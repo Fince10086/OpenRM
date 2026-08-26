@@ -84,6 +84,8 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
   GetParam(kMode)->InitInt("Mode", kModeFFT, 0, 1, "");
   GetParam(kChannelMode)->InitInt("ChanMode", kChanModeLR, 0, kNumChanModes - 1, "");
   GetParam(kMergeAlgo)->InitInt("MergeAlgo", kMergeAlgoPWR, 0, kNumMergeAlgos - 1, "");
+  GetParam(kLevelMode)->InitInt("LevelMode", kLevelModeDBTP, 0, kNumLevelModes - 1, "");
+  GetParam(kLevelHold)->InitDouble("LevelHold", 2., 0., 5., 0.1, "s");
 
   mDefaultSnapshot = Snapshot();
   mStableSnapshot = Snapshot();
@@ -177,7 +179,7 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     pGraphics->AttachControl(mCpuMeter, kCtrlTagCpu);
 
     // 声道显示模式循环切换按钮 (L/R -> MERGE)
-    mChanModeBtn = new FlatCycleButton(IRECT(kCol1X, 85, kCol1X + 78, 115), kChannelMode,
+    mChanModeBtn = new FlatCycleButton(IRECT(kCol1X, 69, kCol1X + 78, 99), kChannelMode,
                                        {"L/R", "MERGE"}, btnStyle);
     pGraphics->AttachControl(mChanModeBtn);
     bindTip(mChanModeBtn, orm::kTxtTipChanMode);
@@ -186,14 +188,14 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     IVStyle algoStyle = btnStyle;
     algoStyle.showLabel = false;
     algoStyle.showValue = false;
-    mMergeAlgoToggle = new FlatToggleControl(IRECT(kCol1X + 78, 85, kPanelR, 115), kMergeAlgo, " ", algoStyle,
+    mMergeAlgoToggle = new FlatToggleControl(IRECT(kCol1X + 78, 69, kPanelR, 99), kMergeAlgo, " ", algoStyle,
                                             "PWR", "SUM");
     pGraphics->AttachControl(mMergeAlgoToggle);
     bindTip(mMergeAlgoToggle, orm::kTxtTipMergeAlgo);
 
     // BPO 滑块（每八度频带数，仅 VQT 模式生效）
     mBpoSlider =
-        new ORMSlider(IRECT(kCol1X, 140, kPanelR, 182), kBpo, "BPO", style, EDirection::Horizontal);
+        new ORMSlider(IRECT(kCol1X, 108, kPanelR, 150), kBpo, "BPO", style, EDirection::Horizontal);
     pGraphics->AttachControl(mBpoSlider);
     bindText(orm::kTxtBpo, [this](const char *s) { mBpoSlider->SetHeaderLabel(s); });
     bindTip(mBpoSlider, orm::kTxtTipBpo);
@@ -202,14 +204,14 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     IVStyle toggleStyle = btnStyle;
     toggleStyle.showLabel = false;
     toggleStyle.showValue = false;
-    mModeToggle = new FlatToggleControl(IRECT(kCol1X, 192, kPanelR, 222), kMode, " ", toggleStyle, "FFT",
+    mModeToggle = new FlatToggleControl(IRECT(kCol1X, 159, kPanelR, 189), kMode, " ", toggleStyle, "FFT",
                                         "VQT");
     pGraphics->AttachControl(mModeToggle);
     bindTip(mModeToggle, orm::kTxtTipMode);
 
     // 分辨率滑块 (FFT 模式下为 FFT 尺寸，VQT 模式下为低频分辨率 γ)
     mResSlider =
-        new ORMSlider(IRECT(kCol1X, 234, kPanelR, 276), kRes, "RES", style, EDirection::Horizontal);
+        new ORMSlider(IRECT(kCol1X, 198, kPanelR, 240), kRes, "RES", style, EDirection::Horizontal);
     pGraphics->AttachControl(mResSlider);
     bindText(orm::kTxtRes, [this](const char *) { UpdateResHeader(); });
     bindText(orm::kTxtLfRes, [this](const char *) { UpdateResHeader(); });
@@ -217,59 +219,88 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
 
     // 动态范围滑块 (dBFS 下限)
     mRangeSlider =
-        new ORMSlider(IRECT(kCol1X, 282, kPanelR, 324), kRange, "RANGE", style, EDirection::Horizontal);
+        new ORMSlider(IRECT(kCol1X, 249, kPanelR, 291), kRange, "RANGE", style, EDirection::Horizontal);
     pGraphics->AttachControl(mRangeSlider);
     bindText(orm::kTxtRange, [this](const char *s) { mRangeSlider->SetHeaderLabel(s); });
     bindTip(mRangeSlider, orm::kTxtTipRange);
 
     // 上升响应时间滑块 (s)
     mAttackSlider =
-        new ORMSlider(IRECT(kCol1X, 328, kPanelR, 370), kAttack, "ATTACK", style, EDirection::Horizontal);
+        new ORMSlider(IRECT(kCol1X, 300, kPanelR, 342), kAttack, "ATTACK", style, EDirection::Horizontal);
     pGraphics->AttachControl(mAttackSlider);
     bindText(orm::kTxtAttack, [this](const char *s) { mAttackSlider->SetHeaderLabel(s); });
     bindTip(mAttackSlider, orm::kTxtTipAttack);
 
     // 释放衰减时间滑块 (s)
     mReleaseSlider =
-        new ORMSlider(IRECT(kCol1X, 374, kPanelR, 416), kRelease, "RELEASE", style, EDirection::Horizontal);
+        new ORMSlider(IRECT(kCol1X, 351, kPanelR, 393), kRelease, "RELEASE", style, EDirection::Horizontal);
     pGraphics->AttachControl(mReleaseSlider);
     bindText(orm::kTxtRelease, [this](const char *s) { mReleaseSlider->SetHeaderLabel(s); });
     bindTip(mReleaseSlider, orm::kTxtTipRelease);
 
     // MIX 滑块
-    mMixSlider = new ORMSlider(IRECT(kCol1X, 420, kPanelR, 462), kMix, "MIX", style, EDirection::Horizontal);
+    mMixSlider = new ORMSlider(IRECT(kCol1X, 402, kPanelR, 444), kMix, "MIX", style, EDirection::Horizontal);
     pGraphics->AttachControl(mMixSlider);
     bindText(orm::kTxtMix, [this](const char *s) { mMixSlider->SetHeaderLabel(s); });
     bindTip(mMixSlider, orm::kTxtTipMix);
 
     IVButtonControl *undoBtn =
-        MakeMomentary(IRECT(kCol1X, 466, kCol1X + 78, 496), [this](IControl *) { Undo(); }, "UNDO", btnStyle);
+        MakeMomentary(IRECT(kCol1X, 453, kCol1X + 78, 483), [this](IControl *) { Undo(); }, "UNDO", btnStyle);
     pGraphics->AttachControl(undoBtn);
     bindText(orm::kTxtUndo, [undoBtn](const char *s) {
       undoBtn->SetLabelStr(s);
       undoBtn->SetDirty(false);
     });
     IVButtonControl *redoBtn =
-        MakeMomentary(IRECT(kCol1X + 78, 466, kPanelR, 496), [this](IControl *) { Redo(); }, "REDO", btnStyle);
+        MakeMomentary(IRECT(kCol1X + 78, 453, kPanelR, 483), [this](IControl *) { Redo(); }, "REDO", btnStyle);
     pGraphics->AttachControl(redoBtn);
     bindText(orm::kTxtRedo, [redoBtn](const char *s) {
       redoBtn->SetLabelStr(s);
       redoBtn->SetDirty(false);
     });
     IVButtonControl *saveBtn =
-        MakeMomentary(IRECT(kCol1X, 496, kCol1X + 78, 526), [this](IControl *) { SaveFile(); }, "SAVE", btnStyle);
+        MakeMomentary(IRECT(kCol1X, 492, kCol1X + 78, 522), [this](IControl *) { SaveFile(); }, "SAVE", btnStyle);
     pGraphics->AttachControl(saveBtn);
     bindText(orm::kTxtSave, [saveBtn](const char *s) {
       saveBtn->SetLabelStr(s);
       saveBtn->SetDirty(false);
     });
     IVButtonControl *loadBtn =
-        MakeMomentary(IRECT(kCol1X + 78, 496, kPanelR, 526), [this](IControl *) { LoadFile(); }, "LOAD", btnStyle);
+        MakeMomentary(IRECT(kCol1X + 78, 492, kPanelR, 522), [this](IControl *) { LoadFile(); }, "LOAD", btnStyle);
     pGraphics->AttachControl(loadBtn);
     bindText(orm::kTxtLoad, [loadBtn](const char *s) {
       loadBtn->SetLabelStr(s);
       loadBtn->SetDirty(false);
     });
+
+    // 电平表模式循环按钮 (dBTP -> dBFS -> VU)
+    mLevelModeBtn = new FlatCycleButton(IRECT(kCol1X, 531, kCol1X + 78, 561), kLevelMode,
+                                        {"dBTP", "dBFS", "VU"}, btnStyle);
+    pGraphics->AttachControl(mLevelModeBtn);
+    bindTip(mLevelModeBtn, orm::kTxtTipLevelMode);
+
+    // 电平表 RESET (清除峰值保持与过载锁存)
+    mLevelResetBtn =
+        MakeMomentary(IRECT(kCol1X + 78, 531, kPanelR, 561), [this](IControl *) { mLevelResetFlag.store(true); },
+                      "RESET", btnStyle);
+    pGraphics->AttachControl(mLevelResetBtn);
+    bindText(orm::kTxtReset, [this](const char *s) {
+      if (mLevelResetBtn) {
+        mLevelResetBtn->SetLabelStr(s);
+        mLevelResetBtn->SetDirty(false);
+      }
+    });
+    bindTip(mLevelResetBtn, orm::kTxtTipReset);
+
+    // 电平表峰值保持时长滑块 (s)
+    mLevelHoldSlider =
+        new ORMSlider(IRECT(kCol1X, 570, kPanelR, 612), kLevelHold, "HOLD", style, EDirection::Horizontal);
+    pGraphics->AttachControl(mLevelHoldSlider);
+    bindText(orm::kTxtLevelHold, [this](const char *s) {
+      if (mLevelHoldSlider)
+        mLevelHoldSlider->SetHeaderLabel(s);
+    });
+    bindTip(mLevelHoldSlider, orm::kTxtTipLevelHold);
 
     // 底部标题栏：ORM 标识、设置齿轮与版本号
     IText ormText(32, COL_900(), kFontBold, EAlign::Near, EVAlign::Bottom);
@@ -396,8 +427,28 @@ void ORMAnalyzer::ProcessBlock(sample **inputs, sample **outputs, int nFrames) {
       mSpectrum.ProcessBlock(spec, nFrames, kCtrlTagPad, 3);
   }
 
-  // 时域峰值计算 (供 Gain 条显示), 基于原始输入样本, 与频谱引擎独立
-  ComputeGainPeaks(nFrames);
+  // 专业电平表测量 (真峰值/峰值/RMS/VU + hold + over), 与频谱引擎独立
+  if (mLevelResetFlag.exchange(false))
+    mLevelMeter.ResetHoldOver();
+  mLevelMeter.Process(mSpecInL.data(), mSpecInR.data(), nFrames, (int)GetParam(kLevelMode)->Value(),
+                      GetParam(kLevelHold)->Value());
+  {
+    LevelMeter::Snapshot s;
+    mLevelMeter.Store(s);
+    mPeakL.store(s.peakDbL, std::memory_order_relaxed);
+    mPeakR.store(s.peakDbR, std::memory_order_relaxed);
+    mTrueL.store(s.trueDbL, std::memory_order_relaxed);
+    mTrueR.store(s.trueDbR, std::memory_order_relaxed);
+    mRmsL.store(s.rmsDbL, std::memory_order_relaxed);
+    mRmsR.store(s.rmsDbR, std::memory_order_relaxed);
+    mVuL.store(s.vuDbL, std::memory_order_relaxed);
+    mVuR.store(s.vuDbR, std::memory_order_relaxed);
+    mHoldL.store(s.holdDbL, std::memory_order_relaxed);
+    mHoldR.store(s.holdDbR, std::memory_order_relaxed);
+    mHoldSec.store(s.holdSec, std::memory_order_relaxed);
+    mOverL.store(s.overL, std::memory_order_relaxed);
+    mOverR.store(s.overR, std::memory_order_relaxed);
+  }
 
   // 统计音频线程耗时（一阶平滑）
   {
@@ -409,36 +460,13 @@ void ORMAnalyzer::ProcessBlock(sample **inputs, sample **outputs, int nFrames) {
   }
 }
 
-// 时域峰值: 每 block 计算 L/R 样本绝对值的最大值, 按攻击/释放时间常数平滑后
-// 存到原子成员, 供 UI 线程 OnIdle 读取并转发给 Gain 条显示。
-void ORMAnalyzer::ComputeGainPeaks(int nFrames) {
-  const float sr = (float)GetSampleRate();
-  if (sr <= 0.f || nFrames <= 0)
-    return;
-
-  float rawL = 0.f, rawR = 0.f;
-  for (int s = 0; s < nFrames; ++s) {
-    rawL = std::max(rawL, std::fabs(mSpecInL[s]));
-    rawR = std::max(rawR, std::fabs(mSpecInR[s]));
-  }
-
-  const float period = (float)nFrames / sr;
-  const float aCoef = std::exp(-period / std::max((float)GetParam(kAttack)->Value(), 0.001f));
-  const float rCoef = std::exp(-period / std::max((float)GetParam(kRelease)->Value(), 0.01f));
-
-  float prevL = mPeakL.load(std::memory_order_relaxed);
-  float prevR = mPeakR.load(std::memory_order_relaxed);
-  const float coefL = (rawL > prevL) ? aCoef : rCoef;
-  const float coefR = (rawR > prevR) ? aCoef : rCoef;
-  mPeakL.store(coefL * prevL + (1.f - coefL) * rawL, std::memory_order_relaxed);
-  mPeakR.store(coefR * prevR + (1.f - coefR) * rawR, std::memory_order_relaxed);
-}
-
 void ORMAnalyzer::OnReset() {
   mSpectrum.SetFFTSizeAndOverlap(CurrentFFTSize(), 4);
   mVQT.SetSampleRate(GetSampleRate());
   mVQT.SetGamma(CurrentLfRes());
   mVQT.SetBpo(CurrentBpo());
+  mLevelMeter.SetSampleRate(GetSampleRate());
+  mLevelMeter.Reset();
   mPeakL.store(0.f, std::memory_order_relaxed);
   mPeakR.store(0.f, std::memory_order_relaxed);
 }
@@ -496,6 +524,9 @@ void ORMAnalyzer::OnParamChange(int paramIdx, EParamSource source, int sampleOff
   } else if (paramIdx == kBpo && GetParam(kMode)->Value() > 0.5) {
     if (mVQT.SetBpo(CurrentBpo()))
       SendResetToPad();
+  } else if (paramIdx == kLevelMode) {
+    // 电平表模式切换: 清除峰值保持 (过载锁存保留, 直到手动 RESET)
+    mLevelMeter.ResetHold();
   }
 }
 
@@ -580,11 +611,24 @@ void ORMAnalyzer::OnIdle() {
   mSpectrum.TransmitData(*this);
   mVQT.TransmitData(*this);
 
-  // 转发时域峰值给 Gain 条 (float[2] = {L, R})
+  // 转发电平表数据给表头区 (LevelMeterUiData, 含模式/保持时长/过载锁存)
   {
-    const float peaks[2] = {mPeakL.load(std::memory_order_relaxed),
-                            mPeakR.load(std::memory_order_relaxed)};
-    SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagGainPeak, sizeof(peaks), peaks);
+    LevelMeterUiData d;
+    d.peakL = mPeakL.load(std::memory_order_relaxed);
+    d.peakR = mPeakR.load(std::memory_order_relaxed);
+    d.trueL = mTrueL.load(std::memory_order_relaxed);
+    d.trueR = mTrueR.load(std::memory_order_relaxed);
+    d.rmsL = mRmsL.load(std::memory_order_relaxed);
+    d.rmsR = mRmsR.load(std::memory_order_relaxed);
+    d.vuL = mVuL.load(std::memory_order_relaxed);
+    d.vuR = mVuR.load(std::memory_order_relaxed);
+    d.holdL = mHoldL.load(std::memory_order_relaxed);
+    d.holdR = mHoldR.load(std::memory_order_relaxed);
+    d.holdSec = mHoldSec.load(std::memory_order_relaxed);
+    d.mode = (int)GetParam(kLevelMode)->Value();
+    d.overL = mOverL.load(std::memory_order_relaxed);
+    d.overR = mOverR.load(std::memory_order_relaxed);
+    SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagLevelMeter, sizeof(d), &d);
   }
 
   // 统计 UI 线程耗时并计算综合 CPU 占用率
@@ -620,6 +664,9 @@ void ORMAnalyzer::OnUIClose() {
   mModeToggle = nullptr;
   mChanModeBtn = nullptr;
   mMergeAlgoToggle = nullptr;
+  mLevelModeBtn = nullptr;
+  mLevelResetBtn = nullptr;
+  mLevelHoldSlider = nullptr;
   mSettingsPanel = nullptr;
   mTextBindings.clear();
   mTooltipBindings.clear();
