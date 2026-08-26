@@ -207,8 +207,8 @@ private:
 
     auto fillBar = [&](const IRECT &bar, IColor color, float peak) {
       const float db =
-          (peak > 1e-6f) ? std::clamp(20.f * std::log10(peak), mBottomDb, 0.f) : mBottomDb;
-      const float yPeak = plot.B - (db - mBottomDb) / (0.f - mBottomDb) * plot.H();
+          (peak > 1e-6f) ? std::clamp(20.f * std::log10(peak), mBottomDb, kTopDb) : mBottomDb;
+      const float yPeak = plot.B - (db - mBottomDb) / (kTopDb - mBottomDb) * plot.H();
       g.FillRect(COL_300(), bar); // 轨道底色与滑块条一致
       g.FillRect(color, IRECT(bar.L, yPeak, bar.R, bar.B));
     };
@@ -229,7 +229,7 @@ private:
     const int bottomDb = (int)mBottomDb;
 
     for (int db = 0; db >= bottomDb; db -= 20) {
-      const float y = plot.B - (float)(db - bottomDb) / (0.f - bottomDb) * plot.H();
+      const float y = plot.B - (float)(db - bottomDb) / (kTopDb - (float)bottomDb) * plot.H();
 
       // 灰色细线横贯图形区
       g.FillRect(grid, IRECT(plot.L, y, plot.R, y + 1.f));
@@ -271,8 +271,8 @@ private:
 
     auto ampToY = [&](float amp) -> float {
       const float db =
-          (amp > 1e-6f) ? std::clamp(20.f * std::log10(amp), mBottomDb, 0.f) : mBottomDb;
-      return plot.B - (db - mBottomDb) / (0.f - mBottomDb) * plot.H();
+          (amp > 1e-6f) ? std::clamp(20.f * std::log10(amp), mBottomDb, kTopDb) : mBottomDb;
+      return plot.B - (db - mBottomDb) / (kTopDb - mBottomDb) * plot.H();
     };
 
     // VQT 模式: 数据 = band 幅度, 按 band 中心频率的原始对数位置直接绘制 (不做 256 band 聚合)
@@ -417,6 +417,7 @@ private:
   static constexpr int kSpectrumBands = 256;
   static constexpr float kSpecFreqLo = 20.f;
   static constexpr float kSpecFreqHi = 20000.f;
+  static constexpr float kTopDb = 6.f;         // 显示范围顶部 (dBFS), 刻度线仍从 0 dB 开始
 
   // 预计算 bin -> 对数 band 映射表: 只在采样率/FFT 尺寸变化时重建,
   // 绘制聚合循环直接查表, 省去每帧 2048*2 次 log2。
