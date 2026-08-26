@@ -140,7 +140,7 @@ public:
     g.FillRect(COL_100(), mRECT);
     // 图形区左对齐, 右侧让出 kDbTickW 刻度文字区 + L/R 两条 Gain 竖条 (2 × kGainBarW)
     const IRECT plot = mRECT.GetReducedFromRight(kDbTickW + 2.f * kGainBarW);
-    DrawTrack(g, plot);
+    DrawBackground(g, plot);
     DrawDbGrid(g, plot);
     DrawSpectrum(g, plot);
     DrawGainBar(g, plot);
@@ -162,7 +162,14 @@ private:
 
   float XOf(const IRECT &plot, double f) const { return plot.L + FreqNorm(f) * plot.W(); }
 
-  void DrawTrack(IGraphics &g, const IRECT &plot) {
+  // 频率 × dB 二维色块网格背景:
+  // 频率维度沿用原 DrawTrack 的分段渐变 (低频偏暗, 高频偏亮);
+  // dB 维度每 20 dB 一横条 (底部深, 顶部浅);
+  // 每个 cell 亮度取两维度平均后过 WarmGray, 饱和度由 SatForB 自动决定。
+  void DrawBackground(IGraphics &g, const IRECT &plot) {
+    if (mBottomDb >= 0.f)
+      return;
+
     struct Band {
       double lo, hi;
       float v0, v1;
@@ -174,6 +181,12 @@ private:
         {10000., 20000., 227.f, 227.f},
     };
 
+    // 收集频率 cell 的 x 边界与 v_freq (与原 DrawTrack 一致)
+    struct FreqCell {
+      float xL, xR, vFreq;
+    };
+    std::vector<FreqCell> freqCells;
+    freqCells.reserve(32);
     for (const Band &band : kBands) {
       double edges[16];
       int n = 0;
@@ -193,8 +206,37 @@ private:
       const int cells = n - 1;
       for (int i = 0; i < cells; ++i) {
         const float t = (cells > 1) ? (float)i / (cells - 1) : 0.f;
-        const int v = (int)std::lround(band.v0 + (band.v1 - band.v0) * t);
-        g.FillRect(WarmGray(v), IRECT(xs[i], plot.T, xs[i + 1], plot.B));
+        freqCells.push_back({xs[i], xs[i + 1], band.v0 + (band.v1 - band.v0) * t});
+      }
+    }
+
+    // dB 横条边界: 顶部 kTopDb, 刻度 0/-20/-40..., 底部 mBottomDb
+    std::vector<float> dbBounds;
+    dbBounds.push_back(kTopDb);
+    for (int db = 0; db > (int)mBottomDb; db -= 20)
+      dbBounds.push_back((float)db);
+    dbBounds.push_back(mBottomDb);
+
+    auto dbToY = [&](float db) -> float {
+      return plot.B - (db - mBottomDb) / (kTopDb - mBottomDb) * plot.H();
+    };
+
+    // dB 维度亮度: 顶部浅, 底部深 (与频率维度同量级, 取平均后过 WarmGray)
+    constexpr float kVDbTop = 245.f;
+    constexpr float kVDbBottom = 172.f;
+    auto vDbAt = [&](float db) -> float {
+      const float t = (kTopDb - db) / (kTopDb - mBottomDb); // 0=顶, 1=底
+      return kVDbTop + (kVDbBottom - kVDbTop) * t;
+    };
+
+    // 绘制二维网格
+    for (size_t r = 0; r + 1 < dbBounds.size(); ++r) {
+      const float yHigh = dbToY(dbBounds[r]);
+      const float yLow = dbToY(dbBounds[r + 1]);
+      const float vDb = vDbAt((dbBounds[r] + dbBounds[r + 1]) * 0.5f);
+      for (const auto &fc : freqCells) {
+        const int v = (int)std::lround((fc.vFreq + vDb) * 0.5f);
+        g.FillRect(WarmGray(v), IRECT(fc.xL, yHigh, fc.xR, yLow));
       }
     }
   }
@@ -220,19 +262,15 @@ private:
     fillBar(barR, cR, mGainPeakR);
   }
 
-  // 20dB 一档的 dB 横网格 + 右侧刻度文字 (样式与滑块参数值一致)
+  // 每 20dB 一档的右侧刻度文字 (网格线已由 DrawBackground 色块替代)
   void DrawDbGrid(IGraphics &g, const IRECT &plot) {
     if (mBottomDb >= 0.f)
       return;
 
-    const IColor grid = WarmGray(200);
     const int bottomDb = (int)mBottomDb;
 
     for (int db = 0; db >= bottomDb; db -= 20) {
       const float y = plot.B - (float)(db - bottomDb) / (kTopDb - (float)bottomDb) * plot.H();
-
-      // 灰色细线横贯图形区
-      g.FillRect(grid, IRECT(plot.L, y, plot.R, y + 1.f));
 
       // 刻度文字: 位于 plot 右侧刻度区, 右对齐, 字号/字重/颜色与滑块参数值一致。
       // 顶部 0dB / 底部最后一条刻度避开控件边界, 防止文字被裁剪。
