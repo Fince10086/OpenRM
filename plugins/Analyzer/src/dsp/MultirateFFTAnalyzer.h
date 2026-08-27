@@ -18,8 +18,11 @@ BEGIN_IPLUG_NAMESPACE
 #ifndef O_RM_HALFBAND_DEC2_DEFINED
 #define O_RM_HALFBAND_DEC2_DEFINED
 namespace detail {
+// 半带 ×2 抽取器 (跨帧保持滤波状态)。系数为 101 抽头 4 项 Blackman-Harris 窗半带 (截止 π/2, DC 增益 1):
+// 阻带跌落 >90 dB, 杜绝层边界强单音穿透抽取器折返到下层的"假频谱峰" (旧 17 抽头 Hamming 阻带
+// 边缘仅 ~-15..-53 dB)。偶数序 (除中心) 抽头严格为零。要求 nin 为偶数。
 struct HalfbandDec2 {
-  static constexpr int kN = 17;
+  static constexpr int kN = 101;
   static constexpr int kQ = (kN - 1) / 2;
   std::array<float, kN> mTap{};
   std::array<float, kN - 1> mState{};
@@ -40,7 +43,10 @@ struct HalfbandDec2 {
         v = 0.0;
       else
         v = 0.5 * std::sin(kPi * n / 2.0) / (kPi * n / 2.0);
-      v *= 0.54 - 0.46 * std::cos(2.0 * kPi * i / (kN - 1));
+      const double theta = 2.0 * kPi * i / (kN - 1); // 4 项 Blackman-Harris: 旁瓣 -92 dB (Hamming 仅 -53 dB)
+      v *= 0.35875 - 0.48829 * std::cos(theta)
+                   + 0.14128 * std::cos(2.0 * theta)
+                   - 0.01168 * std::cos(3.0 * theta);
       taps[i] = v;
       sum += v;
     }

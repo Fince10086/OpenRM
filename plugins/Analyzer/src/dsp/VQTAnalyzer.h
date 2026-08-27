@@ -17,11 +17,13 @@ BEGIN_IPLUG_NAMESPACE
 #define O_RM_HALFBAND_DEC2_DEFINED
 namespace detail {
 
-// 半带 ×2 抽取器 (跨帧保持滤波状态)。系数为 17 抽头 Hamming 窗半带 (截止 π/2, DC 增益 1),
-// 偶数序 (除中心) 抽头严格为零 → 每输出样本 9 次乘加。流式输出保持全局偶数位抽取相位与尾部状态。要求 nin 为偶数。
+// 半带 ×2 抽取器 (跨帧保持滤波状态)。系数为 101 抽头 4 项 Blackman-Harris 窗半带 (截止 π/2, DC 增益 1):
+// 阻带跌落 >90 dB, 杜绝层边界强单音穿透抽取器折返到下层的"假频谱峰" (旧 17 抽头 Hamming 在
+// 阻带边缘仅衰减 ~-15..-53 dB, 440~550 Hz 正弦会在深层流的折返频率处形成可见混叠峰)。
+// 偶数序 (除中心) 抽头严格为零 → 每输出样本 51 次乘加。流式输出保持全局偶数位抽取相位与尾部状态。要求 nin 为偶数。
 struct HalfbandDec2 {
-  static constexpr int kN = 17;                   // 抽头数 (奇数, 半带)
-  static constexpr int kQ = (kN - 1) / 2;         // 中心抽头序号 8
+  static constexpr int kN = 101;                  // 抽头数 (奇数, 半带)
+  static constexpr int kQ = (kN - 1) / 2;         // 中心抽头序号 50
   std::array<float, kN> mTap{};                   // 半带系数
   std::array<float, kN - 1> mState{};             // 最近 kN-1 个输入样本 (跨帧状态)
   float mWork[kN - 1 + 4096];                     // state ++ in 工作区 (先拷贝, 支持 in==out)
@@ -29,7 +31,8 @@ struct HalfbandDec2 {
   HalfbandDec2() { BuildTaps(); }
 
   void BuildTaps() {
-    // h[n] = w[n]·0.5·sinc((n-M)/2), Hamming 窗, 截止 π/2; 归一化 DC 增益 = 1。
+    // h[n] = w[n]·0.5·sinc((n-M)/2), 4 项 Blackman-Harris 窗 (旁瓣 -92 dB), 截止 π/2;
+    // 归一化 DC 增益 = 1。阻带由窗函数旁瓣决定 (Hamming 仅 -53 dB, 不足)。
     double taps[kN];
     double sum = 0.0;
     for (int i = 0; i < kN; ++i) {
@@ -41,7 +44,10 @@ struct HalfbandDec2 {
         v = 0.0;                                  // 偶序 (除中心) = 0: 半带结构
       else
         v = 0.5 * std::sin(PI * n / 2.0) / (PI * n / 2.0);
-      v *= 0.54 - 0.46 * std::cos(2.0 * PI * i / (kN - 1));
+      const double theta = 2.0 * PI * i / (kN - 1);
+      v *= 0.35875 - 0.48829 * std::cos(theta)
+                   + 0.14128 * std::cos(2.0 * theta)
+                   - 0.01168 * std::cos(3.0 * theta);
       taps[i] = v;
       sum += v;
     }
