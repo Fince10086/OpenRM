@@ -234,6 +234,26 @@ public:
     }
   }
 
+  // hover 十字准线: IGraphics 对悬停控件每次鼠标移动都会回调 OnMouseOver (带新坐标),
+  // 这里实时记录位置并请求重绘; 离开控件时清除。仅显示用途, 不捕获鼠标。
+  void OnMouseOver(float x, float y, const IMouseMod &mod) override {
+    mMouseIsOver = true;
+    if (!mHoverActive || mHoverX != x || mHoverY != y) {
+      mHoverX = x;
+      mHoverY = y;
+      mHoverActive = true;
+      SetDirty(false);
+    }
+  }
+
+  void OnMouseOut() override {
+    mMouseIsOver = false;
+    if (mHoverActive) {
+      mHoverActive = false;
+      SetDirty(false);
+    }
+  }
+
   void Draw(IGraphics &g) override {
     g.FillRect(COL_100(), mRECT);
     // 图形区左对齐, 右侧让出 L/R 两条电平表竖条 (刻度文字绘制在频谱区域内部右侧)。
@@ -241,15 +261,73 @@ public:
     // 避免层内容与位图边缘之间的亚像素透明条带在右侧/底侧露出底色 (白边)。
     const IRECT plot =
         mRECT.GetReducedFromRight(2.f * kGainBarW).GetPixelAligned(g.GetScreenScale() * g.GetDrawScale());
+
+    // hover 十字准线: 竖线 (1px) 在光标 x, 标签位于竖线顶部右侧显示 Hz 值;
+    // 横线 (1px) 在光标 y, 标签位于横线右端上侧显示 dB 值。
+    // 标签矩形先算好传给刻度绘制 (DrawDbGrid/DrawFreqGrid): 与固定刻度重叠时
+    // 隐藏那一个被重叠的刻度, 让位给准线读数。
+    const bool inPlot =
+        mHoverActive && mHoverX >= plot.L && mHoverX <= plot.R && mHoverY >= plot.T && mHoverY <= plot.B;
+    IRECT hzSkip, dbSkip; // 默认空矩形 = 不跳过任何刻度
+    char hzBuf[16] = "", dbBuf[16] = "";
+    IText hzText, dbText;
+    float xLine = 0.f, yLine = 0.f;
+    if (inPlot) {
+      xLine = mHoverX;
+      yLine = mHoverY;
+
+      // x -> 对数频率 (与 FreqNorm 反函数一致): 20Hz..20kHz
+      const double hz = 20.0 * std::pow(1000.0, (double)(xLine - plot.L) / plot.W());
+      if (hz < 1000.0)
+        std::snprintf(hzBuf, sizeof(hzBuf), "%.0f Hz", hz);
+      else
+        std::snprintf(hzBuf, sizeof(hzBuf), "%.2f kHz", hz / 1000.0);
+
+      // y -> dB (mBottomDb..kTopDb)
+      const float db = mBottomDb + (kTopDb - mBottomDb) * (plot.B - yLine) / plot.H();
+      std::snprintf(dbBuf, sizeof(dbBuf), "%.1f dB", db);
+
+      // Hz 标签: 与顶部频率刻度同布局同样式 (文字在竖线右侧, 贴频谱顶端);
+      // 右缘放不下时翻转到线左侧 (右对齐)。矩形取文字实际范围, 供重叠判定。
+      hzText = IText(14, COL_700(), kFontRegular, EAlign::Near, EVAlign::Top);
+      hzSkip = IRECT(xLine + 5.f, plot.T + 2.f, plot.R, plot.T + 2.f + kLabelH);
+      g.MeasureText(hzText, hzBuf, hzSkip);
+      if (hzSkip.R > plot.R) {
+        hzText.mAlign = EAlign::Far;
+        hzSkip = IRECT(plot.L, plot.T + 2.f, xLine - 5.f, plot.T + 2.f + kLabelH);
+        g.MeasureText(hzText, hzBuf, hzSkip);
+      }
+
+      // dB 标签: 与右侧 dB 刻度同布局同样式 (文字在横线上方, 右对齐);
+      // 顶部放不下时翻转到线下侧。
+      dbText = IText(14, COL_700(), kFontRegular, EAlign::Far, EVAlign::Bottom);
+      if (yLine - kLabelH - 1.f >= plot.T)
+        dbSkip = IRECT(plot.R - 52.f, yLine - kLabelH - 1.f, plot.R - kTickRight, yLine - 1.f);
+      else
+        dbSkip = IRECT(plot.R - 52.f, yLine + 1.f, plot.R - kTickRight, yLine + 1.f + kLabelH);
+    }
+
     DrawGridLayer(g, plot);
+    DrawDbGrid(g, plot, dbSkip);
+    DrawFreqGrid(g, plot, hzSkip);
     DrawVuLine(g, plot);
     DrawSpectrum(g, plot);
+
+    if (inPlot) {
+      // 准线颜色与刻度文字一致 (COL_700), 1px 细线
+      g.DrawLine(COL_700(), xLine, plot.T, xLine, plot.B, nullptr, 1.f);
+      g.DrawLine(COL_700(), plot.L, yLine, plot.R, yLine, nullptr, 1.f);
+      g.DrawText(hzText, hzBuf, hzSkip);
+      g.DrawText(dbText, dbBuf, dbSkip);
+    }
+
     DrawLevelMeter(g, plot);
   }
 
 private:
-  // 静态网格 (背景色块 + dB/频率刻度) 绘制进离屏 Layer 缓存:
+  // 静态背景网格绘制进离屏 Layer 缓存:
   // 内容只依赖 Range 底限与主题三值, 任一变化才重建, 平时每帧 1 次纹理 blit。
+  // dB/频率刻度不在此层 (动态绘制, 供 hover 准线重叠隐藏), 见 DrawDbGrid/DrawFreqGrid。
   void DrawGridLayer(IGraphics &g, const IRECT &plot) {
     // 层位图四周外扩 1px (gridRect) 吸收引擎在纹理边缘的亚像素瑕疵;
     // 网格内部布局仍按 plot (与频谱曲线对齐), 仅最右列/最底行延伸到 gridRect 边缘,
@@ -260,8 +338,6 @@ private:
         mode != mGridMode) {
       g.StartLayer(this, gridRect);
       DrawBackground(g, plot, gridRect);
-      DrawDbGrid(g, plot);
-      DrawFreqGrid(g, plot);
       mGridLayer = g.EndLayer();
       mGridBottomDb = mBottomDb;
       mGridHue = hue;
@@ -464,13 +540,14 @@ private:
     }
   }
 
-  // 每 20dB 一档的刻度文字: 绘制在频谱区域内部右侧靠边, 字号略小, 文字在线的上方
-  void DrawDbGrid(IGraphics &g, const IRECT &plot) {
+  // 每 20dB 一档的刻度文字: 绘制在频谱区域内部右侧靠边, 字号略小, 文字在线的上方。
+  // skipRect 非空时, 与 hover 准线 dB 标签重叠的刻度隐藏 (让位给准线读数)。
+  void DrawDbGrid(IGraphics &g, const IRECT &plot, const IRECT &skipRect) {
     if (mBottomDb >= 0.f)
       return;
 
     const int bottomDb = (int)mBottomDb;
-    constexpr float kLabelH = 16.f; // 14px 字行高
+    const IText t(14, COL_700(), kFontRegular, EAlign::Far, EVAlign::Bottom);
 
     for (int db = 0; db >= bottomDb; db -= 20) {
       // 最底部一条标签由 Range 循环按钮顶替 (按钮位于刻度列底部, 显示当前底部 dB 值), 跳过文字
@@ -479,11 +556,14 @@ private:
 
       const float y = plot.B - (float)(db - bottomDb) / (kTopDb - (float)bottomDb) * plot.H();
 
-      char buf[16];
-      std::snprintf(buf, sizeof(buf), "%d", db);
       // 文字在线的上边: 底部贴线 (留 1px), 右对齐到频谱区域右缘内侧 (0 也保持在上方)
       const IRECT labelR(plot.R - 52.f, y - kLabelH - 1.f, plot.R - kTickRight, y - 1.f);
-      g.DrawText(IText(14, COL_700(), kFontRegular, EAlign::Far, EVAlign::Bottom), buf, labelR);
+      if (!skipRect.Empty() && labelR.Intersects(skipRect))
+        continue;
+
+      char buf[16];
+      std::snprintf(buf, sizeof(buf), "%d", db);
+      g.DrawText(t, buf, labelR);
     }
   }
 
@@ -496,9 +576,9 @@ private:
     }
   }
 
-  // 频率刻度: 20Hz / 100Hz / 1kHz / 10kHz, 位于频谱内部顶端, 文字在竖线右侧 (14px 与 dB 刻度一致)
-  void DrawFreqGrid(IGraphics &g, const IRECT &plot) {
-    constexpr float kLabelH = 16.f;
+  // 频率刻度: 20Hz / 100Hz / 1kHz / 10kHz, 位于频谱内部顶端, 文字在竖线右侧 (14px 与 dB 刻度一致)。
+  // skipRect 非空时, 与 hover 准线 Hz 标签重叠的刻度隐藏 (按文字实际范围精确判定)。
+  void DrawFreqGrid(IGraphics &g, const IRECT &plot, const IRECT &skipRect) {
     struct FreqLabel {
       double hz;
       const char *txt;
@@ -508,7 +588,14 @@ private:
     for (const auto &lbl : kLabels) {
       const float x = XOf(plot, lbl.hz);
       // 文字在线的右边: 左缘贴线 (留 5px), 顶部贴频谱顶端
-      g.DrawText(t, lbl.txt, IRECT(x + 5.f, plot.T + 2.f, plot.R, plot.T + 2.f + kLabelH));
+      const IRECT labelR(x + 5.f, plot.T + 2.f, plot.R, plot.T + 2.f + kLabelH);
+      if (!skipRect.Empty()) {
+        IRECT fit = labelR;
+        g.MeasureText(t, lbl.txt, fit);
+        if (fit.Intersects(skipRect))
+          continue;
+      }
+      g.DrawText(t, lbl.txt, labelR);
     }
   }
 
@@ -750,6 +837,7 @@ private:
   static constexpr float kSpecFreqHi = 20000.f;
   static constexpr float kTopDb = 9.f;         // 显示范围顶部 (dBFS), 刻度线仍从 0 dB 开始
   static constexpr float kTickRight = 3.f;     // 刻度文字右缘距频谱区域右缘的边距
+  static constexpr float kLabelH = 16.f;       // 14px 字行高 (刻度与 hover 准线标签共用)
 
   // 预计算 bin -> 对数 band 映射表: 只在采样率/FFT 尺寸变化时重建,
   // 绘制聚合循环直接查表, 省去每帧 2048*2 次 log2。
@@ -804,6 +892,11 @@ private:
   std::vector<Pt> mSpecPtsR;    // 预分配: R 填充点
   std::vector<Pt> mSpecPtsM;    // 预分配: 合并声道 (L+R) 填充点
   std::vector<BandAcc> mBandAcc; // 预分配: 每 band 双通道峰值
+
+  // hover 十字准线 (OnMouseOver/OnMouseOut 维护; 仅图形区内绘制)
+  bool mHoverActive = false;
+  float mHoverX = 0.f;
+  float mHoverY = 0.f;
 
   // 静态网格离屏缓存; 状态哨兵初值保证首帧重建
   ILayerPtr mGridLayer;

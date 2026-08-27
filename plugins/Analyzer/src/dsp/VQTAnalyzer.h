@@ -343,18 +343,24 @@ private:
     Band bd;
     bd.layer = L;
     bd.winLen = wl;
-    bd.wsumInv = (float)(4.0 / wl);
     bd.advance = 1;
     bd.readOff = (int)std::lround((R - GroupDelaySec(fs, L)) * fsL);
     bd.kernelRe.resize(wl);
     bd.kernelIm.resize(wl);
     const double step = 2.0 * PI * fc / fsL; // 该层速率的归一化频率
+    double sum = 0.0;
     for (int n = 0; n < wl; ++n) {
-      const double w = 0.5 * (1.0 - std::cos(2.0 * PI * n / (wl - 1)));
+      // 4-term Blackman-Harris 窗: 极大化阻带衰减至 -92dB, 杜绝相邻音乐频段横向泄漏
+      const double theta = 2.0 * PI * n / (wl - 1);
+      const double w = 0.35875 - 0.48829 * std::cos(theta)
+                               + 0.14128 * std::cos(2.0 * theta)
+                               - 0.01168 * std::cos(3.0 * theta);
+      sum += w;
       const double ph = step * n;
       bd.kernelRe[n] = (float)(w * std::cos(ph));
       bd.kernelIm[n] = (float)(w * std::sin(ph));
     }
+    bd.wsumInv = (sum > 1e-12) ? (float)(2.0 / sum) : 0.0f;
     mBands.push_back(std::move(bd));
     mFreqs.push_back(fc);
     mMaxWinPerLayer[L] = std::max(mMaxWinPerLayer[L], wl + bd.readOff);
