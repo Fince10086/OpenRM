@@ -23,7 +23,7 @@ namespace detail {
 // 通用抗混叠抽取器: 支持 2x 半带 (线性相位 / 最小相位) 与 4x 低通。
 // 跨帧保持滤波状态; 流式输出保持全局抽取相位与尾部状态。要求 nin 为 mD 的倍数。
 struct AntiAliasDec {
-  static constexpr int kMaxTaps = 149;   // 2x 半带 101 / 4x 低通 57 上限
+  static constexpr int kMaxTaps = 177;   // 2x 半带 101 / 4x 低通 161 上限
   static constexpr double kPi = 3.14159265358979323846;
 
   int mD = 2;                     // 抽取倍率
@@ -75,7 +75,8 @@ struct AntiAliasDec {
   }
 
   void BuildLowpass4x() {
-    constexpr int kN = 57;                        // 通带 ~0.1π, 阻带 ≥0.4π -92dB (4x 折叠区起点)
+    constexpr int kN = 161;
+    constexpr double kCut = 0.112;                // 截止/fs_in (旧 57t@0.125 过渡带过宽导致泄漏)
     mNumTaps = kN;
     mD = 4;
     mGd = (kN - 1) / 2;
@@ -83,7 +84,8 @@ struct AntiAliasDec {
     double sum = 0.0;
     for (int i = 0; i < kN; ++i) {
       const int n = i - (kN - 1) / 2;
-      double v = (n == 0) ? 0.25 : 0.25 * std::sin(kPi * n / 4.0) / (kPi * n / 4.0);
+      const double x = (n == 0) ? 1.0 : std::sin(2.0 * kPi * kCut * n) / (2.0 * kPi * kCut * n);
+      double v = 2.0 * kCut * x;
       const double theta = 2.0 * kPi * i / (kN - 1);
       v *= 0.35875 - 0.48829 * std::cos(theta)
                    + 0.14128 * std::cos(2.0 * theta)
