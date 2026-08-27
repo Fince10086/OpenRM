@@ -1,6 +1,11 @@
 #pragma once
 
 // VQTAnalyzer — 多速率变分辨率 Q 变换 (Multirate VQT) 频谱分析引擎
+// 金字塔降采样路径可在 3 种算法间切换 (SetPyramidMode, UI 按钮 PYR):
+//   A  = 逐级 2x 半带级联 (101t BH, 线性相位), 群延迟最大但混叠抑制最强
+//   B1 = 浅层逐级 2x + 深层 4x 抽取 (减少级数 → 深层群延迟大幅降低)
+//   B2 = 逐级 2x 最小相位半带 (倒谱构造, 幅度谱不变, 群延迟约为线性相位一半)
+// 各档位共享同一 band 频率表 (显示/冻结路径无需改动), 切换仅触发 RebuildBands。
 
 #include "ISender.h"
 
@@ -13,38 +18,73 @@
 
 BEGIN_IPLUG_NAMESPACE
 
-#ifndef O_RM_HALFBAND_DEC2_DEFINED
-#define O_RM_HALFBAND_DEC2_DEFINED
 namespace detail {
 
-// 半带 ×2 抽取器 (跨帧保持滤波状态)。系数为 101 抽头 4 项 Blackman-Harris 窗半带 (截止 π/2, DC 增益 1):
-// 阻带跌落 >90 dB, 杜绝层边界强单音穿透抽取器折返到下层的"假频谱峰" (旧 17 抽头 Hamming 在
-// 阻带边缘仅衰减 ~-15..-53 dB, 440~550 Hz 正弦会在深层流的折返频率处形成可见混叠峰)。
-// 偶数序 (除中心) 抽头严格为零 → 每输出样本 51 次乘加。流式输出保持全局偶数位抽取相位与尾部状态。要求 nin 为偶数。
-struct HalfbandDec2 {
-  static constexpr int kN = 101;                  // 抽头数 (奇数, 半带)
-  static constexpr int kQ = (kN - 1) / 2;         // 中心抽头序号 50
-  std::array<float, kN> mTap{};                   // 半带系数
-  std::array<float, kN - 1> mState{};             // 最近 kN-1 个输入样本 (跨帧状态)
-  float mWork[kN - 1 + 4096];                     // state ++ in 工作区 (先拷贝, 支持 in==out)
+// 通用抗混叠抽取器: 支持 2x 半带 (线性相位 / 最小相位) 与 4x 低通。
+// 跨帧保持滤波状态; 流式输出保持全局抽取相位与尾部状态。要求 nin 为 mD 的倍数。
+struct AntiAliasDec {
+  static constexpr int kMaxTaps = 149;   // 2x 半带 101 / 4x 低通 57 上限
+  static constexpr double kPi = 3.14159265358979323846;
 
-  HalfbandDec2() { BuildTaps(); }
+  int mD = 2;                     // 抽取倍率
+  int mNumTaps = 0;               // 实际抽头数
+  int mGd = 0;                    // 群延迟 (该级输入采样单位; 最小相位为通带平均)
+  std::array<float, kMaxTaps> mTap{};
+  std::array<float, kMaxTaps - 1> mState{};
+  float mWork[kMaxTaps - 1 + 4096];
 
-  void BuildTaps() {
-    // h[n] = w[n]·0.5·sinc((n-M)/2), 4 项 Blackman-Harris 窗 (旁瓣 -92 dB), 截止 π/2;
-    // 归一化 DC 增益 = 1。阻带由窗函数旁瓣决定 (Hamming 仅 -53 dB, 不足)。
+  // kind: 0 = 2x 线性相位 BH 半带 (101t, 偶抽头为 0)
+  //       1 = 4x BH 低通 (57t, 截止 fs/8)
+  //       2 = 2x 最小相位半带 (101t, 对 kind0 做倒谱最小相位化)
+  void Build(int kind) {
+    if (kind == 0)
+      BuildHalfband2x(false);
+    else if (kind == 1)
+      BuildLowpass4x();
+    else
+      BuildHalfband2x(true);
+  }
+
+  void BuildHalfband2x(bool minPhase) {
+    constexpr int kN = 101;
+    mNumTaps = kN;
+    mD = 2;
+    mGd = (kN - 1) / 2;
     double taps[kN];
     double sum = 0.0;
     for (int i = 0; i < kN; ++i) {
-      const int n = i - kQ;
+      const int n = i - (kN - 1) / 2;
       double v;
       if (n == 0)
         v = 0.5;
       else if ((n & 1) == 0)
         v = 0.0;                                  // 偶序 (除中心) = 0: 半带结构
       else
-        v = 0.5 * std::sin(PI * n / 2.0) / (PI * n / 2.0);
-      const double theta = 2.0 * PI * i / (kN - 1);
+        v = 0.5 * std::sin(kPi * n / 2.0) / (kPi * n / 2.0);
+      const double theta = 2.0 * kPi * i / (kN - 1);
+      v *= 0.35875 - 0.48829 * std::cos(theta)
+                   + 0.14128 * std::cos(2.0 * theta)
+                   - 0.01168 * std::cos(3.0 * theta);
+      taps[i] = v;
+      sum += v;
+    }
+    for (int i = 0; i < kN; ++i)
+      mTap[i] = (float)(taps[i] / sum);
+    if (minPhase)
+      MinPhaseConvert(mTap, kN, mGd);
+  }
+
+  void BuildLowpass4x() {
+    constexpr int kN = 57;                        // 通带 ~0.1π, 阻带 ≥0.4π -92dB (4x 折叠区起点)
+    mNumTaps = kN;
+    mD = 4;
+    mGd = (kN - 1) / 2;
+    double taps[kN];
+    double sum = 0.0;
+    for (int i = 0; i < kN; ++i) {
+      const int n = i - (kN - 1) / 2;
+      double v = (n == 0) ? 0.25 : 0.25 * std::sin(kPi * n / 4.0) / (kPi * n / 4.0);
+      const double theta = 2.0 * kPi * i / (kN - 1);
       v *= 0.35875 - 0.48829 * std::cos(theta)
                    + 0.14128 * std::cos(2.0 * theta)
                    - 0.01168 * std::cos(3.0 * theta);
@@ -57,29 +97,121 @@ struct HalfbandDec2 {
 
   void Reset() { mState.fill(0.f); }
 
-  // nin 必须为偶数; 输出 nin/2 个样本到 out。out 可与 in 别名 (输入先拷贝到 mWork)。
+  // 通用 FIR + mD 抽取 (out 可与 in 别名, 输入先拷贝到 mWork)
   int Process(const float* in, int nin, float* out) {
-    const int sz = (kN - 1) + nin;
-    for (int i = 0; i < kN - 1; ++i)
+    const int nt = mNumTaps;
+    const int sz = (nt - 1) + nin;
+    for (int i = 0; i < nt - 1; ++i)
       mWork[i] = mState[i];
     for (int i = 0; i < nin; ++i)
-      mWork[(kN - 1) + i] = in[i];
-    const int nout = nin / 2;
+      mWork[(nt - 1) + i] = in[i];
+    const int nout = nin / mD;
     for (int j = 0; j < nout; ++j) {
-      const int p = 2 * j;                        // 全局偶数位抽取
+      const int p = mD * j;
       float acc = 0.f;
-      for (int i = 0; i < kN; ++i)
-        acc += mTap[i] * mWork[(kN - 1) + p - i];
+      for (int i = 0; i < nt; ++i)
+        acc += mTap[i] * mWork[(nt - 1) + p - i];
       out[j] = acc;
     }
-    for (int i = 0; i < kN - 1; ++i)
-      mState[i] = mWork[sz - (kN - 1) + i];
+    for (int i = 0; i < nt - 1; ++i)
+      mState[i] = mWork[sz - (nt - 1) + i];
     return nout;
+  }
+
+  // 基 2 FFT (原位, n 为 2 的幂; forward 无归一, inverse 除 n)
+  static void Fft(int n, double* re, double* im, bool inverse) {
+    for (int i = 1, j = 0; i < n; ++i) {
+      int bit = n >> 1;
+      for (; j & bit; bit >>= 1)
+        j ^= bit;
+      j ^= bit;
+      if (i < j) {
+        std::swap(re[i], re[j]);
+        std::swap(im[i], im[j]);
+      }
+    }
+    for (int len = 2; len <= n; len <<= 1) {
+      const double ang = (inverse ? 2.0 : -2.0) * kPi / len;
+      const double wr0 = std::cos(ang), wi0 = std::sin(ang);
+      for (int i = 0; i < n; i += len) {
+        double wr = 1.0, wi = 0.0;
+        for (int k = 0; k < len / 2; ++k) {
+          const double ur = re[i + k], ui = im[i + k];
+          const double vr = re[i + k + len / 2], vi = im[i + k + len / 2];
+          const double tr = wr * vr - wi * vi;
+          const double ti = wr * vi + wi * vr;
+          re[i + k] = ur + tr;
+          im[i + k] = ui + ti;
+          re[i + k + len / 2] = ur - tr;
+          im[i + k + len / 2] = ui - ti;
+          const double nwr = wr * wr0 - wi * wi0;
+          wi = wr * wi0 + wi * wr0;
+          wr = nwr;
+        }
+      }
+    }
+    if (inverse)
+      for (int i = 0; i < n; ++i) {
+        re[i] /= n;
+        im[i] /= n;
+      }
+  }
+
+  // 倒谱法最小相位化: 保持幅度谱 (阻带不变), 群延迟降至通带平均 (~N/4)。
+  // 输出群延迟写入 gdOut (通带 0.05π..0.35π 相位差分平均)。
+  static void MinPhaseConvert(std::array<float, kMaxTaps>& taps, int n, int& gdOut) {
+    constexpr int M = 1024;
+    double re[M], im[M];
+    for (int i = 0; i < M; ++i) {
+      re[i] = (i < n) ? (double)taps[i] : 0.0;
+      im[i] = 0.0;
+    }
+    Fft(M, re, im, false);
+    for (int i = 0; i < M; ++i) {
+      const double m = std::max(std::hypot(re[i], im[i]), 1e-12);
+      re[i] = std::log(m);                        // log|H| (偶对称)
+      im[i] = 0.0;
+    }
+    Fft(M, re, im, true);                         // 倒谱 c
+    for (int i = 1; i < M / 2; ++i)
+      re[i] *= 2.0;                               // 最小相位截断
+    for (int i = M / 2 + 1; i < M; ++i)
+      re[i] = 0.0;
+    Fft(M, re, im, false);                        // FFT(c_min)
+    for (int i = 0; i < M; ++i) {
+      const double e = std::exp(re[i]);
+      const double r = e * std::cos(im[i]);
+      im[i] = e * std::sin(im[i]);
+      re[i] = r;
+    }
+    Fft(M, re, im, true);                         // h_min
+    double dc = 0.0;
+    for (int i = 0; i < n; ++i)
+      dc += re[i];
+    for (int i = 0; i < n; ++i)
+      taps[i] = (float)(re[i] / dc);              // DC 增益归一
+    // 通带群延迟 (相位差分平均)
+    auto phaseAt = [&](double w) {
+      double r = 0.0, iq = 0.0;
+      for (int k = 0; k < n; ++k) {
+        const double ph = w * k;
+        r += taps[k] * std::cos(ph);
+        iq -= taps[k] * std::sin(ph);
+      }
+      return std::atan2(iq, r);
+    };
+    constexpr int kPts = 24;
+    double ph0 = phaseAt(kPi * 0.05), ph1 = 0.0;
+    for (int kp = 1; kp <= kPts; ++kp) {
+      const double w = kPi * (0.05 + 0.30 * kp / kPts);
+      ph1 = phaseAt(w);
+    }
+    double gd = -(ph1 - ph0) / (kPi * 0.30);
+    gdOut = std::max(1, (int)std::lround(gd));
   }
 };
 
 } // namespace detail
-#endif
 
 // MAX_BANDS 须与 SpectrumSTFT 的 MAX_FFT_SIZE / SpectrumPad 的 TDataPacket 保持一致:
 template <int MAXNC = 3, int QUEUE_SIZE = 64, int MAX_BANDS = 8192>
@@ -98,6 +230,11 @@ public:
   static constexpr double kGuard = 0.78;     // band 上边距该层新奈奎斯特的比例 (防混叠)
   static constexpr double kCycleFloor = 4.0; // 深层窗长下限: 至少覆盖 ~4 个 fc 周期 (稳定)
 
+  // 金字塔算法档位 (UI 按钮 PYR 切换对比)
+  static constexpr int kPyramidA = 0;   // 逐级 2x 半带级联 (101t BH, 线性相位)
+  static constexpr int kPyramidB1 = 1;  // 浅层 2x + 深层 4x 抽取
+  static constexpr int kPyramidB2 = 2;  // 逐级 2x 最小相位半带
+
   VQTAnalyzer() {
     for (int c = 0; c < MAXNC; ++c) {
       mPending[c].assign(kHop, 0.f);
@@ -108,6 +245,16 @@ public:
 
   // 返回是否实际请求了重建 (参数与当前值相同则返回 false)。调用方据此决定
   // 是否需要通知显示层重置。实际重建发生在 UI 线程 (CheckRebuild/PrepareDataForUI)。
+  bool SetPyramidMode(int mode) {
+    const int v = std::clamp(mode, 0, 2);
+    if (v != mPyramid) {
+      mPyramid = v;
+      mNeedRebuild.store(true);
+      return true;
+    }
+    return false;
+  }
+
   bool SetBpo(int bpo) {
     const int b = (bpo == 12) ? 12 : 24;
     if (b != mBpo) {
@@ -141,7 +288,7 @@ public:
     mChanTri = std::clamp(chanTri, 0, 2);
   }
 
-  // UI 线程: 若音频线程请求了重建 (γ/BPO/采样率变化), 惰性重建 band 表与金字塔。
+  // UI 线程: 若音频线程请求了重建 (γ/BPO/采样率/金字塔档位变化), 惰性重建 band 表与金字塔。
   void CheckRebuild() {
     if (mNeedRebuild.exchange(false))
       RebuildBands();
@@ -190,15 +337,15 @@ protected:
 
       const float *raw = d.vals[c].data();
 
-      // 金字塔降采样
+      // 金字塔降采样 (按当前档位的路径抽取)
       AppendLayer(c, 0, raw, kHop, mMaxWinPerLayer[0]);
       const float *cur = raw;
       int nin = kHop;
-      for (int l = 0; l < kMaxLayers - 1; ++l) {
-        float *dst = mScratch[(l & 1)].data();
-        const int nout = mDecim[c][l].Process(cur, nin, dst);
-        if (nout > 0)
-          AppendLayer(c, l + 1, dst, nout, mMaxWinPerLayer[l + 1]);
+      for (int s = 0; s < mNumPathSteps; ++s) {
+        const DecimStep &st = mPath[s];
+        float *dst = mScratch[(s & 1)].data();
+        const int nout = mDecim[c][st.decimIdx].Process(cur, nin, dst);
+        AppendLayer(c, st.dstLayer, dst, nout, mMaxWinPerLayer[st.dstLayer]);
         cur = dst;
         nin = nout;
       }
@@ -210,32 +357,32 @@ protected:
         float mag;
         if (--rs.phase <= 0) {
           const std::vector<float> &buf = mLayers[c][bd.layer];
-          const int wl = bd.winLen;
-          // 跨层延迟对齐
-          const int have = std::max(0, std::min(wl, (int)buf.size() - bd.readOff));
-          const int skip = wl - have;
-          const int start = std::max(0, (int)buf.size() - bd.readOff - have);
-          const float *x = buf.data() + start;
-          const float *kr = bd.kernelRe.data() + skip;
-          const float *ki = bd.kernelIm.data() + skip;
-          const int cnt = wl - skip;
-          float re0 = 0.f, re1 = 0.f, re2 = 0.f, re3 = 0.f;
-          float im0 = 0.f, im1 = 0.f, im2 = 0.f, im3 = 0.f;
-          int j = 0;
-          for (; j + 4 <= cnt; j += 4) {
-            const float v0 = x[j], v1 = x[j + 1], v2 = x[j + 2], v3 = x[j + 3];
-            re0 += v0 * kr[j];     im0 += v0 * ki[j];
-            re1 += v1 * kr[j + 1]; im1 += v1 * ki[j + 1];
-            re2 += v2 * kr[j + 2]; im2 += v2 * ki[j + 2];
-            re3 += v3 * kr[j + 3]; im3 += v3 * ki[j + 3];
-          }
-          float re = (re0 + re1) + (re2 + re3);
-          float im = (im0 + im1) + (im2 + im3);
-          for (; j < cnt; ++j) {
-            re += x[j] * kr[j];
-            im += x[j] * ki[j];
-          }
-          mag = std::sqrt(re * re + im * im) * bd.wsumInv;
+            const int wl = bd.winLen;
+            // 跨层延迟对齐
+            const int have = std::max(0, std::min(wl, (int)buf.size() - bd.readOff));
+            const int skip = wl - have;
+            const int start = std::max(0, (int)buf.size() - bd.readOff - have);
+            const float *x = buf.data() + start;
+            const float *kr = bd.kernelRe.data() + skip;
+            const float *ki = bd.kernelIm.data() + skip;
+            const int cnt = wl - skip;
+            float re0 = 0.f, re1 = 0.f, re2 = 0.f, re3 = 0.f;
+            float im0 = 0.f, im1 = 0.f, im2 = 0.f, im3 = 0.f;
+            int j = 0;
+            for (; j + 4 <= cnt; j += 4) {
+              const float v0 = x[j], v1 = x[j + 1], v2 = x[j + 2], v3 = x[j + 3];
+              re0 += v0 * kr[j];     im0 += v0 * ki[j];
+              re1 += v1 * kr[j + 1]; im1 += v1 * ki[j + 1];
+              re2 += v2 * kr[j + 2]; im2 += v2 * ki[j + 2];
+              re3 += v3 * kr[j + 3]; im3 += v3 * ki[j + 3];
+            }
+            float re = (re0 + re1) + (re2 + re3);
+            float im = (im0 + im1) + (im2 + im3);
+            for (; j < cnt; ++j) {
+              re += x[j] * kr[j];
+              im += x[j] * ki[j];
+            }
+            mag = std::sqrt(re * re + im * im) * bd.wsumInv;
           rs.last = mag;
           rs.phase = bd.advance;
         } else {
@@ -250,9 +397,9 @@ protected:
 
 private:
   struct Band {
-    int layer;
+    int layer;              // 速率层
     float wsumInv;
-    int winLen;
+    int winLen;             // 本层速率窗长
     int advance;
     int readOff;
     std::vector<float> kernelRe, kernelIm; // 在该层速率下计算的 w·cos/w·sin
@@ -262,6 +409,12 @@ private:
   struct RunState {
     int phase = 0;
     float last = 0.f;
+  };
+
+  // 金字塔抽取路径一步: 由 src (隐式 = 上一步的 dst) 抽取到 dstLayer
+  struct DecimStep {
+    int dstLayer;
+    int decimIdx;
   };
 
   void AppendLayer(int c, int l, const float *src, int n, int maxKeep) {
@@ -276,55 +429,6 @@ private:
     buf.insert(buf.end(), src, src + n);
   }
 
-  void RebuildBands() {
-    mBands.clear();
-    mFreqs.clear();
-    mMaxWinPerLayer.fill(0);
-    const double fs = std::max(mSampleRate, 1.0);
-    const double q = 1.0 / (std::pow(2.0, 1.0 / mBpo) - 1.0);
-
-    // 列出全部 band 的频率/带宽/层号
-    struct Spec { double fc, bw; int layer; };
-    std::vector<Spec> spec;
-    std::array<bool, kMaxLayers> used{};
-    for (int k = 0;; ++k) {
-      const double fc = kFreqLo * std::pow(2.0, (double)k / mBpo);
-      if (fc > kFreqHi)
-        break;
-      const double bw = fc / q + mGamma;
-      const int L = AssignLayer(fc + bw / 2.0, fs);
-      spec.push_back({fc, bw, L});
-      used[L] = true;
-    }
-
-    // 逐层构建 band 并跨层延迟对齐
-    for (int i = 0, n = (int)spec.size(); i < n;) {
-      const int L = spec[i].layer;
-      int j = i;
-      while (j < n && spec[j].layer == L)
-        ++j; // 本层 band 段 [i, j)
-      const double gdL = GroupDelaySec(fs, L);
-      const double gdD = (L + 1 < kMaxLayers && used[L + 1]) ? GroupDelaySec(fs, L + 1) : gdL;
-      for (int t = i; t < j; ++t) {
-        const double f = (j - i > 1) ? (double)(t - i) / (j - i - 1) : 0.0;
-        const double R = gdD + (gdL - gdD) * f;
-        AddBand(spec[t].fc, spec[t].bw, fs, L, R);
-      }
-      i = j;
-    }
-
-    for (int c = 0; c < MAXNC; ++c)
-      mRun[c].assign((size_t)mBands.size(), RunState{0, 0.f});
-
-    for (int c = 0; c < MAXNC; ++c) {
-      for (int l = 0; l < kMaxLayers; ++l)
-        mLayers[c][l].clear();
-    }
-    for (int c = 0; c < MAXNC; ++c)
-      for (int l = 0; l < kMaxLayers; ++l)
-        mDecim[c][l].Reset();
-  }
-
   int AssignLayer(double bandHi, double fs) const {
     int L = 0;
     while (L + 1 < kMaxLayers) {
@@ -336,21 +440,114 @@ private:
     return L;
   }
 
-  static double GroupDelaySec(double fs, int L) {
-    return (double)detail::HalfbandDec2::kQ / fs * (std::pow(2.0, L) - 1.0);
+  // B1: 目标层无流时向上回退到最近的带流层
+  int EffectiveLayer(double bandHi, double fs) const {
+    int L = AssignLayer(bandHi, fs);
+    while (L > 0 && !mLayerValid[L])
+      --L;
+    return L;
+  }
+
+  void RebuildBands() {
+    mBands.clear();
+    mFreqs.clear();
+    mMaxWinPerLayer.fill(0);
+    const double fs = std::max(mSampleRate, 1.0);
+    const double q = 1.0 / (std::pow(2.0, 1.0 / mBpo) - 1.0);
+    const int mode = mPyramid;
+
+    // ── 1. 金字塔路径 / 有效层 / 层群延迟 (输入采样单位) ──
+    mLayerValid.fill(1);
+    mGdSamples.fill(0);
+    int nSteps = 0;
+    if (mode == kPyramidB1) {
+      // 浅层逐级 2x (L0→L5), 深层 4x 一次合并两级 (L5→L7, L7→L9)
+      for (int l = 0; l <= 4; ++l)
+        mPath[nSteps++] = {l + 1, l};
+      mPath[nSteps++] = {7, 5};
+      mPath[nSteps++] = {9, 6};
+      mLayerValid[6] = 0;
+      mLayerValid[8] = 0;
+    } else {
+      for (int l = 0; l < kMaxLayers - 1; ++l)
+        mPath[nSteps++] = {l + 1, l};
+    }
+    mNumPathSteps = nSteps;
+
+    // 抽取器 (A: 全 2x; B1: 前 5 级 2x + 2 个 4x; B2: 全 2x 最小相位)
+    for (int l = 0; l < kMaxLayers; ++l) {
+      int kind = 0;
+      if (mode == kPyramidB2)
+        kind = 2;
+      else if (mode == kPyramidB1 && (l == 5 || l == 6))
+        kind = 1;
+      for (int c = 0; c < MAXNC; ++c)
+        mDecim[c][l].Build(kind);
+    }
+
+    // 层流群延迟 (输入采样): 沿路径累计
+    int prevDst = 0;
+    for (int s = 0; s < nSteps; ++s) {
+      const DecimStep &st = mPath[s];
+      mGdSamples[st.dstLayer] = mGdSamples[prevDst] + mDecim[0][st.decimIdx].mGd * (1 << prevDst);
+      prevDst = st.dstLayer;
+    }
+
+    // ── 2. band 表 (频率序; 层内连续段 + B1 上移段自然并入) ──
+    struct Spec { double fc, bw; int layer; };
+    std::vector<Spec> spec;
+    std::array<int, kMaxLayers> layerCount{};
+    for (int k = 0;; ++k) {
+      const double fc = kFreqLo * std::pow(2.0, (double)k / mBpo);
+      if (fc > kFreqHi)
+        break;
+      const double bw = fc / q + mGamma;
+      const int L = EffectiveLayer(fc + bw / 2.0, fs);
+      spec.push_back({fc, bw, L});
+      layerCount[L]++;
+    }
+
+    for (int i = 0, n = (int)spec.size(); i < n;) {
+      const int L = spec[i].layer;
+      int j = i;
+      while (j < n && spec[j].layer == L)
+        ++j; // 本层 band 段 [i, j)
+
+      const double gdL = (double)mGdSamples[L] / fs;
+      // 下一更深带流层 (B1 跳过无流层)
+      int nextDeep = -1;
+      for (int d = L + 1; d < kMaxLayers; ++d)
+        if (layerCount[d] > 0) {
+          nextDeep = d;
+          break;
+        }
+      const double gdD = (nextDeep > 0) ? (double)mGdSamples[nextDeep] / fs : gdL;
+      for (int t = i; t < j; ++t) {
+        const double f = (j - i > 1) ? (double)(t - i) / (j - i - 1) : 0.0;
+        const double R = gdD + (gdL - gdD) * f;
+        AddBand(spec[t].fc, spec[t].bw, fs, L, R);
+      }
+      i = j;
+    }
+
+    for (int c = 0; c < MAXNC; ++c) {
+      mRun[c].assign((size_t)mBands.size(), RunState{0, 0.f});
+      for (int l = 0; l < kMaxLayers; ++l)
+        mLayers[c][l].clear();
+      for (int l = 0; l < kMaxLayers; ++l)
+        mDecim[c][l].Reset();
+    }
   }
 
   void AddBand(double fc, double bw, double fs, int L, double R) {
     const double fsL = fs / (double)(1 << L);
-
     const int wl = std::max(8, std::max((int)std::round(fsL / bw),
                                         (int)std::round(fsL / fc * kCycleFloor)));
-
     Band bd;
     bd.layer = L;
     bd.winLen = wl;
     bd.advance = 1;
-    bd.readOff = (int)std::lround((R - GroupDelaySec(fs, L)) * fsL);
+    bd.readOff = (int)std::lround((R - (double)mGdSamples[L] / fs) * fsL);
     bd.kernelRe.resize(wl);
     bd.kernelIm.resize(wl);
     const double step = 2.0 * PI * fc / fsL; // 该层速率的归一化频率
@@ -372,6 +569,7 @@ private:
     mMaxWinPerLayer[L] = std::max(mMaxWinPerLayer[L], wl + bd.readOff);
   }
 
+  int mPyramid = 0;                       // 金字塔档位 (kPyramidA/B1/B2)
   int mBpo = 24;                          // bins per octave (12/24)
   int mGamma = 20;                        // 低频带宽下限 Hz
   int mChanTri = 0;                       // 0=LR, 1=PWR, 2=SUM
@@ -380,8 +578,12 @@ private:
   std::vector<Band> mBands;
   std::vector<double> mFreqs;
   std::array<int, kMaxLayers> mMaxWinPerLayer{};
+  std::array<int, kMaxLayers> mLayerValid{};   // 该层是否有流 (B1 跳过 L6/L8)
+  std::array<int, kMaxLayers> mGdSamples{};    // 层流群延迟 (输入采样单位)
+  std::array<DecimStep, kMaxLayers> mPath{};
+  int mNumPathSteps = 0;
   std::array<std::vector<std::vector<float>>, MAXNC> mLayers;
-  std::array<std::array<detail::HalfbandDec2, kMaxLayers>, MAXNC> mDecim;
+  std::array<std::array<detail::AntiAliasDec, kMaxLayers>, MAXNC> mDecim;
   std::array<std::vector<RunState>, MAXNC> mRun;
   std::array<float, kHop> mScratch[2];
   int mBufCount = 0;

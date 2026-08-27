@@ -57,6 +57,8 @@ enum EText {
   kTxtLfHigh,
   kTxtTipPazAlgo,
   kTxtTipFreeze,
+  kTxtPyramid,
+  kTxtTipPyramid,
   kNumTexts
 };
 
@@ -109,6 +111,8 @@ inline const char *Tr(int id, int lang) {
           "HIGH",
           "PAZ analysis algorithm (IIR / FFT)",
           "Freeze display: hold current picture; switching engine re-analyzes the same frozen audio with the new algorithm",
+          "PYR",
+          "VQT pyramid decimation: A (2x per stage, linear phase) / B1 (2x shallow + 4x deep) / B2 (min-phase 2x)",
       },
       {
           "释放",
@@ -157,6 +161,8 @@ inline const char *Tr(int id, int lang) {
           "高",
           "PAZ 分析算法（IIR / FFT）",
           "冻结显示：定格当前画面；冻结中切换引擎时，用新算法重新分析同一段冻结音频",
+          "金字塔",
+          "VQT 金字塔降采样算法：A 逐级 2x（线性相位）/ B1 浅层 2x+深层 4x / B2 2x 最小相位（各档延迟对比）",
       },
   };
   return kTable[lang][id];

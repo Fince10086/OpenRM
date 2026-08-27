@@ -96,6 +96,7 @@ private:
   FlatCycleButton *mLfResBtn = nullptr;    // VQT 低频分辨率循环按钮 (LOW/MID/HIGH: 20/10/5 Hz)
   FlatCycleButton *mPazLfResBtn = nullptr; // PAZ 低频分辨率循环按钮 (40/20/10 Hz)
   FlatCycleButton *mPazAlgoBtn = nullptr;  // PAZ 算法模式循环按钮 (IIR / FFT)
+  FlatCycleButton *mPyramidBtn = nullptr;  // VQT 金字塔算法循环按钮 (A / B1 / B2 / B3)
   FlatCycleButton *mRangeBtn = nullptr;    // 动态范围循环按钮 (刻度底部 80/100/120)
   ORMSlider *mAttackSlider = nullptr;
   ORMSlider *mReleaseSlider = nullptr;
@@ -124,6 +125,7 @@ private:
   int mFreezeLf = -1;
   int mFreezeBpo = -1;
   int mFreezePazAlgo = -1;
+  int mFreezePyramid = -1;
 
   // 冻结重算: 把冻结缓冲整圈 (kFreezeRingLen>>10 = 64 帧 × 1024 hop) 预热情景引擎,
   // 最后一帧以 FreezeFrameData 直发 pad (跳过攻击/释放平滑)。定义见 Analyzer.cpp。

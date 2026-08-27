@@ -120,6 +120,7 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
   GetParam(kLevelHold)->InitDouble("LevelHold", 2., 0., 5., 0.1, "s");
   GetParam(kPazAlgo)->InitInt("PazAlgo", kPazAlgoIIR, 0, kNumPazAlgos - 1, "");
   GetParam(kFreeze)->InitInt("Freeze", 0, 0, 1, ""); // 0=LIVE 实时, 1=FREEZE 定格
+  GetParam(kPyramidDecim)->InitInt("Pyramid", 0, 0, 2, ""); // VQT 金字塔档位: 0=A 1=B1 2=B2
 
   mDefaultSnapshot = Snapshot();
   mStableSnapshot = Snapshot();
@@ -254,6 +255,13 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     pGraphics->AttachControl(mPazAlgoBtn);
     bindTip(mPazAlgoBtn, orm::kTxtTipPazAlgo);
     mPazAlgoBtn->Hide(true);
+
+    // VQT 金字塔算法循环按钮 (A / B1 / B2) — 位于 PAZ 算法按钮位置, 仅 VQT 模式可见
+    mPyramidBtn = new FlatCycleButton(IRECT(kPazAlgoX, kTopBtnY, kPazAlgoX + kTopBtnW, kTopBtnY + kTopBtnH),
+                                      kPyramidDecim, {"A", "B1", "B2"}, btnStyle);
+    pGraphics->AttachControl(mPyramidBtn);
+    bindTip(mPyramidBtn, orm::kTxtTipPyramid);
+    mPyramidBtn->Hide(true);
 
     // 主频谱绘制区域
     mSpectrumPad = new SpectrumPad(IRECT(20, 58, 668, 328));
@@ -704,6 +712,11 @@ void ORMAnalyzer::OnParamChange(int paramIdx, EParamSource source, int sampleOff
     mPAZ.SetAlgo((int)GetParam(kPazAlgo)->Value());
     if (!frozen)
       SendResetToPad();
+  } else if (paramIdx == kPyramidDecim) {
+    if (GetParam(kMode)->Value() < 1.5) { // VQT 模式
+      if (mVQT.SetPyramidMode((int)std::lround(GetParam(kPyramidDecim)->Value())) && !frozen)
+        SendResetToPad();
+    }
   } else if (paramIdx == kLevelMode) {
     // 电平表模式切换: 清除峰值保持 (过载锁存保留, 直到手动 RESET); 由音频线程执行
     mLevelResetHoldFlag.store(true, std::memory_order_relaxed);
@@ -757,6 +770,7 @@ void ORMAnalyzer::OnIdle() {
     mFreezeLf = (int)std::lround(GetParam(kLfRes)->Value());
     mFreezeBpo = (int)std::lround(GetParam(kBpo)->Value());
     mFreezePazAlgo = (int)std::lround(GetParam(kPazAlgo)->Value());
+    mFreezePyramid = (int)std::lround(GetParam(kPyramidDecim)->Value());
   };
 
   // 模式切换 (冻结中: 跳过 reset 不清屏, 改用冻结缓冲在新算法下重算后直显定格)
@@ -768,6 +782,7 @@ void ORMAnalyzer::OnIdle() {
       mLfResBtn->Hide(mode != kModeVQT);
       mPazLfResBtn->Hide(mode != kModePAZ);
       mPazAlgoBtn->Hide(mode != kModePAZ);
+      mPyramidBtn->Hide(mode != kModeVQT);
       mBpoSlider->Hide(mode != kModeVQT && mode != kModeMRFFT);
     }
     SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagMode, sizeof(int), &mode);
@@ -847,9 +862,11 @@ void ORMAnalyzer::OnIdle() {
       const int lfIdx = (int)std::lround(GetParam(kLfRes)->Value());
       const int bpoIdx = (int)std::lround(GetParam(kBpo)->Value());
       const int pazAlgo = (int)std::lround(GetParam(kPazAlgo)->Value());
+      const int pyrIdx = (int)std::lround(GetParam(kPyramidDecim)->Value());
       const bool cfgChanged =
           (mode == kModeFFT && resIdx != mFreezeRes) ||
-          (mode == kModeVQT && (lfIdx != mFreezeLf || bpoIdx != mFreezeBpo)) ||
+          (mode == kModeVQT &&
+           (lfIdx != mFreezeLf || bpoIdx != mFreezeBpo || pyrIdx != mFreezePyramid)) ||
           (mode == kModePAZ && (lfIdx != mFreezeLf || pazAlgo != mFreezePazAlgo)) ||
           (mode == kModeMRFFT && bpoIdx != mFreezeBpo);
       if (cfgChanged) {
@@ -866,6 +883,7 @@ void ORMAnalyzer::OnIdle() {
       mFreezeLf = lfIdx;
       mFreezeBpo = bpoIdx;
       mFreezePazAlgo = pazAlgo;
+      mFreezePyramid = pyrIdx;
     }
   } else {
     mFreezeOn = false;

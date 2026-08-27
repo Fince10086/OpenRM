@@ -17,6 +17,7 @@ enum EParams {
   kLevelHold,     // 峰值保持时长 (s)
   kPazAlgo,       // PAZ 算法模式 (0: IIR, 1: FFT)
   kFreeze,        // 冻结/保持 (0: LIVE 实时, 1: FREEZE 定格; 冻结中切换引擎用新算法重算冻结音频)
+  kPyramidDecim,  // VQT 金字塔降采样档位 (0: A 逐级2x, 1: B1 浅2x+深4x, 2: B2 2x最小相位)
   kNumParams
 };
 
