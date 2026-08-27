@@ -30,8 +30,8 @@ constexpr int kNumPazLfResOptions = 3;
 constexpr int kBpoOptions[] = {12, 24};
 constexpr int kNumBpoOptions = 2;
 
-// 分析引擎模式
-enum EAnalyzerMode { kModeFFT = 0, kModeVQT = 1, kModePAZ = 2, kNumModes = 3 };
+// 分析引擎模式 (四态: FFT, VQT, PAZ, MR-FFT)
+enum EAnalyzerMode { kModeFFT = 0, kModeVQT = 1, kModePAZ = 2, kModeMRFFT = 3, kNumModes = 4 };
 
 // 声道显示模式 (三态: LR / PWR(Merge) / SUM(Merge))
 enum EChannelMode { kChanModeLR = 0, kChanModePWR = 1, kChanModeSUM = 2, kNumChanModes = 3 };

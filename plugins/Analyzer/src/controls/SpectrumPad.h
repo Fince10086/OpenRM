@@ -41,6 +41,7 @@ public:
     kMsgTagMergeAlgo,   // 合并算法 (0: PWR 功率和, 1: SUM 单声道和)
     kMsgTagLevelMeter,  // 电平表数据 (LevelMeterUiData)
     kMsgTagPAZBands,    // PAZ 频带中心频率 (Hz)
+    kMsgTagMRFFTBands,  // MR-FFT 频带中心频率 (Hz)
   };
 
   SpectrumPad(const IRECT &bounds) : IControl(bounds) {
@@ -65,8 +66,11 @@ public:
     if (msgTag == ISender<>::kUpdateMessage) {
       ISenderData<3, TDataPacket> d;
       stream.Get(&d, 0);
-      // FFT: 数据 = bins (nBins 个); VQT/PAZ: 数据 = band 幅度 (nBands 个)
-      const int nVals = (mMode == 0) ? std::max(mNumBins, 0) : (mMode == 1) ? (int)mVQTFreqs.size() : (int)mPAZFreqs.size();
+      // FFT: 数据 = bins (nBins 个); VQT/PAZ/MR-FFT: 数据 = band 幅度 (nBands 个)
+      const int nVals = (mMode == 0) ? std::max(mNumBins, 0)
+                                     : (mMode == 1) ? (int)mVQTFreqs.size()
+                                     : (mMode == 2) ? (int)mPAZFreqs.size()
+                                                    : (int)mMRFFTFreqs.size();
       if (nVals <= 0)
         return;
 
@@ -144,7 +148,7 @@ public:
     } else if (msgTag == kMsgTagMode) {
       int mode;
       stream.Get(&mode, 0);
-      mMode = std::clamp(mode, 0, 2);
+      mMode = std::clamp(mode, 0, 3);
       SetDirty(false);
     } else if (msgTag == kMsgTagChanMode) {
       int chanMode;
@@ -181,6 +185,19 @@ public:
       mPAZFreqNorm.resize(n);
       for (int i = 0; i < n; ++i)
         mPAZFreqNorm[i] = FreqNorm(mPAZFreqs[i]);
+      SetDirty(false);
+    } else if (msgTag == kMsgTagMRFFTBands) {
+      const int n = dataSize / (int)sizeof(float);
+      if (n != (int)mMRFFTFreqs.size()) {
+        for (int c = 0; c < 3; ++c)
+          mSpectrum[c].clear();
+      }
+      mMRFFTFreqs.resize(n);
+      if (n > 0)
+        std::memcpy(mMRFFTFreqs.data(), pData, (size_t)n * sizeof(float));
+      mMRFFTFreqNorm.resize(n);
+      for (int i = 0; i < n; ++i)
+        mMRFFTFreqNorm[i] = FreqNorm(mMRFFTFreqs[i]);
       SetDirty(false);
     } else if (msgTag == kMsgTagLevelMeter) {
       if (dataSize != (int)sizeof(LevelMeterUiData))
@@ -570,6 +587,39 @@ private:
       return;
     }
 
+    // MR-FFT 模式: 数据 = 八度子带小 FFT 各 band 幅度, 按对数频率平滑样条绘制
+    if (mMode == 3) {
+      mSpecPtsL.clear();
+      mSpecPtsR.clear();
+      mSpecPtsM.clear();
+      const int nb = (int)mMRFFTFreqs.size();
+      const int have = std::min(nb, (int)mSpectrum[0].size());
+      for (int b = 0; b < have; ++b) {
+        const float x = plot.L + mMRFFTFreqNorm[b] * plot.W();
+        const float aL = mSpectrum[0][b];
+        const float aR = mSpectrum[1][b];
+        const float aSum = (mSpectrum[2].size() > (size_t)b) ? mSpectrum[2][b] : 0.f;
+        const float yL = ampToY(aL);
+        const float yR = ampToY(aR);
+        if (aL > 1e-6f)
+          mSpecPtsL.push_back({x, yL});
+        if (aR > 1e-6f)
+          mSpecPtsR.push_back({x, yR});
+
+        const float aM = (mMergeAlgo == 0) ? std::sqrt(aL * aL + aR * aR) : aSum;
+        if (aM > 1e-6f)
+          mSpecPtsM.push_back({x, ampToY(aM)});
+      }
+
+      if (mChanMode == 0) {
+        DrawFill(g, plot, mSpecPtsL, cL, kGradientMinAlpha, kLayerTopAlpha, true);
+        DrawFill(g, plot, mSpecPtsR, cR, kGradientMinAlpha, kLayerTopAlpha, true);
+      } else {
+        DrawFill(g, plot, mSpecPtsM, cO, kGradientMinAlpha, 255, true);
+      }
+      return;
+    }
+
     mSpecPtsL.clear();
     mSpecPtsR.clear();
     mSpecPtsM.clear();
@@ -724,13 +774,15 @@ private:
   int mMeterMode = 0;                       // 电平表模式: 0=dBTP, 1=dBFS+RMS, 2=VU
   bool mOverL = false, mOverR = false;      // 电平表: 过载锁存
   std::vector<int> mBinToBand;     // 预计算: bin -> band 映射 (-1 = 频段外)
-  int mMode = 0;                   // 分析模式: 0=FFT, 1=VQT, 2=PAZ
+  int mMode = 0;                   // 分析模式: 0=FFT, 1=VQT, 2=PAZ, 3=MR-FFT
   int mChanMode = 0;               // 声道显示模式: 0=L/R, 1=MERGE
   int mMergeAlgo = 0;              // 合并算法: 0=PWR 功率和, 1=SUM 单声道和
   std::vector<float> mVQTFreqs;     // VQT band 中心频率 (Hz), 由插件下发
   std::vector<float> mVQTFreqNorm;  // VQT band 频率归一化位置 (预计算, 与 mVQTFreqs 同步)
   std::vector<float> mPAZFreqs;     // PAZ band 中心频率 (Hz), 由插件下发
   std::vector<float> mPAZFreqNorm;  // PAZ band 频率归一化位置 (预计算, 与 mPAZFreqs 同步)
+  std::vector<float> mMRFFTFreqs;   // MR-FFT band 中心频率 (Hz), 由插件下发
+  std::vector<float> mMRFFTFreqNorm;// MR-FFT band 频率归一化位置 (预计算, 与 mMRFFTFreqs 同步)
   std::array<float, kSpectrumBands> mBandNormX{}; // FFT 256 band 频率归一化位置 (预计算)
   float mAttackCoeff = 0.2f;
   float mReleaseCoeff = 0.9f;

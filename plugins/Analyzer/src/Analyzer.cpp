@@ -217,10 +217,10 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     pGraphics->AttachControl(mChanModeBtn);
     bindTip(mChanModeBtn, orm::kTxtTipChanMode);
 
-    // 分析引擎切换按钮 (FFT / VQT / PAZ) — LR 右侧, 留 kTopBtnGap 空隙
+    // 分析引擎切换按钮 (FFT / VQT / PAZ / MR-FFT) — LR 右侧, 留 kTopBtnGap 空隙
     constexpr float kModeX = 20.f + kTopBtnW + kTopBtnGap;
     mModeBtn = new FlatCycleButton(IRECT(kModeX, kTopBtnY, kModeX + kTopBtnW, kTopBtnY + kTopBtnH),
-                                   kMode, {"FFT", "VQT", "PAZ"}, btnStyle);
+                                   kMode, {"FFT", "VQT", "PAZ", "MR-FFT"}, btnStyle);
     pGraphics->AttachControl(mModeBtn);
     bindTip(mModeBtn, orm::kTxtTipMode);
 
@@ -499,6 +499,8 @@ void ORMAnalyzer::ProcessBlock(sample **inputs, sample **outputs, int nFrames) {
       mVQT.ProcessBlock(spec, nFrames, kCtrlTagPad, 3);
     else if (mode == kModePAZ)
       mPAZ.ProcessBlock(spec, nFrames, kCtrlTagPad, 3);
+    else if (mode == kModeMRFFT)
+      mMRFFT.ProcessBlock(spec, nFrames, kCtrlTagPad, 3);
     else
       mSpectrum.ProcessBlock(spec, nFrames, kCtrlTagPad, 3);
   } else {
@@ -511,6 +513,8 @@ void ORMAnalyzer::ProcessBlock(sample **inputs, sample **outputs, int nFrames) {
       mVQT.ProcessBlock(spec, nFrames, kCtrlTagPad, 3);
     else if (mode == kModePAZ)
       mPAZ.ProcessBlock(spec, nFrames, kCtrlTagPad, 3);
+    else if (mode == kModeMRFFT)
+      mMRFFT.ProcessBlock(spec, nFrames, kCtrlTagPad, 3);
     else
       mSpectrum.ProcessBlock(spec, nFrames, kCtrlTagPad, 3);
   }
@@ -560,6 +564,8 @@ void ORMAnalyzer::OnReset() {
   mVQT.SetBpo(CurrentBpo());
   mPAZ.SetSampleRate(GetSampleRate());
   mPAZ.SetLfWidth(CurrentPazLfRes());
+  mMRFFT.SetSampleRate(GetSampleRate());
+  mMRFFT.SetBpo(CurrentBpo());
   mLevelSetSR.store(GetSampleRate(), std::memory_order_relaxed); // 音频线程下一 block 执行 SetSampleRate+Reset
   mPeakL.store(0.f, std::memory_order_relaxed);
   mPeakR.store(0.f, std::memory_order_relaxed);
@@ -587,6 +593,8 @@ void ORMAnalyzer::SendSpectrumConfig() {
     SendVQTBandFreqs();
   else if (mode == kModePAZ)
     SendPAZBandFreqs();
+  else if (mode == kModeMRFFT)
+    SendMRFFTBandFreqs();
 }
 
 void ORMAnalyzer::SendVQTBandFreqs() {
@@ -607,6 +615,15 @@ void ORMAnalyzer::SendPAZBandFreqs() {
                              (int)(buf.size() * sizeof(float)), buf.data());
 }
 
+void ORMAnalyzer::SendMRFFTBandFreqs() {
+  const auto &freqs = mMRFFT.BandFreqs();
+  if (freqs.empty())
+    return;
+  std::vector<float> buf(freqs.begin(), freqs.end());
+  SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagMRFFTBands,
+                             (int)(buf.size() * sizeof(float)), buf.data());
+}
+
 void ORMAnalyzer::SendResetToPad() {
   const int dummy = 0;
   SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagReset, sizeof(int), &dummy);
@@ -617,16 +634,21 @@ void ORMAnalyzer::OnParamChange(int paramIdx, EParamSource source, int sampleOff
   if (paramIdx == kRes)
     mSpectrum.SetFFTSizeAndOverlap(CurrentFFTSize(), 4);
   else if (paramIdx == kLfRes) {
-    if (GetParam(kMode)->Value() > 1.5) { // PAZ 模式
+    if (GetParam(kMode)->Value() > 1.5 && GetParam(kMode)->Value() < 2.5) { // PAZ 模式
       if (mPAZ.SetLfWidth(CurrentPazLfRes()))
         SendResetToPad();
-    } else { // VQT 模式
+    } else if (GetParam(kMode)->Value() < 1.5) { // VQT 模式
       if (mVQT.SetGamma(CurrentLfRes()))
         SendResetToPad();
     }
-  } else if (paramIdx == kBpo && GetParam(kMode)->Value() > 0.5 && GetParam(kMode)->Value() < 1.5) {
-    if (mVQT.SetBpo(CurrentBpo()))
-      SendResetToPad();
+  } else if (paramIdx == kBpo) {
+    if (GetParam(kMode)->Value() > 0.5 && GetParam(kMode)->Value() < 1.5) {
+      if (mVQT.SetBpo(CurrentBpo()))
+        SendResetToPad();
+    } else if (GetParam(kMode)->Value() > 2.5) {
+      if (mMRFFT.SetBpo(CurrentBpo()))
+        SendResetToPad();
+    }
   } else if (paramIdx == kLevelMode) {
     // 电平表模式切换: 清除峰值保持 (过载锁存保留, 直到手动 RESET); 由音频线程执行
     mLevelResetHoldFlag.store(true, std::memory_order_relaxed);
@@ -664,11 +686,12 @@ void ORMAnalyzer::OnIdle() {
   mLastIdleTp = wallNow;
   const uint64_t workT0 = ThreadCpuNs(); // UI 线程实际 CPU 时间基线 (不含被抢占)
 
-  // 若 VQT 或 PAZ 参数发生变动，按需重建频带表与多速率金字塔
+  // 若 VQT, PAZ 或 MR-FFT 参数发生变动，按需重建频带表与多速率金字塔
   mVQT.CheckRebuild();
   mPAZ.CheckRebuild();
+  mMRFFT.CheckRebuild();
 
-  // 模式切换处理 (FFT / VQT / PAZ)
+  // 模式切换处理 (FFT / VQT / PAZ / MR-FFT)
   const int mode = (int)GetParam(kMode)->Value();
   if (mode != mSentMode) {
     mSentMode = mode;
@@ -676,7 +699,7 @@ void ORMAnalyzer::OnIdle() {
       mResBtn->Hide(mode != kModeFFT);
       mLfResBtn->Hide(mode != kModeVQT);
       mPazLfResBtn->Hide(mode != kModePAZ);
-      mBpoSlider->Hide(mode != kModeVQT);
+      mBpoSlider->Hide(mode != kModeVQT && mode != kModeMRFFT);
     }
     SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagMode, sizeof(int), &mode);
     SendResetToPad();
@@ -684,6 +707,8 @@ void ORMAnalyzer::OnIdle() {
       SendVQTBandFreqs();
     else if (mode == kModePAZ)
       SendPAZBandFreqs();
+    else if (mode == kModeMRFFT)
+      SendMRFFTBandFreqs();
   }
 
   // 声道显示模式 (三态 LR/PWR/SUM) 变动检测, 派生 chanMode + mergeAlgo 一并下发, 并同步各分析引擎启用声道惰性计算
@@ -691,6 +716,7 @@ void ORMAnalyzer::OnIdle() {
   mSpectrum.SetChannelMode(chanTri);
   mVQT.SetChannelMode(chanTri);
   mPAZ.SetChannelMode(chanTri);
+  mMRFFT.SetChannelMode(chanTri);
   if (chanTri != mSentChanMode) {
     mSentChanMode = chanTri;
     const int chanMode = (chanTri == kChanModeLR) ? 0 : 1;
@@ -730,6 +756,8 @@ void ORMAnalyzer::OnIdle() {
     mVQT.TransmitData(*this);
   else if (mode == kModePAZ)
     mPAZ.TransmitData(*this);
+  else if (mode == kModeMRFFT)
+    mMRFFT.TransmitData(*this);
   else
     mSpectrum.TransmitData(*this);
 

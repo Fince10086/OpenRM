@@ -5,6 +5,7 @@
 #include "dsp/SpectrumSTFT.h"
 #include "dsp/VQTAnalyzer.h"
 #include "dsp/PAZAnalyzer.h"
+#include "dsp/MultirateFFTAnalyzer.h"
 #include "dsp/LevelMeter.h"
 #include "Strings.h"
 
@@ -56,6 +57,7 @@ private:
   SpectrumSTFT<3> mSpectrum;
   VQTAnalyzer<3> mVQT;
   PAZAnalyzer<3> mPAZ;
+  MultirateFFTAnalyzer<3> mMRFFT;
 
   static constexpr int kMaxBlock = 16384;
   std::array<sample, kMaxBlock> mSpecInL{};
@@ -156,6 +158,7 @@ private:
   }
   void SendVQTBandFreqs();
   void SendPAZBandFreqs();
+  void SendMRFFTBandFreqs();
 
   void SetParamFromEditor(int idx, double value);
   void RefreshAfterEdit();
