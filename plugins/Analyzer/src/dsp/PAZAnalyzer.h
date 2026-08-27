@@ -224,48 +224,28 @@ protected:
         }
       } else {
         // IIR 算法 (4 阶 TPT SVF 滤波)
-        BandState *states = mStates[c].data();
-        for (int b = 0; b < nb; ++b) {
-          const BandCoef &coef = mBands[b];
-          BandState &st = states[b];
-          const int l = coef.layer;
-          const int nSamples = kHop >> l;
-          const float *src = mLayers[c][l].data();
-
-          float ic1_1 = st.ic1_1, ic2_1 = st.ic2_1;
-          float ic1_2 = st.ic1_2, ic2_2 = st.ic2_2;
-          float pk = 0.f;
-
-          for (int s = 0; s < nSamples; ++s) {
-            const float inSample = src[s];
-
-            // 级联第 1 级 2 阶带通
-            const float v3_1 = inSample - ic2_1;
-            const float v1_1 = coef.a1 * ic1_1 + coef.a2 * v3_1;
-            const float v2_1 = ic2_1 + coef.a2 * ic1_1 + coef.a3 * v3_1;
-            ic1_1 = 2.f * v1_1 - ic1_1;
-            ic2_1 = 2.f * v2_1 - ic2_1;
-
-            // 级联第 2 级 2 阶带通
-            const float v3_2 = v1_1 - ic2_2;
-            const float v1_2 = coef.a1 * ic1_2 + coef.a2 * v3_2;
-            const float v2_2 = ic2_2 + coef.a2 * ic1_2 + coef.a3 * v3_2;
-            ic1_2 = 2.f * v1_2 - ic1_2;
-            ic2_2 = 2.f * v2_2 - ic2_2;
-
-            const float mag = std::abs(v1_2) * coef.kb;
-            if (mag > pk)
-              pk = mag;
+        float *pk = mPkScratch.data();
+        for (const LayerSeg &seg : mIirSegs) {
+          const int n = seg.count;
+          for (int i = 0; i < n; ++i)
+            pk[seg.start + i] = 0.f;
+          const int ns = kHop >> seg.layer;
+          ProcessIirSeg(mLayers[c][seg.layer].data(), ns,
+                        mA1.data() + seg.start, mA2.data() + seg.start,
+                        mA3.data() + seg.start, mKb.data() + seg.start,
+                        mIirIC1a[c].data() + seg.start, mIirIC2a[c].data() + seg.start,
+                        mIirIC1b[c].data() + seg.start, mIirIC2b[c].data() + seg.start,
+                        pk + seg.start, n);
+          for (int i = 0; i < n; ++i) {
+            if (std::abs(mIirIC1a[c][seg.start + i]) < 1e-30f) {
+              mIirIC1a[c][seg.start + i] = 0.f;
+              mIirIC2a[c][seg.start + i] = 0.f;
+              mIirIC1b[c][seg.start + i] = 0.f;
+              mIirIC2b[c][seg.start + i] = 0.f;
+            }
           }
-
-          if (std::abs(ic1_1) < 1e-30f) {
-            ic1_1 = ic2_1 = ic1_2 = ic2_2 = 0.f;
-          }
-
-          st.ic1_1 = ic1_1; st.ic2_1 = ic2_1;
-          st.ic1_2 = ic1_2; st.ic2_2 = ic2_2;
-
-          d.vals[c][b] = pk;
+          for (int i = 0; i < n; ++i)
+            d.vals[c][seg.start + i] = pk[seg.start + i];
         }
       }
 
@@ -281,10 +261,47 @@ private:
     int layer;
   };
 
-  struct BandState {
-    float ic1_1 = 0.f, ic2_1 = 0.f;
-    float ic1_2 = 0.f, ic2_2 = 0.f;
+  // 同层 band 连续段
+  struct LayerSeg {
+    int start;
+    int count;
+    int layer;
   };
+
+  // 单层批处理核
+  static void ProcessIirSeg(const float *__restrict src, int nSamples,
+                            const float *__restrict a1, const float *__restrict a2,
+                            const float *__restrict a3, const float *__restrict kb,
+                            float *__restrict ic1a, float *__restrict ic2a,
+                            float *__restrict ic1b, float *__restrict ic2b,
+                            float *__restrict pk, int n) {
+    for (int s = 0; s < nSamples; ++s) {
+      const float x = src[s];
+      for (int i = 0; i < n; ++i) {
+        // 级联第 1 级 2 阶带通
+        float c1 = ic1a[i], c2 = ic2a[i];
+        const float v3_1 = x - c2;
+        const float v1_1 = a1[i] * c1 + a2[i] * v3_1;
+        const float v2_1 = c2 + a2[i] * c1 + a3[i] * v3_1;
+        c1 = 2.f * v1_1 - c1;
+        c2 = 2.f * v2_1 - c2;
+
+        // 级联第 2 级 2 阶带通 (输入为第 1 级带通输出)
+        float c3 = ic1b[i], c4 = ic2b[i];
+        const float v3_2 = v1_1 - c4;
+        const float v1_2 = a1[i] * c3 + a2[i] * v3_2;
+        const float v2_2 = c4 + a2[i] * c3 + a3[i] * v3_2;
+        c3 = 2.f * v1_2 - c3;
+        c4 = 2.f * v2_2 - c4;
+        ic1a[i] = c1; ic2a[i] = c2;
+        ic1b[i] = c3; ic2b[i] = c4;
+
+        const float mag = std::abs(v1_2) * kb[i];
+        if (mag > pk[i])
+          pk[i] = mag;
+      }
+    }
+  }
 
   struct FftBandInfo {
     int layer;
@@ -426,8 +443,30 @@ private:
       mFftBands.push_back(fbd);
     }
 
+    const int nbIir = (int)mBands.size();
+    mA1.resize(nbIir); mA2.resize(nbIir); mA3.resize(nbIir); mKb.resize(nbIir);
+    for (int i = 0; i < nbIir; ++i) {
+      mA1[i] = mBands[i].a1;
+      mA2[i] = mBands[i].a2;
+      mA3[i] = mBands[i].a3;
+      mKb[i] = mBands[i].kb;
+    }
+    mIirSegs.clear();
+    for (int i = 0; i < nbIir;) {
+      const int l = mBands[i].layer;
+      int j = i;
+      while (j < nbIir && mBands[j].layer == l)
+        ++j;
+      mIirSegs.push_back(LayerSeg{i, j - i, l});
+      i = j;
+    }
+    mPkScratch.assign(nbIir, 0.f);
+
     for (int c = 0; c < MAXNC; ++c) {
-      mStates[c].assign(mBands.size(), BandState{});
+      mIirIC1a[c].assign(nbIir, 0.f);
+      mIirIC2a[c].assign(nbIir, 0.f);
+      mIirIC1b[c].assign(nbIir, 0.f);
+      mIirIC2b[c].assign(nbIir, 0.f);
       for (int l = 0; l < kMaxLayers - 1; ++l)
         mDecim[c][l].Reset();
       for (int l = 0; l < kMaxLayers; ++l) {
@@ -446,7 +485,16 @@ private:
   std::vector<BandCoef> mBands;
   std::vector<FftBandInfo> mFftBands;
   std::vector<double> mFreqs;
-  std::array<std::vector<BandState>, MAXNC> mStates;
+
+  // IIR 分层批处理状态
+  std::vector<LayerSeg> mIirSegs;                 // 连续同层段列表
+  std::vector<float> mA1, mA2, mA3, mKb;          // 系数 SoA 平铺 (槽位 == band 序号)
+  std::array<std::vector<float>, MAXNC> mIirIC1a; // [c][band] 级联第 1 级 ic1
+  std::array<std::vector<float>, MAXNC> mIirIC2a;
+  std::array<std::vector<float>, MAXNC> mIirIC1b; // 级联第 2 级 ic1
+  std::array<std::vector<float>, MAXNC> mIirIC2b;
+  std::vector<float> mPkScratch;                  // 单帧峰值暂存
+
   std::array<std::vector<float>, MAXNC> mPending;
   int mBufCount = 0;
 
