@@ -55,6 +55,7 @@ enum EText {
   kTxtLfLow,
   kTxtLfMid,
   kTxtLfHigh,
+  kTxtTipPazAlgo,
   kNumTexts
 };
 
@@ -105,6 +106,7 @@ inline const char *Tr(int id, int lang) {
           "LOW",
           "MID",
           "HIGH",
+          "PAZ analysis algorithm (IIR / FFT)",
       },
       {
           "释放",
@@ -151,6 +153,7 @@ inline const char *Tr(int id, int lang) {
           "低",
           "中",
           "高",
+          "PAZ 分析算法（IIR / FFT）",
       },
   };
   return kTable[lang][id];

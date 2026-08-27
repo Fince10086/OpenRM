@@ -95,6 +95,7 @@ private:
   FlatCycleButton *mResBtn = nullptr;      // FFT 分辨率循环按钮 (LOW/MID/HIGH)
   FlatCycleButton *mLfResBtn = nullptr;    // VQT 低频分辨率循环按钮 (LOW/MID/HIGH: 20/10/5 Hz)
   FlatCycleButton *mPazLfResBtn = nullptr; // PAZ 低频分辨率循环按钮 (40/20/10 Hz)
+  FlatCycleButton *mPazAlgoBtn = nullptr;  // PAZ 算法模式循环按钮 (IIR / FFT)
   FlatCycleButton *mRangeBtn = nullptr;    // 动态范围循环按钮 (刻度底部 80/100/120)
   ORMSlider *mAttackSlider = nullptr;
   ORMSlider *mReleaseSlider = nullptr;

@@ -11,12 +11,15 @@ enum EParams {
   kRes,           // FFT 分辨率档位 (2048/4096/8192)
   kLfRes,         // VQT 低频带宽保底 γ 档位 (低/中/高: 20/10/5 Hz)
   kBpo,           // VQT 每八度频带数 (12/24)
-  kMode,          // 分析引擎模式 (0: FFT, 1: VQT)
-  kChannelMode,   // 声道显示模式 (0: LR, 1: PWR(Merge), 2: SUM(Merge))
-  kLevelMode,     // 电平表模式 (0: dBTP 真峰值, 1: dBFS+RMS, 2: VU)
-  kLevelHold,     // 峰值保持时长 (s, 0=关)
+  kMode,          // 分析引擎模式 (0: FFT, 1: VQT, 2: PAZ, 3: MR-FFT)
+  kChannelMode,   // 声道显示模式 (0: LR, 1: PWR, 2: SUM)
+  kLevelMode,     // 电平表模式 (0: dBTP, 1: dBFS+RMS, 2: VU)
+  kLevelHold,     // 峰值保持时长 (s)
+  kPazAlgo,       // PAZ 算法模式 (0: IIR, 1: FFT)
   kNumParams
 };
+
+enum EPazAlgo { kPazAlgoIIR = 0, kPazAlgoFFT = 1, kNumPazAlgos = 2 };
 
 using ParamSnapshot = std::array<double, kNumParams>;
 

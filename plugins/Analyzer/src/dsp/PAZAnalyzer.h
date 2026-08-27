@@ -1,19 +1,6 @@
 #pragma once
 
-// PAZAnalyzer — 心理声学多速率带通滤波器组频谱分析引擎 (复刻 Waves PAZ 经典多速率架构)
-//
-// 架构特点:
-// 1. 线程模型:
-//    - 音频线程 (ProcessBlock): 纯 1024 样本缓冲拷贝入队, 零 DSP 计算, CPU 占用严格 ≈ 0.00%。
-//    - UI 线程 (PrepareDataForUI): 执行多速率半带降采样金字塔与各层分频带 4 阶 TPT SVF 滤波。
-// 2. 多速率金字塔 (10 层 ×2 逐级抽取):
-//    - 高频在 48kHz (1024 样本) 处理, 随着频率降低, 子带样本量逐级减半 (512, 256, 128 ... 2 样本)。
-//    - 总样本处理步数从 69,632 步暴降至约 6,000 步 (算力降低 > 85%)。
-// 3. 自然级联群延迟 (Zero Artificial Delay):
-//    - 每一级半带 FIR (17 抽头) 跨帧保持状态, 天然累积 8*(2^L - 1) 样本的时序流动延迟。
-//    - 低频波峰自然在 3~4 帧 (~70-90ms) 后涌出, 无需任何人工延时环形队列 (去除了 st.hist/delayHops 等冗余代码)。
-// 4. 循环优化与寄存器常驻:
-//    - Band 外层、Sample 内层, 状态变量锁在局部寄存器中连续迭代, 循环内零数组寻址、零 Denormal 分支。
+// PAZAnalyzer — 心理声学临界频带频谱分析引擎 (支持 IIR 与 FFT 双算法)
 
 #ifndef STANDALONE_TEST
 #include "ISender.h"
@@ -31,8 +18,6 @@ BEGIN_IPLUG_NAMESPACE
 #ifndef O_RM_HALFBAND_DEC2_DEFINED
 #define O_RM_HALFBAND_DEC2_DEFINED
 namespace detail {
-// 半带 ×2 抽取器 (跨帧保持滤波状态)。17 抽头 Hamming 窗半带 (截止 π/2, DC 增益 1),
-// 偶数序 (除中心) 抽头严格为零 → 每输出样本 9 次乘加。
 struct HalfbandDec2 {
   static constexpr int kN = 17;
   static constexpr int kQ = (kN - 1) / 2;
@@ -87,8 +72,6 @@ struct HalfbandDec2 {
 } // namespace detail
 #endif
 
-// MAX_BANDS 必须与 SpectrumSTFT 的 MAX_FFT_SIZE / SpectrumPad 的 TDataPacket 保持一致:
-// ISender 数据包跨线程整体拷贝, pad 侧按同尺寸结构体读取, 尺寸不一致会整包读取失败。
 template <int MAXNC = 3, int QUEUE_SIZE = 64, int MAX_BANDS = 8192>
 class PAZAnalyzer : public ISender<MAXNC, QUEUE_SIZE, std::array<float, MAX_BANDS>> {
 public:
@@ -100,8 +83,10 @@ public:
   static constexpr int kMaxLayers = 10;
 
   PAZAnalyzer() {
+    WDL_fft_init();
     for (int c = 0; c < MAXNC; ++c)
       mPending[c].assign(kHop, 0.f);
+    InitLayerWindows();
     RebuildBands();
   }
 
@@ -129,7 +114,13 @@ public:
     return false;
   }
 
-  // 设置声道显示模式 (0: LR, 1: PWR, 2: SUM) 以启用声道惰性计算
+  // 设置算法模式 (0: IIR, 1: FFT)
+  void SetAlgo(int algo) {
+    mAlgo = std::clamp(algo, 0, 1);
+  }
+  int GetAlgo() const { return mAlgo; }
+
+  // 设置声道模式 (0: LR, 1: PWR, 2: SUM)
   void SetChannelMode(int chanTri) {
     mChanTri = std::clamp(chanTri, 0, 2);
   }
@@ -143,7 +134,7 @@ public:
   int NumBands() const { return (int)mFreqs.size(); }
   const std::vector<double> &BandFreqs() const { return mFreqs; }
 
-  // 音频线程: 仅收集 1024 原始样本入队 (零 DSP 计算)
+  // 音频线程收集样本
   void ProcessBlock(sample **inputs, int nFrames, int ctrlTag = kNoTag, int nChans = MAXNC,
                     int chanOffset = 0) {
     const int nCh = std::min(nChans, MAXNC);
@@ -167,10 +158,7 @@ public:
 #endif
 
 protected:
-  // UI 线程 (OnIdle / TransmitData):
-  // 1. 声道惰性分派: LR/PWR 模式跳过 Sum (节省 33%), SUM 模式跳过 L/R (节省 66%)
-  // 2. 生成多速率降采样金字塔 (Layer 0..9)
-  // 3. 各 band 仅在其对应降采样层上进行 4 阶 TPT SVF 滤波 (样本内层, 寄存器常驻)
+  // UI 线程计算各频带能量
   void PrepareDataForUI(Data &d) override {
     CheckRebuild();
     const int nb = NumBands();
@@ -188,7 +176,7 @@ protected:
         continue;
       }
 
-      // 1. 构建该通道的多速率降采样金字塔
+      // 构建多速率降采样金字塔
       float *l0 = mLayers[c][0].data();
       std::copy(d.vals[c].begin(), d.vals[c].begin() + kHop, l0);
       int nin = kHop;
@@ -196,50 +184,89 @@ protected:
         nin = mDecim[c][l].Process(mLayers[c][l].data(), nin, mLayers[c][l + 1].data());
       }
 
-      // 2. 逐频带流式滤波
-      BandState *states = mStates[c].data();
-      for (int b = 0; b < nb; ++b) {
-        const BandCoef &coef = mBands[b];
-        BandState &st = states[b];
-        const int l = coef.layer;
-        const int nSamples = kHop >> l;
-        const float *src = mLayers[c][l].data();
+      if (mAlgo == 1) {
+        // FFT 算法
+        for (int l = 0; l < kMaxLayers; ++l) {
+          const int nFft = mFftSize[l];
+          const int nNew = kHop >> l;
+          float *hist = mFftHist[c][l].data();
 
-        float ic1_1 = st.ic1_1, ic2_1 = st.ic2_1;
-        float ic1_2 = st.ic1_2, ic2_2 = st.ic2_2;
-        float pk = 0.f;
+          if (nNew >= nFft) {
+            std::memcpy(hist, mLayers[c][l].data() + (nNew - nFft), nFft * sizeof(float));
+          } else {
+            std::memmove(hist, hist + nNew, (nFft - nNew) * sizeof(float));
+            std::memcpy(hist + (nFft - nNew), mLayers[c][l].data(), nNew * sizeof(float));
+          }
 
-        for (int s = 0; s < nSamples; ++s) {
-          const float inSample = src[s];
+          WDL_FFT_COMPLEX *fb = mFftBuf[c][l].data();
+          const float *win = mWindows[l].data();
+          for (int i = 0; i < nFft; ++i) {
+            fb[i].re = hist[i] * win[i];
+            fb[i].im = 0.0f;
+          }
 
-          // 级联第 1 级 2 阶 TPT SVF 带通
-          const float v3_1 = inSample - ic2_1;
-          const float v1_1 = coef.a1 * ic1_1 + coef.a2 * v3_1;
-          const float v2_1 = ic2_1 + coef.a2 * ic1_1 + coef.a3 * v3_1;
-          ic1_1 = 2.f * v1_1 - ic1_1;
-          ic2_1 = 2.f * v2_1 - ic2_1;
+          WDL_fft(fb, nFft, false);
 
-          // 级联第 2 级 2 阶 TPT SVF 带通 (输入为第 1 级的输出 v1_1)
-          const float v3_2 = v1_1 - ic2_2;
-          const float v1_2 = coef.a1 * ic1_2 + coef.a2 * v3_2;
-          const float v2_2 = ic2_2 + coef.a2 * ic1_2 + coef.a3 * v3_2;
-          ic1_2 = 2.f * v1_2 - ic1_2;
-          ic2_2 = 2.f * v2_2 - ic2_2;
-
-          const float mag = std::abs(v1_2) * coef.kb;
-          if (mag > pk)
-            pk = mag;
+          float *mags = mMagBuf[c][l].data();
+          const int nBins = nFft / 2;
+          const float norm = mFftScaling[l];
+          for (int i = 0; i < nBins; ++i) {
+            const int si = WDL_fft_permute(nFft, i);
+            const float re = fb[si].re, im = fb[si].im;
+            mags[i] = std::sqrt(re * re + im * im) * norm;
+          }
         }
 
-        // 块末尾去非规格化微小浮点数保护 (循环内零分支跳转)
-        if (std::abs(ic1_1) < 1e-30f) {
-          ic1_1 = ic2_1 = ic1_2 = ic2_2 = 0.f;
+        for (int b = 0; b < nb; ++b) {
+          const FftBandInfo &fbd = mFftBands[b];
+          const float rawMag = mMagBuf[c][fbd.layer][fbd.kPeak];
+          d.vals[c][b] = rawMag * fbd.corrFactor;
         }
+      } else {
+        // IIR 算法 (4 阶 TPT SVF 滤波)
+        BandState *states = mStates[c].data();
+        for (int b = 0; b < nb; ++b) {
+          const BandCoef &coef = mBands[b];
+          BandState &st = states[b];
+          const int l = coef.layer;
+          const int nSamples = kHop >> l;
+          const float *src = mLayers[c][l].data();
 
-        st.ic1_1 = ic1_1; st.ic2_1 = ic2_1;
-        st.ic1_2 = ic1_2; st.ic2_2 = ic2_2;
+          float ic1_1 = st.ic1_1, ic2_1 = st.ic2_1;
+          float ic1_2 = st.ic1_2, ic2_2 = st.ic2_2;
+          float pk = 0.f;
 
-        d.vals[c][b] = pk;
+          for (int s = 0; s < nSamples; ++s) {
+            const float inSample = src[s];
+
+            // 级联第 1 级 2 阶带通
+            const float v3_1 = inSample - ic2_1;
+            const float v1_1 = coef.a1 * ic1_1 + coef.a2 * v3_1;
+            const float v2_1 = ic2_1 + coef.a2 * ic1_1 + coef.a3 * v3_1;
+            ic1_1 = 2.f * v1_1 - ic1_1;
+            ic2_1 = 2.f * v2_1 - ic2_1;
+
+            // 级联第 2 级 2 阶带通
+            const float v3_2 = v1_1 - ic2_2;
+            const float v1_2 = coef.a1 * ic1_2 + coef.a2 * v3_2;
+            const float v2_2 = ic2_2 + coef.a2 * ic1_2 + coef.a3 * v3_2;
+            ic1_2 = 2.f * v1_2 - ic1_2;
+            ic2_2 = 2.f * v2_2 - ic2_2;
+
+            const float mag = std::abs(v1_2) * coef.kb;
+            if (mag > pk)
+              pk = mag;
+          }
+
+          if (std::abs(ic1_1) < 1e-30f) {
+            ic1_1 = ic2_1 = ic1_2 = ic2_2 = 0.f;
+          }
+
+          st.ic1_1 = ic1_1; st.ic2_1 = ic2_1;
+          st.ic1_2 = ic1_2; st.ic2_2 = ic2_2;
+
+          d.vals[c][b] = pk;
+        }
       }
 
       for (int b = nb; b < MAX_BANDS; ++b)
@@ -249,15 +276,43 @@ protected:
 
 private:
   struct BandCoef {
-    float a1, a2, a3; // TPT SVF 系数
-    float kb;         // 归一化增益因子 (1/Q)^2
-    int layer;        // 该频带所属的多速率金字塔层级 (0..9)
+    float a1, a2, a3;
+    float kb;
+    int layer;
   };
 
   struct BandState {
-    float ic1_1 = 0.f, ic2_1 = 0.f; // 级联第 1 级状态
-    float ic1_2 = 0.f, ic2_2 = 0.f; // 级联第 2 级状态
+    float ic1_1 = 0.f, ic2_1 = 0.f;
+    float ic1_2 = 0.f, ic2_2 = 0.f;
   };
+
+  struct FftBandInfo {
+    int layer;
+    int kPeak;
+    float corrFactor;
+  };
+
+  void InitLayerWindows() {
+    constexpr double kPi = 3.14159265358979323846;
+    for (int l = 0; l < kMaxLayers; ++l) {
+      const int sz = (l <= 4) ? (1024 >> l) : 64;
+      mFftSize[l] = sz;
+      mWindows[l].resize(sz);
+      double sum = 0.0;
+      for (int i = 0; i < sz; ++i) {
+        const double w = 0.54 - 0.46 * std::cos(2.0 * kPi * i / (sz - 1));
+        mWindows[l][i] = (float)w;
+        sum += w;
+      }
+      mFftScaling[l] = (float)(2.0 / sum);
+
+      for (int c = 0; c < MAXNC; ++c) {
+        mFftHist[c][l].assign(sz, 0.f);
+        mFftBuf[c][l].resize(sz);
+        mMagBuf[c][l].assign(sz / 2, 0.f);
+      }
+    }
+  }
 
   static constexpr double kPazFreqs40[52] = {
       23.0, 70.0, 117.0, 164.0, 211.0, 258.0, 305.0, 352.0, 422.0, 516.0,
@@ -289,6 +344,7 @@ private:
 
   void RebuildBands() {
     mBands.clear();
+    mFftBands.clear();
     mFreqs.clear();
     const double fs = std::max(mSampleRate, 1.0);
     const double scale = fs / 48000.0;
@@ -312,7 +368,7 @@ private:
       if (fc >= nyqLimit)
         continue;
 
-      // 带宽与品质因数
+      // 带宽与 Q 值
       double bw;
       if (i == 0)
         bw = (srcFreqs[1] - srcFreqs[0]) * scale;
@@ -323,7 +379,7 @@ private:
 
       const double Q = std::clamp(fc / std::max(bw, 1.0), 0.707, 15.0);
 
-      // 计算频带所属的金字塔层级 L (严格处于半带平坦通带内 < 0.38 * fs / 2^L, 避免过渡带滚降)
+      // 分配金字塔层级 L
       static constexpr double kGuard = 0.38;
       const double safeLimit = kGuard * fs;
       int layer = 0;
@@ -332,7 +388,7 @@ private:
         layer = std::clamp(layer, 0, kMaxLayers - 1);
       }
 
-      // 计算该层采样率下的 TPT SVF 系数
+      // IIR 系数
       const double layerFs = fs / (double)(1 << layer);
       constexpr double kPi = 3.14159265358979323846;
       const double g = std::tan(kPi * fc / layerFs);
@@ -351,31 +407,58 @@ private:
 
       mBands.push_back(coef);
       mFreqs.push_back(fc);
+
+      // FFT 频点与校正系数
+      const int nFft = mFftSize[layer];
+      const double kFrac = fc * (double)nFft / layerFs;
+      const int kPeak = std::clamp((int)std::round(kFrac), 0, nFft / 2 - 1);
+      const double p = std::clamp(kFrac - (double)kPeak, -0.5, 0.5);
+      double corr = 1.0;
+      if (std::abs(p) > 1e-4) {
+        const double sincP = std::sin(kPi * p) / (kPi * p);
+        corr = (0.54 * (1.0 - p * p)) / (sincP * (0.54 - 0.08 * p * p));
+      }
+
+      FftBandInfo fbd;
+      fbd.layer = layer;
+      fbd.kPeak = kPeak;
+      fbd.corrFactor = (float)corr;
+      mFftBands.push_back(fbd);
     }
 
-    // 复位各通道状态与半带抽取器
     for (int c = 0; c < MAXNC; ++c) {
       mStates[c].assign(mBands.size(), BandState{});
       for (int l = 0; l < kMaxLayers - 1; ++l)
         mDecim[c][l].Reset();
-      for (int l = 0; l < kMaxLayers; ++l)
+      for (int l = 0; l < kMaxLayers; ++l) {
         mLayers[c][l].assign(kHop >> l, 0.f);
+        mFftHist[c][l].assign(mFftSize[l], 0.f);
+      }
     }
   }
 
+  int mAlgo = 0; // 0: IIR, 1: FFT
   double mSampleRate = 48000.0;
   int mLfMode = 0; // 0=40Hz, 1=20Hz, 2=10Hz
   int mChanTri = 0; // 0=LR, 1=PWR, 2=SUM
   std::atomic<bool> mNeedRebuild{false};
 
   std::vector<BandCoef> mBands;
+  std::vector<FftBandInfo> mFftBands;
   std::vector<double> mFreqs;
   std::array<std::vector<BandState>, MAXNC> mStates;
   std::array<std::vector<float>, MAXNC> mPending;
   int mBufCount = 0;
 
+  std::array<int, kMaxLayers> mFftSize{};
+  std::array<float, kMaxLayers> mFftScaling{};
+  std::array<std::vector<float>, kMaxLayers> mWindows;
+
   std::array<std::array<detail::HalfbandDec2, kMaxLayers - 1>, MAXNC> mDecim;
   std::array<std::array<std::vector<float>, kMaxLayers>, MAXNC> mLayers;
+  std::array<std::array<std::vector<float>, kMaxLayers>, MAXNC> mFftHist;
+  std::array<std::array<std::vector<WDL_FFT_COMPLEX>, kMaxLayers>, MAXNC> mFftBuf;
+  std::array<std::array<std::vector<float>, kMaxLayers>, MAXNC> mMagBuf;
 };
 
 END_IPLUG_NAMESPACE

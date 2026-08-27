@@ -118,6 +118,7 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
   GetParam(kChannelMode)->InitInt("ChanMode", kChanModeLR, 0, kNumChanModes - 1, "");
   GetParam(kLevelMode)->InitInt("LevelMode", kLevelModeDBTP, 0, kNumLevelModes - 1, "");
   GetParam(kLevelHold)->InitDouble("LevelHold", 2., 0., 5., 0.1, "s");
+  GetParam(kPazAlgo)->InitInt("PazAlgo", kPazAlgoIIR, 0, kNumPazAlgos - 1, "");
 
   mDefaultSnapshot = Snapshot();
   mStableSnapshot = Snapshot();
@@ -244,6 +245,14 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     pGraphics->AttachControl(mPazLfResBtn);
     bindTip(mPazLfResBtn, orm::kTxtTipLfRes);
     mPazLfResBtn->Hide(true);
+
+    // PAZ 算法模式循环按钮 (IIR / FFT) — 位于 PAZ LF RES 右侧, 仅 PAZ 模式可见
+    constexpr float kPazAlgoX = kResX + kTopBtnW + kTopBtnGap;
+    mPazAlgoBtn = new FlatCycleButton(IRECT(kPazAlgoX, kTopBtnY, kPazAlgoX + kTopBtnW, kTopBtnY + kTopBtnH),
+                                      kPazAlgo, {"IIR", "FFT"}, btnStyle);
+    pGraphics->AttachControl(mPazAlgoBtn);
+    bindTip(mPazAlgoBtn, orm::kTxtTipPazAlgo);
+    mPazAlgoBtn->Hide(true);
 
     // 主频谱绘制区域
     mSpectrumPad = new SpectrumPad(IRECT(20, 58, 668, 328));
@@ -486,12 +495,11 @@ void ORMAnalyzer::ProcessBlock(sample **inputs, sample **outputs, int nFrames) {
     return;
   }
 
-  // 采集输入数据到当前分析引擎 (FFT, VQT 或 PAZ)
+  // 采集输入数据到当前分析引擎
   const int mode = (int)GetParam(kMode)->Value();
   if (nIns >= 2) {
     std::memcpy(mSpecInL.data(), inputs[0], nFrames * sizeof(sample));
     std::memcpy(mSpecInR.data(), inputs[1], nFrames * sizeof(sample));
-    // 计算时域单声道求和 (除以 sqrt(2)，使同相双声道达到 0 dBFS，单声道为 -3 dBFS，反相抵消为 0)
     for (int s = 0; s < nFrames; ++s)
       mSpecInM[s] = (mSpecInL[s] + mSpecInR[s]) * 0.7071067811865475;
     sample *spec[3] = {mSpecInL.data(), mSpecInR.data(), mSpecInM.data()};
@@ -519,11 +527,10 @@ void ORMAnalyzer::ProcessBlock(sample **inputs, sample **outputs, int nFrames) {
       mSpectrum.ProcessBlock(spec, nFrames, kCtrlTagPad, 3);
   }
 
-  // 专业电平表测量 (真峰值/峰值/RMS/VU + hold + over), 与频谱引擎独立
-  // UI 线程的采样率/复位请求在此统一执行, 保证只在音频线程改写 LevelMeter 状态
+  // 电平表测量
   const double newSR = mLevelSetSR.exchange(-1.0, std::memory_order_relaxed);
   if (newSR > 0.0)
-    mLevelMeter.SetSampleRate(newSR); // 内部含 Reset()
+    mLevelMeter.SetSampleRate(newSR);
   if (mLevelResetHoldFlag.exchange(false, std::memory_order_relaxed))
     mLevelMeter.ResetHold();
   if (mLevelResetFlag.exchange(false))
@@ -564,6 +571,7 @@ void ORMAnalyzer::OnReset() {
   mVQT.SetBpo(CurrentBpo());
   mPAZ.SetSampleRate(GetSampleRate());
   mPAZ.SetLfWidth(CurrentPazLfRes());
+  mPAZ.SetAlgo((int)GetParam(kPazAlgo)->Value());
   mMRFFT.SetSampleRate(GetSampleRate());
   mMRFFT.SetBpo(CurrentBpo());
   mLevelSetSR.store(GetSampleRate(), std::memory_order_relaxed); // 音频线程下一 block 执行 SetSampleRate+Reset
@@ -651,6 +659,9 @@ void ORMAnalyzer::OnParamChange(int paramIdx, EParamSource source, int sampleOff
       if (mMRFFT.SetBpo(CurrentBpo()))
         SendResetToPad();
     }
+  } else if (paramIdx == kPazAlgo) {
+    mPAZ.SetAlgo((int)GetParam(kPazAlgo)->Value());
+    SendResetToPad();
   } else if (paramIdx == kLevelMode) {
     // 电平表模式切换: 清除峰值保持 (过载锁存保留, 直到手动 RESET); 由音频线程执行
     mLevelResetHoldFlag.store(true, std::memory_order_relaxed);
@@ -688,19 +699,23 @@ void ORMAnalyzer::OnIdle() {
   mLastIdleTp = wallNow;
   const uint64_t workT0 = ThreadCpuNs(); // UI 线程实际 CPU 时间基线 (不含被抢占)
 
-  // 若 VQT, PAZ 或 MR-FFT 参数发生变动，按需重建频带表与多速率金字塔
+  // 按需重建频带配置
   mVQT.CheckRebuild();
   mPAZ.CheckRebuild();
   mMRFFT.CheckRebuild();
 
-  // 模式切换处理 (FFT / VQT / PAZ / MR-FFT)
+  // 同步 PAZ 算法模式
+  mPAZ.SetAlgo((int)GetParam(kPazAlgo)->Value());
+
+  // 模式切换
   const int mode = (int)GetParam(kMode)->Value();
   if (mode != mSentMode) {
     mSentMode = mode;
-    if (mResBtn && mLfResBtn && mPazLfResBtn && mBpoSlider) {
+    if (mResBtn && mLfResBtn && mPazLfResBtn && mPazAlgoBtn && mBpoSlider) {
       mResBtn->Hide(mode != kModeFFT);
       mLfResBtn->Hide(mode != kModeVQT);
       mPazLfResBtn->Hide(mode != kModePAZ);
+      mPazAlgoBtn->Hide(mode != kModePAZ);
       mBpoSlider->Hide(mode != kModeVQT && mode != kModeMRFFT);
     }
     SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagMode, sizeof(int), &mode);
@@ -713,7 +728,7 @@ void ORMAnalyzer::OnIdle() {
       SendMRFFTBandFreqs();
   }
 
-  // 声道显示模式 (三态 LR/PWR/SUM) 变动检测, 派生 chanMode + mergeAlgo 一并下发, 并同步各分析引擎启用声道惰性计算
+  // 声道显示模式
   const int chanTri = (int)GetParam(kChannelMode)->Value();
   mSpectrum.SetChannelMode(chanTri);
   mVQT.SetChannelMode(chanTri);
@@ -727,13 +742,10 @@ void ORMAnalyzer::OnIdle() {
     SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagMergeAlgo, sizeof(int), &mergeAlgo);
   }
 
-  // 检查并下发有变动的频谱配置
+  // 检查并下发参数变动
   const double sr = GetSampleRate();
   const int fftSize = CurrentFFTSize();
   const double release = GetParam(kRelease)->Value();
-  // kRange 可能被旧版宿主状态恢复为档位间值 (旧连续参数如 90 → 归一化 0.25 → 档值 0.5),
-  // 强制吸附到最近档位并回写宿主, 保证按钮显示 / CurrentRangeDb 换算 / 下发值三者一致,
-  // 避免"打开时按钮 100 而频谱停留在旧范围, 点一下才同步"。
   const int rangeIdx = (int)std::clamp(std::lround(GetParam(kRange)->Value()), 0L, 2L);
   if (GetParam(kRange)->Value() != (double)rangeIdx)
     SetParamFromEditor(kRange, (double)rangeIdx);
@@ -753,7 +765,7 @@ void ORMAnalyzer::OnIdle() {
     SendSpectrumConfig();
   }
 
-  // 仅对当前处于激活状态的引擎执行频谱分析与数据分发 (非激活引擎零开销)
+  // 分发激活引擎数据
   if (mode == kModeVQT)
     mVQT.TransmitData(*this);
   else if (mode == kModePAZ)

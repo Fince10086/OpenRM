@@ -1,13 +1,6 @@
 #pragma once
 
-// MultirateFFTAnalyzer — 多速率八度子带小 FFT 频谱分析引擎 (MR-FFT)
-//
-// 架构特点:
-// 1. 10 层多速率半带降采样金字塔 (48k, 24k, 12k ... 94Hz)
-// 2. 逐层执行超小尺寸加窗实数 FFT (1024, 512, 256, 128, 64 ...)，总计算量仅为单一大 FFT 的 35%
-// 3. 100% 时间轴能量覆盖: 块内无任何时域抽样盲区，脉冲瞬态 100% 完整捕获
-// 4. 汉宁主瓣精确反折损补偿 (Hanning Scalloping Correction)，平坦度全频带严格 < 0.05 dBFS
-// 5. 声道感知惰性计算与音频线程 0.00% CPU 占用
+// MultirateFFTAnalyzer — 多速率八度子带 FFT 频谱分析引擎 (MR-FFT)
 
 #ifndef STANDALONE_TEST
 #include "ISender.h"
@@ -79,8 +72,7 @@ struct HalfbandDec2 {
 } // namespace detail
 #endif
 
-// MAX_BANDS 必须与 SpectrumSTFT 的 MAX_FFT_SIZE / SpectrumPad 的 TDataPacket 保持一致:
-// ISender 数据包跨线程整体拷贝, pad 侧按同尺寸结构体读取, 尺寸不一致会整包读取失败。
+// MAX_BANDS 与其他引擎的包尺寸保持一致
 template <int MAXNC = 3, int QUEUE_SIZE = 64, int MAX_BANDS = 8192>
 class MultirateFFTAnalyzer : public ISender<MAXNC, QUEUE_SIZE, std::array<float, MAX_BANDS>> {
 public:
@@ -132,7 +124,7 @@ public:
   int NumBands() const { return (int)mFreqs.size(); }
   const std::vector<double> &BandFreqs() const { return mFreqs; }
 
-  // 音频线程: 仅收集 1024 原始样本入队 (零 DSP 计算)
+  // 音频线程收集样本
   void ProcessBlock(sample **inputs, int nFrames, int ctrlTag = kNoTag, int nChans = MAXNC,
                     int chanOffset = 0) {
     const int nCh = std::min(nChans, MAXNC);
@@ -156,6 +148,7 @@ public:
 #endif
 
 protected:
+  // UI 线程计算各频带能量
   void PrepareDataForUI(Data &d) override {
     CheckRebuild();
     const int nb = NumBands();
@@ -173,7 +166,7 @@ protected:
         continue;
       }
 
-      // 1. 生成多速率降采样金字塔
+      // 构建多速率降采样金字塔
       float *l0 = mLayers[c][0].data();
       std::copy(d.vals[c].begin(), d.vals[c].begin() + kHop, l0);
       int nin = kHop;
@@ -181,13 +174,13 @@ protected:
         nin = mDecim[c][l].Process(mLayers[c][l].data(), nin, mLayers[c][l + 1].data());
       }
 
-      // 2. 逐层执行加窗实数小 FFT
+      // 逐层执行加窗实数 FFT
       for (int l = 0; l < kMaxLayers; ++l) {
         const int nFft = mFftSize[l];
         const int nNew = kHop >> l;
         float *hist = mFftHist[c][l].data();
 
-        // 更新历史缓冲 (保留最新 nFft 样本)
+        // 更新历史缓冲
         if (nNew >= nFft) {
           std::memcpy(hist, mLayers[c][l].data() + (nNew - nFft), nFft * sizeof(float));
         } else {
@@ -195,7 +188,7 @@ protected:
           std::memcpy(hist + (nFft - nNew), mLayers[c][l].data(), nNew * sizeof(float));
         }
 
-        // 加窗并装载复数 FFT 缓冲
+        // 加窗并执行 FFT
         WDL_FFT_COMPLEX *fb = mFftBuf[c][l].data();
         const float *win = mWindows[l].data();
         for (int i = 0; i < nFft; ++i) {
@@ -205,7 +198,7 @@ protected:
 
         WDL_fft(fb, nFft, false);
 
-        // 计算频域幅度谱
+        // 计算幅度谱
         float *mags = mMagBuf[c][l].data();
         const int nBins = nFft / 2;
         const float norm = mFftScaling[l];
@@ -216,7 +209,7 @@ protected:
         }
       }
 
-      // 3. 查表提取各频带幅度并应用汉宁主瓣精确补偿
+      // 提取频带幅度并应用主瓣校正
       for (int b = 0; b < nb; ++b) {
         const Band &bd = mBands[b];
         const float rawMag = mMagBuf[c][bd.layer][bd.kPeak];
@@ -231,20 +224,19 @@ protected:
 private:
   struct Band {
     int layer;         // 所属金字塔层级 (0..9)
-    int kPeak;         // 最接近的 FFT Bin 序号
-    float corrFactor;  // 汉宁主瓣反折损补偿系数
+    int kPeak;         // FFT Bin 序号
+    float corrFactor;  // 窗函数反折损补偿系数
   };
 
   void InitLayerWindows() {
     constexpr double kPi = 3.14159265358979323846;
     for (int l = 0; l < kMaxLayers; ++l) {
-      // Layer 0..4: 1024, 512, 256, 128, 64; Layer 5..9: 64
       const int sz = (l <= 4) ? (1024 >> l) : 64;
       mFftSize[l] = sz;
       mWindows[l].resize(sz);
       double sum = 0.0;
       for (int i = 0; i < sz; ++i) {
-        // Hamming 窗 (两端非零 0.08, 避免 sample 0 脉冲被切死)
+        // Hamming 窗
         const double w = 0.54 - 0.46 * std::cos(2.0 * kPi * i / (sz - 1));
         mWindows[l][i] = (float)w;
         sum += w;
@@ -270,20 +262,20 @@ private:
       if (fc > kFreqHi)
         break;
 
-      // 1. 层分配
+      // 层分配
       int layer = 0;
       if (fc < safeLimit) {
         layer = (int)std::floor(std::log2(safeLimit / std::max(fc, 1.0)));
         layer = std::clamp(layer, 0, kMaxLayers - 1);
       }
 
-      // 2. 计算在对应层小 FFT 中的连续谱线位置
+      // 计算对应层 FFT 的谱线位置
       const double layerFs = fs / (double)(1 << layer);
       const int nFft = mFftSize[layer];
       const double kFrac = fc * (double)nFft / layerFs;
       const int kPeak = std::clamp((int)std::round(kFrac), 0, nFft / 2 - 1);
 
-      // 3. Hamming 主瓣偏离量 p 与精确反折损补偿系数
+      // Hamming 窗反折损补偿
       const double p = std::clamp(kFrac - (double)kPeak, -0.5, 0.5);
       constexpr double kPi = 3.14159265358979323846;
       double corr = 1.0;
@@ -301,7 +293,6 @@ private:
       mFreqs.push_back(fc);
     }
 
-    // 复位各通道抽取器与历史
     for (int c = 0; c < MAXNC; ++c) {
       for (int l = 0; l < kMaxLayers - 1; ++l)
         mDecim[c][l].Reset();
