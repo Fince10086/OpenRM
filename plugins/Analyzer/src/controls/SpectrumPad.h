@@ -26,7 +26,9 @@ BEGIN_IGRAPHICS_NAMESPACE
 
 class SpectrumPad : public IControl {
 public:
-  using TDataPacket = std::array<float, 4096>;
+  // 尺寸必须与四个分析引擎的数据包严格一致 (SpectrumSTFT/VQT/PAZ/MRFFT 均为 8192):
+  // ISender 数据包整体拷贝, 这里按同尺寸结构体读取, 不一致会整包读取失败。
+  using TDataPacket = std::array<float, 8192>;
 
   enum MsgTags {
     kMsgTagSampleRate = 1,

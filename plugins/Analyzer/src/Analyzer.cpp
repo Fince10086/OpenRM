@@ -573,7 +573,9 @@ void ORMAnalyzer::OnReset() {
 
 void ORMAnalyzer::SendSpectrumConfig() {
   const double sr = GetSampleRate();
-  const int fftSize = CurrentFFTSize();
+  // 下发引擎实际生效的 FFT 尺寸 (而非参数名义值): 若将来钳制逻辑变化,
+  // pad 的 bin 数与平滑更新周期必须始终跟随引擎真实尺寸, 否则高频段空白 + 时间常数偏差。
+  const int fftSize = mSpectrum.GetFFTSize();
   const float release = (float)GetParam(kRelease)->Value();
   const float range = CurrentRangeDb();
   const float attack = (float)GetParam(kAttack)->Value();

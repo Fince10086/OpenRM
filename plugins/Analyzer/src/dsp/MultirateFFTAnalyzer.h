@@ -79,7 +79,9 @@ struct HalfbandDec2 {
 } // namespace detail
 #endif
 
-template <int MAXNC = 3, int QUEUE_SIZE = 64, int MAX_BANDS = 4096>
+// MAX_BANDS 必须与 SpectrumSTFT 的 MAX_FFT_SIZE / SpectrumPad 的 TDataPacket 保持一致:
+// ISender 数据包跨线程整体拷贝, pad 侧按同尺寸结构体读取, 尺寸不一致会整包读取失败。
+template <int MAXNC = 3, int QUEUE_SIZE = 64, int MAX_BANDS = 8192>
 class MultirateFFTAnalyzer : public ISender<MAXNC, QUEUE_SIZE, std::array<float, MAX_BANDS>> {
 public:
   using TDataPacket = std::array<float, MAX_BANDS>;

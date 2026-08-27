@@ -11,7 +11,7 @@
 
 BEGIN_IPLUG_NAMESPACE
 
-template <int MAXNC = 3, int QUEUE_SIZE = 64, int MAX_FFT_SIZE = 4096>
+template <int MAXNC = 3, int QUEUE_SIZE = 64, int MAX_FFT_SIZE = 8192>
 class SpectrumSTFT : public ISender<MAXNC, QUEUE_SIZE, std::array<float, MAX_FFT_SIZE>> {
 public:
   using TDataPacket = std::array<float, MAX_FFT_SIZE>;
