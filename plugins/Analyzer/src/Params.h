@@ -16,6 +16,7 @@ enum EParams {
   kLevelMode,     // 电平表模式 (0: dBTP, 1: dBFS+RMS, 2: VU)
   kLevelHold,     // 峰值保持时长 (s)
   kPazAlgo,       // PAZ 算法模式 (0: IIR, 1: FFT)
+  kFreeze,        // 冻结/保持 (0: LIVE 实时, 1: FREEZE 定格; 冻结中切换引擎用新算法重算冻结音频)
   kNumParams
 };
 

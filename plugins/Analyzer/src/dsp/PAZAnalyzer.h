@@ -151,6 +151,9 @@ public:
     }
   }
 
+// Freeze (冻结) 支持: UI 线程离线分析一帧原始样本 (冻结重算预热, 与实时路径共用实现)
+  void PrepareFrameUI(Data &d) { PrepareDataForUI(d); }
+
 #ifdef STANDALONE_TEST
   void TestProcessHop(Data &d) {
     PrepareDataForUI(d);

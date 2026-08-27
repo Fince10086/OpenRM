@@ -56,6 +56,7 @@ enum EText {
   kTxtLfMid,
   kTxtLfHigh,
   kTxtTipPazAlgo,
+  kTxtTipFreeze,
   kNumTexts
 };
 
@@ -107,6 +108,7 @@ inline const char *Tr(int id, int lang) {
           "MID",
           "HIGH",
           "PAZ analysis algorithm (IIR / FFT)",
+          "Freeze display: hold current picture; switching engine re-analyzes the same frozen audio with the new algorithm",
       },
       {
           "释放",
@@ -154,6 +156,7 @@ inline const char *Tr(int id, int lang) {
           "中",
           "高",
           "PAZ 分析算法（IIR / FFT）",
+          "冻结显示：定格当前画面；冻结中切换引擎时，用新算法重新分析同一段冻结音频",
       },
   };
   return kTable[lang][id];

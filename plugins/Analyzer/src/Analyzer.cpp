@@ -119,6 +119,7 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
   GetParam(kLevelMode)->InitInt("LevelMode", kLevelModeDBTP, 0, kNumLevelModes - 1, "");
   GetParam(kLevelHold)->InitDouble("LevelHold", 2., 0., 5., 0.1, "s");
   GetParam(kPazAlgo)->InitInt("PazAlgo", kPazAlgoIIR, 0, kNumPazAlgos - 1, "");
+  GetParam(kFreeze)->InitInt("Freeze", 0, 0, 1, ""); // 0=LIVE 实时, 1=FREEZE 定格
 
   mDefaultSnapshot = Snapshot();
   mStableSnapshot = Snapshot();
@@ -350,6 +351,14 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     });
     bindTip(mLevelResetBtn, orm::kTxtTipReset);
 
+    // Freeze 冻结按钮 (RESET 左侧空位): 两态 LIVE/FREEZE。
+    // 冻结时画面完全定格 (UI 停止消费引擎数据), 切换引擎/PAZ 算法时
+    // 用冻结时刻的输入缓冲在新算法下重算并继续定格, 解冻后从定格画面续接实时。
+    mFreezeBtn = new FlatCycleButton(IRECT(kCol1X, 351, kCol1X + kBtnW, 381), kFreeze, {"LIVE", "FREEZE"},
+                                     btnStyle);
+    pGraphics->AttachControl(mFreezeBtn);
+    bindTip(mFreezeBtn, orm::kTxtTipFreeze);
+
     // 电平表峰值保持时长滑块 (s)
     mLevelHoldSlider =
         new ORMSlider(IRECT(kCol1X, 390, kPanelR, 432), kLevelHold, "HOLD", style, EDirection::Horizontal);
@@ -497,62 +506,91 @@ void ORMAnalyzer::ProcessBlock(sample **inputs, sample **outputs, int nFrames) {
 
   // 采集输入数据到当前分析引擎
   const int mode = (int)GetParam(kMode)->Value();
+  const bool frozen = GetParam(kFreeze)->Value() > 0.5; // Freeze 激活: 挂起采集, 画面定格
   if (nIns >= 2) {
     std::memcpy(mSpecInL.data(), inputs[0], nFrames * sizeof(sample));
     std::memcpy(mSpecInR.data(), inputs[1], nFrames * sizeof(sample));
     for (int s = 0; s < nFrames; ++s)
       mSpecInM[s] = (mSpecInL[s] + mSpecInR[s]) * 0.7071067811865475;
     sample *spec[3] = {mSpecInL.data(), mSpecInR.data(), mSpecInM.data()};
-    if (mode == kModeVQT)
-      mVQT.ProcessBlock(spec, nFrames, kCtrlTagPad, 3);
-    else if (mode == kModePAZ)
-      mPAZ.ProcessBlock(spec, nFrames, kCtrlTagPad, 3);
-    else if (mode == kModeMRFFT)
-      mMRFFT.ProcessBlock(spec, nFrames, kCtrlTagPad, 3);
-    else
-      mSpectrum.ProcessBlock(spec, nFrames, kCtrlTagPad, 3);
+    if (!frozen) {
+      // 冻结环形缓冲: 常驻记录最近 kFreezeRingLen 样本; freeze on 后停止写入, 即冻结时刻快照。
+      // (UI 线程 Read + 音频线程 Write 由 kFreeze 参数 (原子) 协调: 写入先停, 读取后才开始,
+      // 边缘至多混入冻结生效前最后一块输入, 无碍。)
+      for (int s = 0; s < nFrames; ++s) {
+        const int p = mFreezeRingPos.load(std::memory_order_relaxed);
+        mFreezeRing[0][p] = mSpecInL[s];
+        mFreezeRing[1][p] = mSpecInR[s];
+        mFreezeRing[2][p] = mSpecInM[s];
+        mFreezeRingPos.store((p + 1) & (kFreezeRingLen - 1), std::memory_order_relaxed);
+      }
+      if (mode == kModeVQT)
+        mVQT.ProcessBlock(spec, nFrames, kCtrlTagPad, 3);
+      else if (mode == kModePAZ)
+        mPAZ.ProcessBlock(spec, nFrames, kCtrlTagPad, 3);
+      else if (mode == kModeMRFFT)
+        mMRFFT.ProcessBlock(spec, nFrames, kCtrlTagPad, 3);
+      else
+        mSpectrum.ProcessBlock(spec, nFrames, kCtrlTagPad, 3);
+    }
   } else {
     std::memcpy(mSpecInL.data(), inputs[0], nFrames * sizeof(sample));
     std::memcpy(mSpecInR.data(), inputs[0], nFrames * sizeof(sample));
     for (int s = 0; s < nFrames; ++s)
       mSpecInM[s] = mSpecInL[s] * 0.7071067811865475;
     sample *spec[3] = {mSpecInL.data(), mSpecInR.data(), mSpecInM.data()};
-    if (mode == kModeVQT)
-      mVQT.ProcessBlock(spec, nFrames, kCtrlTagPad, 3);
-    else if (mode == kModePAZ)
-      mPAZ.ProcessBlock(spec, nFrames, kCtrlTagPad, 3);
-    else if (mode == kModeMRFFT)
-      mMRFFT.ProcessBlock(spec, nFrames, kCtrlTagPad, 3);
-    else
-      mSpectrum.ProcessBlock(spec, nFrames, kCtrlTagPad, 3);
+    if (!frozen) {
+      for (int s = 0; s < nFrames; ++s) {
+        const int p = mFreezeRingPos.load(std::memory_order_relaxed);
+        mFreezeRing[0][p] = mSpecInL[s];
+        mFreezeRing[1][p] = mSpecInR[s];
+        mFreezeRing[2][p] = mSpecInM[s];
+        mFreezeRingPos.store((p + 1) & (kFreezeRingLen - 1), std::memory_order_relaxed);
+      }
+      if (mode == kModeVQT)
+        mVQT.ProcessBlock(spec, nFrames, kCtrlTagPad, 3);
+      else if (mode == kModePAZ)
+        mPAZ.ProcessBlock(spec, nFrames, kCtrlTagPad, 3);
+      else if (mode == kModeMRFFT)
+        mMRFFT.ProcessBlock(spec, nFrames, kCtrlTagPad, 3);
+      else
+        mSpectrum.ProcessBlock(spec, nFrames, kCtrlTagPad, 3);
+    }
   }
 
-  // 电平表测量
-  const double newSR = mLevelSetSR.exchange(-1.0, std::memory_order_relaxed);
-  if (newSR > 0.0)
-    mLevelMeter.SetSampleRate(newSR);
-  if (mLevelResetHoldFlag.exchange(false, std::memory_order_relaxed))
-    mLevelMeter.ResetHold();
-  if (mLevelResetFlag.exchange(false))
-    mLevelMeter.ResetHoldOver();
-  mLevelMeter.Process(mSpecInL.data(), mSpecInR.data(), nFrames, (int)GetParam(kLevelMode)->Value(),
-                      GetParam(kLevelHold)->Value());
-  {
-    LevelMeter::Snapshot s;
-    mLevelMeter.Store(s);
-    mPeakL.store(s.peakDbL, std::memory_order_relaxed);
-    mPeakR.store(s.peakDbR, std::memory_order_relaxed);
-    mTrueL.store(s.trueDbL, std::memory_order_relaxed);
-    mTrueR.store(s.trueDbR, std::memory_order_relaxed);
-    mRmsL.store(s.rmsDbL, std::memory_order_relaxed);
-    mRmsR.store(s.rmsDbR, std::memory_order_relaxed);
-    mVuL.store(s.vuDbL, std::memory_order_relaxed);
-    mVuR.store(s.vuDbR, std::memory_order_relaxed);
-    mHoldL.store(s.holdDbL, std::memory_order_relaxed);
-    mHoldR.store(s.holdDbR, std::memory_order_relaxed);
-    mHoldSec.store(s.holdSec, std::memory_order_relaxed);
-    mOverL.store(s.overL, std::memory_order_relaxed);
-    mOverR.store(s.overR, std::memory_order_relaxed);
+  // 电平表测量 (冻结中挂起: 保持最后快照, 画面随频谱一起定格; 重置请求仍被消费, 避免解冻后误触发)
+  if (frozen) {
+    if (mLevelResetHoldFlag.exchange(false, std::memory_order_relaxed))
+      mLevelMeter.ResetHold();
+    if (mLevelResetFlag.exchange(false))
+      mLevelMeter.ResetHoldOver();
+  } else {
+    const double newSR = mLevelSetSR.exchange(-1.0, std::memory_order_relaxed);
+    if (newSR > 0.0)
+      mLevelMeter.SetSampleRate(newSR);
+    if (mLevelResetHoldFlag.exchange(false, std::memory_order_relaxed))
+      mLevelMeter.ResetHold();
+    if (mLevelResetFlag.exchange(false))
+      mLevelMeter.ResetHoldOver();
+    mLevelMeter.Process(mSpecInL.data(), mSpecInR.data(), nFrames, (int)GetParam(kLevelMode)->Value(),
+                        GetParam(kLevelHold)->Value());
+    {
+      LevelMeter::Snapshot s;
+      mLevelMeter.Store(s);
+      mPeakL.store(s.peakDbL, std::memory_order_relaxed);
+      mPeakR.store(s.peakDbR, std::memory_order_relaxed);
+      mTrueL.store(s.trueDbL, std::memory_order_relaxed);
+      mTrueR.store(s.trueDbR, std::memory_order_relaxed);
+      mRmsL.store(s.rmsDbL, std::memory_order_relaxed);
+      mRmsR.store(s.rmsDbR, std::memory_order_relaxed);
+      mVuL.store(s.vuDbL, std::memory_order_relaxed);
+      mVuR.store(s.vuDbR, std::memory_order_relaxed);
+      mHoldL.store(s.holdDbL, std::memory_order_relaxed);
+      mHoldR.store(s.holdDbR, std::memory_order_relaxed);
+      mHoldSec.store(s.holdSec, std::memory_order_relaxed);
+      mOverL.store(s.overL, std::memory_order_relaxed);
+      mOverR.store(s.overR, std::memory_order_relaxed);
+    }
   }
 
   // 统计音频线程耗时（一阶平滑）: 用线程 CPU 时间差值, 抢占/调度延迟不纳入
@@ -640,28 +678,32 @@ void ORMAnalyzer::SendResetToPad() {
 }
 
 void ORMAnalyzer::OnParamChange(int paramIdx, EParamSource source, int sampleOffset) {
+  // 冻结中抑制 SendResetToPad: 画面保持定格; 引擎配置 (γ/BPO/PAZ 算法) 照常更新,
+  // 解冻后由 OnIdle 防抖重发完整配置与 band 表。
+  const bool frozen = GetParam(kFreeze)->Value() > 0.5;
   // 参数变化时更新分析引擎配置
   if (paramIdx == kRes)
     mSpectrum.SetFFTSizeAndOverlap(CurrentFFTSize(), 4);
   else if (paramIdx == kLfRes) {
     if (GetParam(kMode)->Value() > 1.5 && GetParam(kMode)->Value() < 2.5) { // PAZ 模式
-      if (mPAZ.SetLfWidth(CurrentPazLfRes()))
+      if (mPAZ.SetLfWidth(CurrentPazLfRes()) && !frozen)
         SendResetToPad();
     } else if (GetParam(kMode)->Value() < 1.5) { // VQT 模式
-      if (mVQT.SetGamma(CurrentLfRes()))
+      if (mVQT.SetGamma(CurrentLfRes()) && !frozen)
         SendResetToPad();
     }
   } else if (paramIdx == kBpo) {
     if (GetParam(kMode)->Value() > 0.5 && GetParam(kMode)->Value() < 1.5) {
-      if (mVQT.SetBpo(CurrentBpo()))
+      if (mVQT.SetBpo(CurrentBpo()) && !frozen)
         SendResetToPad();
     } else if (GetParam(kMode)->Value() > 2.5) {
-      if (mMRFFT.SetBpo(CurrentBpo()))
+      if (mMRFFT.SetBpo(CurrentBpo()) && !frozen)
         SendResetToPad();
     }
   } else if (paramIdx == kPazAlgo) {
     mPAZ.SetAlgo((int)GetParam(kPazAlgo)->Value());
-    SendResetToPad();
+    if (!frozen)
+      SendResetToPad();
   } else if (paramIdx == kLevelMode) {
     // 电平表模式切换: 清除峰值保持 (过载锁存保留, 直到手动 RESET); 由音频线程执行
     mLevelResetHoldFlag.store(true, std::memory_order_relaxed);
@@ -707,7 +749,17 @@ void ORMAnalyzer::OnIdle() {
   // 同步 PAZ 算法模式
   mPAZ.SetAlgo((int)GetParam(kPazAlgo)->Value());
 
-  // 模式切换
+  const bool frozen = GetParam(kFreeze)->Value() > 0.5; // Freeze 激活: 画面定格
+
+  // 冻结档位快照同步 (冻结中已重算的档位索引)
+  auto syncFreezeSnapshot = [this]() {
+    mFreezeRes = (int)std::lround(GetParam(kRes)->Value());
+    mFreezeLf = (int)std::lround(GetParam(kLfRes)->Value());
+    mFreezeBpo = (int)std::lround(GetParam(kBpo)->Value());
+    mFreezePazAlgo = (int)std::lround(GetParam(kPazAlgo)->Value());
+  };
+
+  // 模式切换 (冻结中: 跳过 reset 不清屏, 改用冻结缓冲在新算法下重算后直显定格)
   const int mode = (int)GetParam(kMode)->Value();
   if (mode != mSentMode) {
     mSentMode = mode;
@@ -719,13 +771,27 @@ void ORMAnalyzer::OnIdle() {
       mBpoSlider->Hide(mode != kModeVQT && mode != kModeMRFFT);
     }
     SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagMode, sizeof(int), &mode);
-    SendResetToPad();
     if (mode == kModeVQT)
       SendVQTBandFreqs();
     else if (mode == kModePAZ)
       SendPAZBandFreqs();
     else if (mode == kModeMRFFT)
       SendMRFFTBandFreqs();
+    if (frozen) {
+      // 冻结中: 用冻结输入快照预热新引擎 (推进其内部历史到缓冲尾部) 并直显最后一帧,
+      // 画面直接变成"冻结音频 × 新算法"的谱并继续定格。同步档位快照, 避免同 tick 重复预热。
+      if (mode == kModeVQT)
+        FreezeShowFrozen(mVQT);
+      else if (mode == kModePAZ)
+        FreezeShowFrozen(mPAZ);
+      else if (mode == kModeMRFFT)
+        FreezeShowFrozen(mMRFFT);
+      else
+        FreezeShowFrozen(mSpectrum);
+      syncFreezeSnapshot();
+    } else {
+      SendResetToPad();
+    }
   }
 
   // 声道显示模式
@@ -742,38 +808,80 @@ void ORMAnalyzer::OnIdle() {
     SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagMergeAlgo, sizeof(int), &mergeAlgo);
   }
 
-  // 检查并下发参数变动
-  const double sr = GetSampleRate();
-  const int fftSize = CurrentFFTSize();
-  const double release = GetParam(kRelease)->Value();
-  const int rangeIdx = (int)std::clamp(std::lround(GetParam(kRange)->Value()), 0L, 2L);
-  if (GetParam(kRange)->Value() != (double)rangeIdx)
-    SetParamFromEditor(kRange, (double)rangeIdx);
-  const double range = (double)rangeIdx;
-  const double attack = GetParam(kAttack)->Value();
-  const double lfRes = GetParam(kLfRes)->Value();
-  const double bpo = GetParam(kBpo)->Value();
-  if (sr != mSentSampleRate || fftSize != mSentFFTSize || release != mSentRelease ||
-      range != mSentRange || attack != mSentAttack || lfRes != mSentLfRes || bpo != mSentBpo) {
-    mSentSampleRate = sr;
-    mSentFFTSize = fftSize;
-    mSentRelease = release;
-    mSentRange = range;
-    mSentAttack = attack;
-    mSentLfRes = lfRes;
-    mSentBpo = bpo;
-    SendSpectrumConfig();
+  // 检查并下发参数变动 (冻结中照常: Range 等显示参数即时生效, band 表随档位变化重发;
+  // SendResetToPad 已被冻结抑制, 画面不会被清空)
+  {
+    const double sr = GetSampleRate();
+    const int fftSize = CurrentFFTSize();
+    const double release = GetParam(kRelease)->Value();
+    const int rangeIdx = (int)std::clamp(std::lround(GetParam(kRange)->Value()), 0L, 2L);
+    if (GetParam(kRange)->Value() != (double)rangeIdx)
+      SetParamFromEditor(kRange, (double)rangeIdx);
+    const double range = (double)rangeIdx;
+    const double attack = GetParam(kAttack)->Value();
+    const double lfRes = GetParam(kLfRes)->Value();
+    const double bpo = GetParam(kBpo)->Value();
+    if (sr != mSentSampleRate || fftSize != mSentFFTSize || release != mSentRelease ||
+        range != mSentRange || attack != mSentAttack || lfRes != mSentLfRes || bpo != mSentBpo) {
+      mSentSampleRate = sr;
+      mSentFFTSize = fftSize;
+      mSentRelease = release;
+      mSentRange = range;
+      mSentAttack = attack;
+      mSentLfRes = lfRes;
+      mSentBpo = bpo;
+      SendSpectrumConfig();
+    }
   }
 
-  // 分发激活引擎数据
-  if (mode == kModeVQT)
-    mVQT.TransmitData(*this);
-  else if (mode == kModePAZ)
-    mPAZ.TransmitData(*this);
-  else if (mode == kModeMRFFT)
-    mMRFFT.TransmitData(*this);
-  else
-    mSpectrum.TransmitData(*this);
+  // 冻结中: 同一算法内档位变化 (FFT 尺寸 / VQT γ·BPO / PAZ LF·算法 / MRFFT BPO)
+  // → 引擎配置已在音频线程更新 (OnParamChange), band 表已由上方防抖重发 (先于直显帧),
+  // 这里用冻结缓冲重算直显, 画面 = 冻结音频 × 当前档位。刚冻结 (mFreezeOn 边沿) 只同步
+  // 快照不重算: 画面保持按下瞬间的实时定格, 避免不必要的跳变与预热开销。
+  if (frozen) {
+    if (!mFreezeOn) {
+      mFreezeOn = true;
+      syncFreezeSnapshot();
+    } else {
+      const int resIdx = (int)std::lround(GetParam(kRes)->Value());
+      const int lfIdx = (int)std::lround(GetParam(kLfRes)->Value());
+      const int bpoIdx = (int)std::lround(GetParam(kBpo)->Value());
+      const int pazAlgo = (int)std::lround(GetParam(kPazAlgo)->Value());
+      const bool cfgChanged =
+          (mode == kModeFFT && resIdx != mFreezeRes) ||
+          (mode == kModeVQT && (lfIdx != mFreezeLf || bpoIdx != mFreezeBpo)) ||
+          (mode == kModePAZ && (lfIdx != mFreezeLf || pazAlgo != mFreezePazAlgo)) ||
+          (mode == kModeMRFFT && bpoIdx != mFreezeBpo);
+      if (cfgChanged) {
+        if (mode == kModeVQT)
+          FreezeShowFrozen(mVQT);
+        else if (mode == kModePAZ)
+          FreezeShowFrozen(mPAZ);
+        else if (mode == kModeMRFFT)
+          FreezeShowFrozen(mMRFFT);
+        else
+          FreezeShowFrozen(mSpectrum);
+      }
+      mFreezeRes = resIdx;
+      mFreezeLf = lfIdx;
+      mFreezeBpo = bpoIdx;
+      mFreezePazAlgo = pazAlgo;
+    }
+  } else {
+    mFreezeOn = false;
+  }
+
+  // 分发激活引擎数据 (冻结中跳过: 画面定格; 引擎队列保持, 解冻后继续消费续接实时)
+  if (!frozen) {
+    if (mode == kModeVQT)
+      mVQT.TransmitData(*this);
+    else if (mode == kModePAZ)
+      mPAZ.TransmitData(*this);
+    else if (mode == kModeMRFFT)
+      mMRFFT.TransmitData(*this);
+    else
+      mSpectrum.TransmitData(*this);
+  }
 
   // 转发电平表数据给表头区 (LevelMeterUiData, 含模式/保持时长/过载锁存)
   {
@@ -840,6 +948,7 @@ void ORMAnalyzer::OnUIClose() {
   mLevelModeBtn = nullptr;
   mLevelResetBtn = nullptr;
   mLevelHoldSlider = nullptr;
+  mFreezeBtn = nullptr;
   mSettingsPanel = nullptr;
   mTextBindings.clear();
   mTooltipBindings.clear();
@@ -853,6 +962,47 @@ void ORMAnalyzer::OnUIClose() {
   mSentLfRes = -1.0;
   mSentBpo = -1.0;
   mSentChanMode = -1;
+  // 冻结档位快照复位: 重开 UI 后冻结画面与档位重算按新控件状态重新建立
+  mFreezeOn = false;
+  mFreezeRes = mFreezeLf = mFreezeBpo = mFreezePazAlgo = -1;
+}
+
+// Freeze (冻结) 重算: 把冻结时刻的输入快照整圈 (kFreezeRingLen>>10 = 64 帧 × 1024 hop,
+// ≈1.36s @48k) 按时间顺序 (最旧→最新) 逐帧送入引擎分析。引擎内部历史随之推进到
+// 缓冲尾部——与"冻结输入继续流动"等价, 解冻后实时输入无缝续接。PAZ-IIR 最低频带
+// (10Hz 档 6Hz, τ≈0.8s) 经整圈预热收敛约 82%, 其余引擎/频带完全收敛, 视觉无感。
+// 最后一帧以 FreezeFrameData 直发 pad (跳过攻击/释放平滑), 画面精确显示冻结音频 × 新算法。
+template <typename TEngine>
+void ORMAnalyzer::FreezeShowFrozen(TEngine &engine) {
+  using FPkt = typename TEngine::Data; // 与 pad TDataPacket(8192) 同构
+  constexpr int kHop = 1024;
+  FPkt d, last;
+  d.ctrlTag = kCtrlTagPad;
+  d.nChans = 3;
+  d.chanOffset = 0;
+  const int pos = mFreezeRingPos.load(std::memory_order_relaxed);
+  const int nFrame = kFreezeRingLen >> 10;
+  for (int f = 0; f < nFrame; ++f) {
+    const int start = (pos + f * kHop) & (kFreezeRingLen - 1);
+    for (int c = 0; c < 3; ++c) {
+      const float *src = mFreezeRing[c].data();
+      float *dst = d.vals[c].data();
+      if (start + kHop <= kFreezeRingLen) {
+        std::memcpy(dst, src + start, kHop * sizeof(float));
+      } else {
+        const int n1 = kFreezeRingLen - start; // 跨环尾部分两段拷贝
+        std::memcpy(dst, src + start, n1 * sizeof(float));
+        std::memcpy(dst + n1, src, (kHop - n1) * sizeof(float));
+      }
+    }
+    engine.PrepareFrameUI(d);
+    if (f == nFrame - 1)
+      last = d;
+  }
+  FreezeFrameData msg;
+  for (int c = 0; c < 3; ++c)
+    std::memcpy(msg.vals[c].data(), last.vals[c].data(), 8192 * sizeof(float));
+  SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagFreezeFrame, sizeof(msg), &msg);
 }
 
 void ORMAnalyzer::OnParentWindowResize(int width, int height) {

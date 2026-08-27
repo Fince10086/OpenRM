@@ -105,8 +105,30 @@ private:
   FlatCycleButton *mLevelModeBtn = nullptr;
   IVButtonControl *mLevelResetBtn = nullptr;
   ORMSlider *mLevelHoldSlider = nullptr;
+  FlatCycleButton *mFreezeBtn = nullptr; // 冻结/保持循环按钮 (LIVE / FREEZE)
 
   int mSentMode = -1;
+
+  // ── Freeze (冻结/保持), 输入快照方案 ──────────────────────────────
+  // 音频线程把最近输入滚环记录进 mFreezeRing (freeze 后停止写入, 即冻结时刻快照);
+  // UI 线程在冻结中跳过引擎消费 (画面定格), 切换引擎/PAZ 算法/同一算法内档位
+  // (FFT 尺寸 / VQT γ·BPO / PAZ LF) 时把整圈缓冲按 hop 逐帧喂给引擎预热分析
+  // (推进内部历史到缓冲尾部), 最后一帧直发 pad 定格显示。
+  static constexpr int kFreezeRingLen = 1 << 16;   // 65536 样本 ≈1.36s @48k:
+                                                   // 覆盖四引擎最大窗历史 (VQT 深层) 与 PAZ-IIR 低频收敛
+  std::array<std::array<float, kFreezeRingLen>, 3> mFreezeRing{}; // [0]=L [1]=R [2]=M
+  std::atomic<int> mFreezeRingPos{0};              // 下一个写入位置 (= 最旧样本)
+  bool mFreezeOn = false;                          // 冻结激活边沿/状态 (UI 线程)
+  // 冻结中已重算的档位快照 (参数档位索引, -1 = 未同步); 变化时用冻结缓冲重算直显
+  int mFreezeRes = -1;
+  int mFreezeLf = -1;
+  int mFreezeBpo = -1;
+  int mFreezePazAlgo = -1;
+
+  // 冻结重算: 把冻结缓冲整圈 (kFreezeRingLen>>10 = 64 帧 × 1024 hop) 预热情景引擎,
+  // 最后一帧以 FreezeFrameData 直发 pad (跳过攻击/释放平滑)。定义见 Analyzer.cpp。
+  template <typename TEngine>
+  void FreezeShowFrozen(TEngine &engine);
 
   // CPU 占用率统计（音频线程处理耗时 + UI 分析耗时，归一化为单核百分比）
   double mCpuAudio = 0.0;
