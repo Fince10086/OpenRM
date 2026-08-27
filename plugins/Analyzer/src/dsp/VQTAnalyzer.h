@@ -360,9 +360,7 @@ private:
     bd.layer = L;
     bd.winLen = wl;
     bd.wsumInv = (float)(4.0 / wl);
-    // 包络更新节奏: band 包络带宽 ≈ Bk, 奈奎斯特 2·Bk; 帧时长 kHop/fs。
-    // 向下取整: 仅当 Bk < fs/(2·kHop)(约23Hz@48k) 时 advance > 1 (γ=5/10 的最深窄带)。
-    bd.advance = std::max(1, (int)std::floor(fs / (2.0 * bw * kHop)));
+    bd.advance = 1;
     bd.readOff = (int)std::lround((R - GroupDelaySec(fs, L)) * fsL);
     bd.kernelRe.resize(wl);
     bd.kernelIm.resize(wl);
