@@ -30,6 +30,7 @@ public:
     kMsgTagRelease,
     kMsgTagRange,
     kMsgTagAttack,
+    kMsgTagSlope,       // 频谱斜率 (dB/oct, 当前模式生效值; FFT 与逐 band 引擎档值不同)
     kMsgTagMode,
     kMsgTagVQTBands,
     kMsgTagReset,       // 清空平滑缓冲, 显示从头加载 (γ/BPO/模式切换时由插件下发)
@@ -141,10 +142,17 @@ public:
       float attackSec;
       stream.Get(&attackSec, 0);
       mAttackSec = std::clamp(attackSec, 0.001f, 0.1f);
+    } else if (msgTag == kMsgTagSlope) {
+      float slopeDb;
+      stream.Get(&slopeDb, 0);
+      mSlopeDbPerOct = slopeDb;
+      RebuildSlopeGain();
+      SetDirty(false);
     } else if (msgTag == kMsgTagMode) {
       int mode;
       stream.Get(&mode, 0);
       mMode = std::clamp(mode, 0, 3);
+      RebuildSlopeGain(); // 斜率档值随模式变化 (FFT 0/3/4.5, 其余 -3/0/1.5)
       SetDirty(false);
     } else if (msgTag == kMsgTagChanMode) {
       int chanMode;
@@ -168,6 +176,7 @@ public:
       mVQTFreqNorm.resize(n);
       for (int i = 0; i < n; ++i)
         mVQTFreqNorm[i] = FreqNorm(mVQTFreqs[i]);
+      RebuildSlopeGain(); // 斜率增益依赖 band 中心频率, band 表更新后重建
       SetDirty(false);
     } else if (msgTag == kMsgTagPAZBands) {
       const int n = dataSize / (int)sizeof(float);
@@ -181,6 +190,7 @@ public:
       mPAZFreqNorm.resize(n);
       for (int i = 0; i < n; ++i)
         mPAZFreqNorm[i] = FreqNorm(mPAZFreqs[i]);
+      RebuildSlopeGain(); // 斜率增益依赖 band 中心频率, band 表更新后重建
       SetDirty(false);
     } else if (msgTag == kMsgTagMRFFTBands) {
       const int n = dataSize / (int)sizeof(float);
@@ -194,6 +204,7 @@ public:
       mMRFFTFreqNorm.resize(n);
       for (int i = 0; i < n; ++i)
         mMRFFTFreqNorm[i] = FreqNorm(mMRFFTFreqs[i]);
+      RebuildSlopeGain(); // 斜率增益依赖 band 中心频率, band 表更新后重建
       SetDirty(false);
     } else if (msgTag == kMsgTagLevelMeter) {
       if (dataSize != (int)sizeof(LevelMeterUiData))
@@ -343,7 +354,8 @@ private:
     float max[3] = {0.f, 0.f, 0.f};
     float holdMax[3] = {0.f, 0.f, 0.f}; // 峰值保持: 同域聚合的各通道 hold 幅度 (FFT 模式 bin -> band)
     // 是否收到过 bin (与幅度无关)。FFT 模式的 band 是 bin 的聚合桶, 低频 band
-    // 宽度可小于 bin 间距而完全无 bin; 无 bin 的空桶跳过以桥接, 有 bin 的照常收录
+    // 宽度可小于 bin 间距而完全无 bin; 无 bin 的空桶收集后用首个覆盖频带的值
+    // 常值外推 (max/holdMax 同步), 有 bin 的照常收录
     char used[3] = {0, 0, 0};
   };
 
@@ -688,9 +700,12 @@ private:
       const int have = std::min(nb, (int)mSpectrum[0].size());
       for (int b = 0; b < have; ++b) {
         const float x = plot.L + mVQTFreqNorm[b] * plot.W();
-        const float aL = mSpectrum[0][b];
-        const float aR = mSpectrum[1][b];
-        const float aSum = (mSpectrum[2].size() > (size_t)b) ? mSpectrum[2][b] : 0.f;
+        // 斜率: 每 band 幅度乘常数增益 (显示域变换, 平滑/hold 采集留在原始域;
+        // 正增益与 max 聚合可交换, 显示曲线与 hold 曲线同步倾斜)
+        const float g = SlopeGain(b);
+        const float aL = mSpectrum[0][b] * g;
+        const float aR = mSpectrum[1][b] * g;
+        const float aSum = (mSpectrum[2].size() > (size_t)b) ? mSpectrum[2][b] * g : 0.f;
         const float yL = ampToY(aL);
         const float yR = ampToY(aR);
         mSpecPtsL.push_back({x, yL});
@@ -698,7 +713,7 @@ private:
 
         const float aM = (mMergeAlgo == 0) ? std::sqrt(aL * aL + aR * aR) : aSum;
         mSpecPtsM.push_back({x, ampToY(aM)});
-        mHoldPts.push_back({x, ampToY(HoldValAt(b))});
+        mHoldPts.push_back({x, ampToY(HoldValAt(b) * g)});
       }
 
       if (mChanMode == 0) {
@@ -720,9 +735,10 @@ private:
       const int have = std::min(nb, (int)mSpectrum[0].size());
       for (int b = 0; b < have; ++b) {
         const float x = plot.L + mPAZFreqNorm[b] * plot.W();
-        const float aL = mSpectrum[0][b];
-        const float aR = mSpectrum[1][b];
-        const float aSum = (mSpectrum[2].size() > (size_t)b) ? mSpectrum[2][b] : 0.f;
+        const float g = SlopeGain(b); // 斜率: 每 band 常数增益, 曲线与 hold 同步倾斜
+        const float aL = mSpectrum[0][b] * g;
+        const float aR = mSpectrum[1][b] * g;
+        const float aSum = (mSpectrum[2].size() > (size_t)b) ? mSpectrum[2][b] * g : 0.f;
         const float yL = ampToY(aL);
         const float yR = ampToY(aR);
         mSpecPtsL.push_back({x, yL});
@@ -730,7 +746,7 @@ private:
 
         const float aM = (mMergeAlgo == 0) ? std::sqrt(aL * aL + aR * aR) : aSum;
         mSpecPtsM.push_back({x, ampToY(aM)});
-        mHoldPts.push_back({x, ampToY(HoldValAt(b))});
+        mHoldPts.push_back({x, ampToY(HoldValAt(b) * g)});
       }
 
       if (mChanMode == 0) {
@@ -752,9 +768,10 @@ private:
       const int have = std::min(nb, (int)mSpectrum[0].size());
       for (int b = 0; b < have; ++b) {
         const float x = plot.L + mMRFFTFreqNorm[b] * plot.W();
-        const float aL = mSpectrum[0][b];
-        const float aR = mSpectrum[1][b];
-        const float aSum = (mSpectrum[2].size() > (size_t)b) ? mSpectrum[2][b] : 0.f;
+        const float g = SlopeGain(b); // 斜率: 每 band 常数增益, 曲线与 hold 同步倾斜
+        const float aL = mSpectrum[0][b] * g;
+        const float aR = mSpectrum[1][b] * g;
+        const float aSum = (mSpectrum[2].size() > (size_t)b) ? mSpectrum[2][b] * g : 0.f;
         const float yL = ampToY(aL);
         const float yR = ampToY(aR);
         mSpecPtsL.push_back({x, yL});
@@ -762,7 +779,7 @@ private:
 
         const float aM = (mMergeAlgo == 0) ? std::sqrt(aL * aL + aR * aR) : aSum;
         mSpecPtsM.push_back({x, ampToY(aM)});
-        mHoldPts.push_back({x, ampToY(HoldValAt(b))});
+        mHoldPts.push_back({x, ampToY(HoldValAt(b) * g)});
       }
 
       if (mChanMode == 0) {
@@ -805,10 +822,27 @@ private:
       }
     }
 
+    // 低频空桶外推: 低于首个有 bin 的频带没有分析结果 (bin 间距 > band 宽度),
+    // 用首个覆盖频带的值常值延伸到 20Hz —— 曲线自左缘满宽起笔, 左下角不再出现斜楔。
+    // max/holdMax 同步外推, hold 曲线在外推段与主曲线保持一致
+    for (int c = 0; c < 3; ++c) {
+      int first = 0;
+      while (first < kSpectrumBands && !mBandAcc[first].used[c])
+        ++first;
+      for (int b = 0; b < first; ++b) {
+        mBandAcc[b].max[c] = mBandAcc[first].max[c];
+        mBandAcc[b].holdMax[c] = mBandAcc[first].holdMax[c];
+        mBandAcc[b].used[c] = 1;
+      }
+    }
+
     for (int b = 0; b < kSpectrumBands; ++b) {
       const BandAcc &acc = mBandAcc[b];
       const float x = plot.L + mBandNormX[b] * plot.W();
-      const float aL = acc.max[0], aR = acc.max[1], aSum = acc.max[2];
+      // 斜率: band 级乘常数增益 (bin 原始域聚合后施加; 正增益与 max 可交换),
+      // 显示曲线与 hold 曲线 (同 band 域聚合) 同步倾斜
+      const float g = SlopeGain(b);
+      const float aL = acc.max[0] * g, aR = acc.max[1] * g, aSum = acc.max[2] * g;
       const float yL = ampToY(aL);
       const float yR = ampToY(aR);
       if (acc.used[0])
@@ -825,7 +859,7 @@ private:
       const bool usedH =
           (mChanMode == 0 || mMergeAlgo == 0) ? (acc.used[0] || acc.used[1]) : (acc.used[2] != 0);
       if (usedH)
-        mHoldPts.push_back({x, ampToY(HoldBandVal(acc))});
+        mHoldPts.push_back({x, ampToY(HoldBandVal(acc) * g)});
     }
 
     if (mChanMode == 0) {
@@ -970,6 +1004,41 @@ private:
   std::vector<float> mMRFFTFreqs;   // MR-FFT band 中心频率 (Hz), 由插件下发
   std::vector<float> mMRFFTFreqNorm;// MR-FFT band 频率归一化位置 (预计算, 与 mMRFFTFreqs 同步)
   std::array<float, kSpectrumBands> mBandNormX{}; // FFT 256 band 频率归一化位置 (预计算)
+
+  // ── 频谱斜率 (显示域变换) ────────────────────────────────────────────
+  // 每显示值幅度乘常数增益 g(f) = 10^(S·log2(f/f_pivot)/20), S 为当前模式生效斜率
+  // (FFT: 0/3/4.5 dB/oct; VQT/PAZ/MR-FFT: -3/0/1.5, 由插件按模式档值下发)。
+  // 增益为每 band 正常数, 与攻击/释放平滑及 hold 采集可交换, 故仅在绘制时施加;
+  // 表在斜率/模式/band 表变化时重建 (与 RebuildBinToBand 同模式, 热路径只查表)。
+  static constexpr float kSlopeRefHz = 632.45553f; // 支点 = 显示范围几何中心 sqrt(20·20000)
+  float mSlopeDbPerOct = 0.f;   // 当前模式生效斜率 (dB/oct), 0 = 无倾斜
+  std::vector<float> mSlopeGain; // 每显示值斜率增益 (FFT 256 band / 逐 band 引擎各 band)
+
+  void RebuildSlopeGain() {
+    std::vector<float> *freqs = nullptr;
+    int n = 0;
+    if (mMode == 0) {
+      n = kSpectrumBands; // FFT: band 中心频率固定 (20..20k 对数均分, 见构造函数)
+    } else {
+      freqs = (mMode == 1) ? &mVQTFreqs : (mMode == 2) ? &mPAZFreqs : &mMRFFTFreqs;
+      n = (int)freqs->size();
+    }
+    mSlopeGain.assign(n, 1.f);
+    if (mSlopeDbPerOct == 0.f || n <= 0)
+      return;
+    // gain = 10^(S·log2(f/f0)/20) = exp2(S·log2(f/f0)·log2(10)/20)
+    const float k = mSlopeDbPerOct * 0.16609640474f; // log2(10)/20
+    const double logLo = std::log2(kSpecFreqLo);
+    const double logBand = (std::log2(kSpecFreqHi) - logLo) / kSpectrumBands;
+    for (int b = 0; b < n; ++b) {
+      const float f = (mMode == 0) ? (float)(kSpecFreqLo * std::exp2(logBand * (b + 0.5)))
+                                   : (*freqs)[b];
+      mSlopeGain[b] = std::exp2f(k * orm::FastLog2(f / kSlopeRefHz));
+    }
+  }
+  float SlopeGain(int b) const {
+    return (b >= 0 && b < (int)mSlopeGain.size()) ? mSlopeGain[b] : 1.f;
+  }
   float mAttackCoeff = 0.2f;
   float mReleaseCoeff = 0.9f;
   float mAttackSec = 0.05f; // 上升时间常数 (s), 由插件 Attack 参数下发

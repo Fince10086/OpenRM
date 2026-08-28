@@ -19,6 +19,10 @@ enum EParams {
   kFreeze,        // 冻结/保持 (0: LIVE 实时, 1: FREEZE 定格; 冻结中切换引擎用新算法重算冻结音频)
   kPyramidDecim,  // VQT 金字塔降采样档位 (0: A 逐级2x, 1: B1 浅2x+深4x, 2: B2 2x最小相位)
   kLevelHoldOn,   // 峰值保持开关 (频谱 hold 曲线与电平表 hold 亮线共用; 追加末尾, 保旧状态文件下标兼容)
+  kSlopeFFT,      // 频谱斜率档位索引, FFT 引擎独立保存 (0/3/4.5 dB/oct)
+  kSlopeVQT,      // 频谱斜率档位索引, VQT 引擎独立保存 (-3/0/1.5 dB/oct)
+  kSlopePAZ,      // 频谱斜率档位索引, PAZ 引擎独立保存 (-3/0/1.5 dB/oct)
+  kSlopeMRFFT,    // 频谱斜率档位索引, MR-FFT 引擎独立保存 (-3/0/1.5 dB/oct)
   kNumParams
 };
 
@@ -40,6 +44,14 @@ constexpr int kNumBpoOptions = 2;
 // (holdT >= holdSec 才回落) 永不触发, 即无限保持, 且 holdSec > 0 的"画 hold 线"判定照常成立。
 constexpr double kHoldTimeSecs[] = {0.5, 2.0, 1e9};
 constexpr int kNumHoldTimeOptions = 3;
+
+// 频谱斜率档位 (kSlopeFFT/kSlopeVQT/kSlopePAZ/kSlopeMRFFT 存索引, 各引擎独立):
+// 显示域每 band 施加 S·log2(f/f_pivot) dB 的倾斜。FFT 按 bin 显示白噪天生平直,
+// 逐 band 能量积分显示 (VQT/PAZ/MR-FFT) 白噪天生 +3 dB/oct, 故两组档值相差 -3,
+// 使同一信号的视觉斜率在两种显示下一致 (如粉噪在 FFT|3 与 VQT|0 下都平直)。
+constexpr double kSlopeDbFFT[] = {0.0, 3.0, 4.5};
+constexpr double kSlopeDbLog[] = {-3.0, 0.0, 1.5};
+constexpr int kNumSlopeOptions = 3;
 
 // VQT 固定档位 (不再暴露 UI): γ 取原 HIGH 档, BPO 固定 24
 constexpr int kVQTGammaHz = 5;

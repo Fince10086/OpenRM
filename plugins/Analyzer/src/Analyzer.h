@@ -91,6 +91,7 @@ private:
   double mSentAttack = -1.0;
   double mSentLfRes = -1.0;
   double mSentBpo = -1.0;
+  double mSentSlope = -1e9; // 当前模式生效斜率 (dB/oct), 用于 OnIdle 增量去重
   int mSentChanMode = -1; // 存储三态值 (0=LR,1=PWR,2=SUM), 用于 OnIdle 增量去重
 
   SpectrumPad *mSpectrumPad = nullptr;
@@ -100,6 +101,7 @@ private:
   FlatCycleButton *mPazAlgoBtn = nullptr;  // PAZ 算法模式循环按钮 (IIR / FFT)
   FlatCycleButton *mPyramidBtn = nullptr;  // VQT 金字塔算法循环按钮 (A / B1 / B2 / B3)
   FlatCycleButton *mRangeBtn = nullptr;    // 动态范围循环按钮 (刻度底部 80/100/120)
+  FlatCycleButton *mSlopeBtn = nullptr;    // 频谱斜率循环按钮 (刻度底部左缘, 档值随引擎)
   ORMSlider *mAttackSlider = nullptr;
   ORMSlider *mReleaseSlider = nullptr;
   CpuMeterControl *mCpuMeter = nullptr;
@@ -215,6 +217,15 @@ private:
       return 0.0;
     const int idx = (int)std::clamp(std::lround(GetParam(kLevelHold)->Value()), 0L, (long)kNumHoldTimeOptions - 1);
     return kHoldTimeSecs[idx];
+  }
+  // 当前模式生效的斜率值 (dB/oct): 各引擎档位独立保存 (kSlopeFFT + 模式连续排列);
+  // FFT 用 kSlopeDbFFT 档值, 逐 band 引擎 (VQT/PAZ/MR-FFT) 用 kSlopeDbLog 档值。
+  // 两组相差 -3 dB/oct: 逐 band 能量积分显示白噪天生 +3 dB/oct (FFT 按 bin 显示天生平直),
+  // 使同一信号的视觉斜率跨显示一致 (如粉噪在 FFT|3 与 VQT|0 下都平直)。
+  double EffectiveSlopeDb() const {
+    const int mode = (int)std::clamp(GetParam(kMode)->Value(), 0.0, (double)kNumModes - 1);
+    const int idx = (int)std::clamp(GetParam(kSlopeFFT + mode)->Value(), 0.0, (double)kNumSlopeOptions - 1);
+    return (mode == kModeFFT) ? kSlopeDbFFT[idx] : kSlopeDbLog[idx];
   }
   void SendVQTBandFreqs();
   void SendPAZBandFreqs();

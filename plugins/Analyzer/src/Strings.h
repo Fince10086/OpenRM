@@ -67,6 +67,7 @@ enum EText {
   kTxtGenToOutput,
   kTxtGenHold,
   kTxtTipLevelHoldTime,
+  kTxtTipSlope,
   kNumTexts
 };
 
@@ -129,6 +130,7 @@ inline const char *Tr(int id, int lang) {
           "TO OUTPUT",
           "HOLD",
           "Peak hold duration: click to cycle 0.5s / 2s / KEEP (hold forever)",
+          "Spectrum slope (dB/oct, pivot ~632 Hz): FFT 0/3/4.5, VQT/PAZ/MR-FFT -3/0/1.5; each engine keeps its own value",
       },
       {
           "释放",
@@ -187,6 +189,7 @@ inline const char *Tr(int id, int lang) {
           "送到输出",
           "锁相位",
           "峰值保持时长：点击循环切换 0.5s / 2s / KEEP（一直保持）",
+          "频谱斜率（dB/oct，支点约 632 Hz）：FFT 0/3/4.5，VQT/PAZ/MR-FFT -3/0/1.5；各引擎独立保存",
       },
   };
   return kTable[lang][id];

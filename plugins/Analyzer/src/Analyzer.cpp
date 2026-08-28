@@ -136,6 +136,11 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
   GetParam(kPazAlgo)->InitInt("PazAlgo", kPazAlgoIIR, 0, kNumPazAlgos - 1, "");
   GetParam(kFreeze)->InitInt("Freeze", 0, 0, 1, ""); // 0=LIVE 实时, 1=FREEZE 定格
   GetParam(kPyramidDecim)->InitInt("Pyramid", 0, 0, 2, ""); // VQT 金字塔档位: 0=A 1=B1 2=B2
+  // 频谱斜率档位 (各引擎独立保存; 默认档 1: FFT = 3 dB/oct, 逐 band 引擎 = 0 dB/oct)
+  GetParam(kSlopeFFT)->InitInt("SlopeFFT", 1, 0, kNumSlopeOptions - 1, "");
+  GetParam(kSlopeVQT)->InitInt("SlopeVQT", 1, 0, kNumSlopeOptions - 1, "");
+  GetParam(kSlopePAZ)->InitInt("SlopePAZ", 1, 0, kNumSlopeOptions - 1, "");
+  GetParam(kSlopeMRFFT)->InitInt("SlopeMRFFT", 1, 0, kNumSlopeOptions - 1, "");
 
   mDefaultSnapshot = Snapshot();
   mStableSnapshot = Snapshot();
@@ -317,6 +322,16 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     pGraphics->AttachControl(mReleaseSlider);
     bindText(orm::kTxtRelease, [this](const char *s) { mReleaseSlider->SetHeaderLabel(s); });
     bindTip(mReleaseSlider, orm::kTxtTipRelease);
+
+    // 频谱斜率循环按钮: 位于右栏 UNDO 上方整行 (与 HOLD 时长按钮同宽 kPanelR-kCol1X, 高 kBtnH,
+    // 行距与下方按钮行一致)。标签带单位: FFT 0/3/4.5 dB/Oct, 其余 -3/0/1.5 dB/Oct;
+    // 各引擎独立保存档位, 切引擎时改绑参数并换标签 (见 OnIdle 模式块)。
+    constexpr float kSlopeBtnY = 234.f; // 与下方 UNDO 行 (y=273) 保持 39px 行距
+    mSlopeBtn = new FlatCycleButton(IRECT(kCol1X, kSlopeBtnY, kPanelR, kSlopeBtnY + kBtnH), kSlopeFFT,
+                                    {"0 dB/Oct", "3 dB/Oct", "4.5 dB/Oct"}, btnStyle);
+    pGraphics->AttachControl(mSlopeBtn);
+    mSlopeBtn->SetParamIdx(kSlopeFFT + (int)GetParam(kMode)->Value());
+    bindTip(mSlopeBtn, orm::kTxtTipSlope);
 
     IVButtonControl *undoBtn =
         MakeMomentary(IRECT(kCol1X, 273, kCol1X + kBtnW, 303), [this](IControl *) { Undo(); }, "UNDO", btnStyle);
@@ -524,6 +539,7 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     mSentAttack = GetParam(kAttack)->Value();
     mSentLfRes = GetParam(kLfRes)->Value();
     mSentBpo = GetParam(kBpo)->Value();
+    mSentSlope = EffectiveSlopeDb();
     mSentMode = (int)GetParam(kMode)->Value();
     mSentChanMode = (int)GetParam(kChannelMode)->Value();
     mUIOpen.store(true, std::memory_order_release);
@@ -731,6 +747,7 @@ void ORMAnalyzer::SendSpectrumConfig() {
   const float release = (float)GetParam(kRelease)->Value();
   const float range = CurrentRangeDb();
   const float attack = (float)GetParam(kAttack)->Value();
+  const float slopeDb = (float)EffectiveSlopeDb(); // 当前模式生效斜率 (档值随模式)
   const int chanTri = (int)GetParam(kChannelMode)->Value();
   const int chanMode = (chanTri == kChanModeLR) ? 0 : 1;
   const int mergeAlgo = (chanTri == kChanModeSUM) ? 1 : 0;
@@ -739,6 +756,7 @@ void ORMAnalyzer::SendSpectrumConfig() {
   SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagRelease, sizeof(float), &release);
   SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagRange, sizeof(float), &range);
   SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagAttack, sizeof(float), &attack);
+  SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagSlope, sizeof(float), &slopeDb);
   SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagChanMode, sizeof(int), &chanMode);
   SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagMergeAlgo, sizeof(int), &mergeAlgo);
   const int mode = (int)GetParam(kMode)->Value();
@@ -877,6 +895,19 @@ void ORMAnalyzer::OnIdle() {
       mPyramidBtn->Hide(mode != kModeVQT);
       mBpoSlider->Hide(mode != kModeMRFFT);
     }
+    // 斜率按钮: 档位随引擎不同 (FFT 0/3/4.5, 其余 -3/0/1.5, 单位 dB/Oct);
+    // 改绑当前引擎参数并换标签
+    if (mSlopeBtn) {
+      mSlopeBtn->SetParamIdx(kSlopeFFT + mode);
+      if (mode == kModeFFT)
+        mSlopeBtn->SetLabels({"0 dB/Oct", "3 dB/Oct", "4.5 dB/Oct"});
+      else
+        mSlopeBtn->SetLabels({"-3 dB/Oct", "0 dB/Oct", "1.5 dB/Oct"});
+    }
+    // 模式切换会改变生效斜率 (档值表不同), 与 mode 一起立即下发
+    const float slopeDb = (float)EffectiveSlopeDb();
+    mSentSlope = slopeDb;
+    SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagSlope, sizeof(float), &slopeDb);
     SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagMode, sizeof(int), &mode);
     if (mode == kModeVQT)
       SendVQTBandFreqs();
@@ -923,10 +954,12 @@ void ORMAnalyzer::OnIdle() {
     const double attack = GetParam(kAttack)->Value();
     const double lfRes = GetParam(kLfRes)->Value();
     const double bpo = GetParam(kBpo)->Value();
+    const double slope = EffectiveSlopeDb(); // 斜率档位变化时重发 (冻结中照常: 纯显示参数)
     if (sr != mSentSampleRate || fftSize != mSentFFTSize || release != mSentRelease ||
-        range != mSentRange || attack != mSentAttack || lfRes != mSentLfRes || bpo != mSentBpo) {
+        range != mSentRange || attack != mSentAttack || lfRes != mSentLfRes || bpo != mSentBpo ||
+        slope != mSentSlope) {
       // 冻结中 attack/release (回放弹道) 或采样率变化需重启回放, 保证确定性;
-      // Range 纯显示参数不参与计算, 不重启
+      // Range/斜率纯显示参数不参与计算, 不重启
       const bool restartReplay =
           frozen && (sr != mSentSampleRate || release != mSentRelease || attack != mSentAttack);
       mSentSampleRate = sr;
@@ -936,6 +969,7 @@ void ORMAnalyzer::OnIdle() {
       mSentAttack = attack;
       mSentLfRes = lfRes;
       mSentBpo = bpo;
+      mSentSlope = slope;
       SendSpectrumConfig();
       if (restartReplay)
         StartFreezeReplay();
@@ -1069,6 +1103,7 @@ void ORMAnalyzer::OnUIClose() {
   mLevelHoldBtn = nullptr;
   mLevelHoldTimeBtn = nullptr;
   mFreezeBtn = nullptr;
+  mSlopeBtn = nullptr;
   mSettingsPanel = nullptr;
   mTextBindings.clear();
   mTooltipBindings.clear();
@@ -1081,6 +1116,7 @@ void ORMAnalyzer::OnUIClose() {
   mSentAttack = -1.0;
   mSentLfRes = -1.0;
   mSentBpo = -1.0;
+  mSentSlope = -1e9;
   mSentChanMode = -1;
   // 冻结档位快照复位: 重开 UI 后冻结画面与档位重算按新控件状态重新建立
   mFreezeOn = false;

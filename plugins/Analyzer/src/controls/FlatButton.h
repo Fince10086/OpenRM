@@ -120,6 +120,12 @@ public:
   // 快速连击: 偶数次点击走双击, 转发为按下 (循环切换), 避免重置默认
   void OnMouseDblClick(float x, float y, const IMouseMod &mod) override { OnMouseDown(x, y, mod); }
 
+  // 运行时换标签 (模式相关档位按钮: 切引擎时档值含义变化, 由插件在模式切换时调用)
+  void SetLabels(const std::vector<const char *> &labels) {
+    mLabels = labels;
+    SetDirty(false);
+  }
+
   // 刻度样式: 按钮伪装成刻度文字 (如频谱图底部 Range 按钮) —— 背景方块 + 与刻度一致的
   // 14px 文字 (右对齐, 右缘/底缘与刻度文字重合), 只是多出一个背景色块。
   void SetScaleLabelStyle(bool b) { mScaleStyle = b; }
