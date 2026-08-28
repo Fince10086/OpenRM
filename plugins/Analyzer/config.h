@@ -50,3 +50,10 @@
 #define MIXED_FN "Mixed-Regular.ttf"
 #define MIXED_SB_FN "Mixed-SemiBold.ttf"
 #define MIXED_BD_FN "Mixed-Bold.ttf"
+
+// 内置测试信号发生器 (开发者工具, 用于对比不同频谱算法):
+// 1 = 编译进插件, 设置面板出现 DEVELOPER 分区; 0 = 完全裁掉 (发布包建议 0)。
+// 可用 CMake 选项 ORM_ENABLE_TEST_GEN 覆盖, 无需改这里。
+#ifndef ORM_ENABLE_TEST_GEN
+#define ORM_ENABLE_TEST_GEN 1
+#endif

@@ -7,6 +7,9 @@
 #include "dsp/PAZAnalyzer.h"
 #include "dsp/MultirateFFTAnalyzer.h"
 #include "dsp/LevelMeter.h"
+#if ORM_ENABLE_TEST_GEN
+#include "dsp/TestSignalGenerator.h"
+#endif
 #include "Strings.h"
 
 #include <algorithm>
@@ -130,6 +133,23 @@ private:
   // 最后一帧以 FreezeFrameData 直发 pad (跳过攻击/释放平滑)。定义见 Analyzer.cpp。
   template <typename TEngine>
   void FreezeShowFrozen(TEngine &engine);
+
+  // ── 内置测试信号发生器 (开发者工具, ORM_ENABLE_TEST_GEN) ────────────
+  // UI 线程写、音频线程读: 全部用原子标量, 不做跨线程共享对象。
+  // 发生器状态只能在音频线程推进 (Fill), 因此样本索引与 Freeze 环形缓冲天然同步。
+#if ORM_ENABLE_TEST_GEN
+  orm::TestSignalGenerator mTestGen;
+  std::atomic<int> mGenType{orm::kGenOff};
+  std::atomic<float> mGenFreq{1000.f};
+  std::atomic<float> mGenLevel{-12.f};
+  std::atomic<bool> mGenHold{false};     // 冻结时锁相位 (不推进样本索引)
+  std::atomic<bool> mGenToOutput{false}; // 路由生成信号到输出 (默认关: 白噪/脉冲直送监听很危险)
+  std::atomic<bool> mGenRestartReq{false};
+  std::atomic<int> mGenSeedReq{0}; // 非 0 = 请求换种子
+  // 频率/电平拖动的磁盘写入防抖 (仅 UI 线程访问 mGenSaveTp)
+  std::atomic<bool> mGenSavePending{false};
+  std::chrono::steady_clock::time_point mGenSaveTp{};
+#endif
 
   // CPU 占用率统计（音频线程处理耗时 + UI 分析耗时，归一化为单核百分比）
   double mCpuAudio = 0.0;

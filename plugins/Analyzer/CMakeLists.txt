@@ -15,6 +15,15 @@ find_package(iPlug2 REQUIRED)
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../cmake")
 include(OpenRMPlugin)
 
+# 内置测试信号发生器 (开发者工具): 开启后设置面板出现 DEVELOPER 分区。
+# 发布包用 -DORM_ENABLE_TEST_GEN=OFF 完全裁掉。
+option(ORM_ENABLE_TEST_GEN "ORMAnalyzer: built-in test signal generator (developer tool)" ON)
+if(ORM_ENABLE_TEST_GEN)
+  set(_az_test_gen_def ORM_ENABLE_TEST_GEN=1)
+else()
+  set(_az_test_gen_def ORM_ENABLE_TEST_GEN=0)
+endif()
+
 openrm_add_plugin(${PROJECT_NAME}
   SOURCES
     src/Analyzer.h
@@ -27,6 +36,7 @@ openrm_add_plugin(${PROJECT_NAME}
     src/dsp/PAZAnalyzer.h
     src/dsp/MultirateFFTAnalyzer.h
     src/dsp/LevelMeter.h
+    src/dsp/TestSignalGenerator.h
     src/controls/UiUtils.h
     src/controls/ThemeCornerResizer.h
     src/controls/FlatButton.h
@@ -38,6 +48,6 @@ openrm_add_plugin(${PROJECT_NAME}
     src/SettingsFileIO.h
     ${IPLUG2_DIR}/WDL/fft.c
   FORMATS APP AU VST3
-  DEFINES SAMPLE_TYPE_FLOAT
+  DEFINES SAMPLE_TYPE_FLOAT ${_az_test_gen_def}
   FONTS Mixed-Regular.ttf Mixed-SemiBold.ttf Mixed-Bold.ttf
 )

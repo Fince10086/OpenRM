@@ -1,8 +1,12 @@
 #pragma once
 
 #include "IControls.h"
+#include "../config.h"
 #include "../Theme.h"
 #include "UiUtils.h"
+#if ORM_ENABLE_TEST_GEN
+#include "../dsp/TestSignalGenerator.h"
+#endif
 
 #include <algorithm>
 #include <cmath>
@@ -66,12 +70,35 @@ public:
     std::function<std::vector<std::string>()> listAudioAPIs;
     std::function<const char *()> currentAudioAPI;
     std::function<void(const char *name)> onAudioAPI;
+#if ORM_ENABLE_TEST_GEN
+    // 内置测试信号发生器 (开发者工具)
+    struct Gen {
+      std::function<int()> type;
+      std::function<void(int)> onType;
+      std::function<double()> freq;
+      std::function<void(double)> onFreq;
+      std::function<double()> level;
+      std::function<void(double)> onLevel;
+      std::function<bool()> hold;
+      std::function<void(bool)> onHold;
+      std::function<bool()> toOutput;
+      std::function<void(bool)> onToOutput;
+      std::function<void()> onRestart;
+      std::function<void()> onReseed;
+    } gen;
+#endif
   };
 
   SettingsPanelControl(const IRECT &bounds, Hooks hooks) : IControl(bounds), mHooks(std::move(hooks)) {
     mHasAudio = (bool)(mHooks.listAudioDevices && mHooks.currentAudioDevice && mHooks.onAudioDevice);
     mHasDriver = (bool)(mHooks.listAudioAPIs && mHooks.currentAudioAPI && mHooks.onAudioAPI);
-    const float cardH = (mHasAudio || mHasDriver) ? kCardHAudio : kCardH;
+#if ORM_ENABLE_TEST_GEN
+    mHasGen = (bool)(mHooks.gen.type && mHooks.gen.onType && mHooks.gen.freq && mHooks.gen.onFreq &&
+                     mHooks.gen.level && mHooks.gen.onLevel && mHooks.gen.hold && mHooks.gen.onHold &&
+                     mHooks.gen.toOutput && mHooks.gen.onToOutput);
+#endif
+    const float baseH = (mHasAudio || mHasDriver) ? kCardHAudio : kCardH;
+    const float cardH = baseH + (mHasGen ? kDevH : 0.f);
     mCard = IRECT(bounds.MW() - kCardW * 0.5f, bounds.MH() - cardH * 0.5f, bounds.MW() + kCardW * 0.5f,
                   bounds.MH() + cardH * 0.5f);
     const float bw = (kCardW - 2.f * kPad - kBtnGap) * 0.5f;
@@ -93,6 +120,28 @@ public:
     if (mHasDriver) {
       const float drvY = mCard.T + kDriverRowY;
       mDriverRow = IRECT(mCard.L + kPad, drvY, mCard.R - kPad, drvY + kAudioRowH);
+    }
+    if (mHasGen) {
+      // 开发者分区接在现有内容之后 (音频分区仅 APP 目标存在, 故基准 Y 分两种)
+      const float b = (mHasAudio || mHasDriver) ? (kCardHAudio - 12.f) : (kCardH - 12.f);
+      mDevTitle =
+          IRECT(mCard.L + kPad, mCard.T + b + kDevTitleOff, mCard.R - kPad, mCard.T + b + kDevTitleOff + kTitleSize);
+      mDevSignalRow = IRECT(mCard.L + kPad, mCard.T + b + kDevSignalOff, mCard.R - kPad,
+                            mCard.T + b + kDevSignalOff + kAudioRowH);
+      for (int i = 0; i < 2; ++i) {
+        const float hdrY = mCard.T + b + (i == 0 ? kDevFreqHdrOff : kDevLevelHdrOff);
+        mDevSliderHeader[i] = IRECT(mCard.L + kPad, hdrY, mCard.R - kPad, hdrY + kHeaderH);
+        const float trkY = mCard.T + b + (i == 0 ? kDevFreqOff : kDevLevelOff);
+        mDevSliderTrack[i] = IRECT(mCard.L + kPad, trkY, mCard.R - kPad, trkY + kTrackH);
+      }
+      const float dbw = (mCard.W() - 2.f * kPad - kDevBtnGap) * 0.5f;
+      const float by = mCard.T + b + kDevBtnOff;
+      mDevBtn[0] = IRECT(mCard.L + kPad, by, mCard.L + kPad + dbw, by + kBtnH);
+      mDevBtn[1] = IRECT(mCard.L + kPad + dbw + kDevBtnGap, by, mCard.L + kPad + 2.f * dbw + kDevBtnGap, by + kBtnH);
+      const float ty = mCard.T + b + kDevToggleOff;
+      mDevToggle[0] = IRECT(mCard.L + kPad, ty, mCard.L + kPad + dbw, ty + kBtnH);
+      mDevToggle[1] =
+          IRECT(mCard.L + kPad + dbw + kDevBtnGap, ty, mCard.L + kPad + 2.f * dbw + kDevBtnGap, ty + kBtnH);
     }
     mHover = kHoverNone;
   }
@@ -151,6 +200,27 @@ public:
         DrawDeviceRow(g, mAudioRow[i], orm::Tr(i == 0 ? orm::kTxtAudioInput : orm::kTxtAudioOutput, lang),
                       mHooks.currentAudioDevice(i == 0), mHover == (i == 0 ? kHoverAudioIn : kHoverAudioOut));
     }
+
+#if ORM_ENABLE_TEST_GEN
+    if (mHasGen) {
+      g.DrawText(IText(kTitleSize, COL_900(), kFontSemiBold, EAlign::Near, EVAlign::Middle),
+                 orm::Tr(orm::kTxtDeveloper, lang), mDevTitle);
+      DrawDeviceRow(g, mDevSignalRow, orm::Tr(orm::kTxtTestSignal, lang),
+                    orm::TestSignalName(mHooks.gen.type()), mHover == kHoverGenSignal);
+      DrawSliderHeader(g, mDevSliderHeader[0], orm::Tr(orm::kTxtGenFreq, lang), GenFreqLabel(),
+                       mDevSliderHeader[0].L);
+      DrawSlider(g, mDevSliderTrack[0], GenFreqNorm());
+      DrawSliderHeader(g, mDevSliderHeader[1], orm::Tr(orm::kTxtGenLevel, lang), GenLevelLabel(),
+                       mDevSliderHeader[1].L);
+      DrawSlider(g, mDevSliderTrack[1], GenLevelNorm());
+      DrawButton(g, mDevBtn[0], orm::Tr(orm::kTxtGenRestart, lang), false, mHover == kHoverGenRestart, kFontRegular);
+      DrawButton(g, mDevBtn[1], orm::Tr(orm::kTxtGenReseed, lang), false, mHover == kHoverGenReseed, kFontRegular);
+      DrawButton(g, mDevToggle[0], orm::Tr(orm::kTxtGenToOutput, lang), mHooks.gen.toOutput(),
+                 mHover == kHoverGenToOutput, kFontRegular);
+      DrawButton(g, mDevToggle[1], orm::Tr(orm::kTxtGenHold, lang), mHooks.gen.hold(), mHover == kHoverGenHold,
+                 kFontRegular);
+    }
+#endif
   }
 
   void OnMouseDown(float x, float y, const IMouseMod &mod) override {
@@ -178,6 +248,42 @@ public:
       DragTo(x, y);
       return;
     }
+#if ORM_ENABLE_TEST_GEN
+    if (mHasGen) {
+      if (mDevSliderTrack[0].Contains(x, y)) {
+        mDrag = kDragGenFreq;
+        DragTo(x, y);
+        return;
+      }
+      if (mDevSliderTrack[1].Contains(x, y)) {
+        mDrag = kDragGenLevel;
+        DragTo(x, y);
+        return;
+      }
+      if (mDevSignalRow.Contains(x, y)) {
+        OpenGenMenu();
+        return;
+      }
+      if (mDevBtn[0].Contains(x, y) && mHooks.gen.onRestart) {
+        mHooks.gen.onRestart();
+        return;
+      }
+      if (mDevBtn[1].Contains(x, y) && mHooks.gen.onReseed) {
+        mHooks.gen.onReseed();
+        return;
+      }
+      if (mDevToggle[0].Contains(x, y) && mHooks.gen.onToOutput) {
+        mHooks.gen.onToOutput(!mHooks.gen.toOutput());
+        SetDirty(false);
+        return;
+      }
+      if (mDevToggle[1].Contains(x, y) && mHooks.gen.onHold) {
+        mHooks.gen.onHold(!mHooks.gen.hold());
+        SetDirty(false);
+        return;
+      }
+    }
+#endif
     if (mHasAudio || mHasDriver) {
       if (mHasDriver && mDriverRow.Contains(x, y)) {
         OpenDriverMenu();
@@ -234,9 +340,14 @@ private:
     kHoverThemeLight,
     kHoverAudioIn,
     kHoverAudioOut,
-    kHoverDriver
+    kHoverDriver,
+    kHoverGenSignal,
+    kHoverGenRestart,
+    kHoverGenReseed,
+    kHoverGenToOutput,
+    kHoverGenHold
   };
-  enum EDrag { kDragNone, kDragHue, kDragSat };
+  enum EDrag { kDragNone, kDragHue, kDragSat, kDragGenFreq, kDragGenLevel };
 
   float HueNorm() const {
     const int h = ThemeHue();
@@ -254,8 +365,32 @@ private:
   }
 
   void DragTo(float x, float y) {
-    const IRECT *s = (mDrag == kDragHue) ? &mSliderTrack[0] : &mSliderTrack[1];
+    const IRECT *s = &mSliderTrack[1];
+    if (mDrag == kDragHue)
+      s = &mSliderTrack[0];
+#if ORM_ENABLE_TEST_GEN
+    else if (mDrag == kDragGenFreq)
+      s = &mDevSliderTrack[0];
+    else if (mDrag == kDragGenLevel)
+      s = &mDevSliderTrack[1];
+#endif
     const float n = std::clamp((x - s->L) / s->W(), 0.f, 1.f);
+#if ORM_ENABLE_TEST_GEN
+    if (mDrag == kDragGenFreq) {
+      const double f = GenFreqFromNorm(n);
+      if (mHooks.gen.onFreq)
+        mHooks.gen.onFreq(f);
+      SetDirty(false);
+      return;
+    }
+    if (mDrag == kDragGenLevel) {
+      const double db = GenLevelFromNorm(n);
+      if (mHooks.gen.onLevel)
+        mHooks.gen.onLevel(db);
+      SetDirty(false);
+      return;
+    }
+#endif
     if (mDrag == kDragHue) {
       const int hue = kHueMin + (int)std::lround(n * (kHueMax - kHueMin) / kHueStep) * kHueStep;
       if (hue != ThemeHue()) {
@@ -290,6 +425,20 @@ private:
       return kHoverAudioIn;
     if (mHasAudio && mAudioRow[1].Contains(x, y))
       return kHoverAudioOut;
+#if ORM_ENABLE_TEST_GEN
+    if (mHasGen) {
+      if (mDevSignalRow.Contains(x, y))
+        return kHoverGenSignal;
+      if (mDevBtn[0].Contains(x, y))
+        return kHoverGenRestart;
+      if (mDevBtn[1].Contains(x, y))
+        return kHoverGenReseed;
+      if (mDevToggle[0].Contains(x, y))
+        return kHoverGenToOutput;
+      if (mDevToggle[1].Contains(x, y))
+        return kHoverGenHold;
+    }
+#endif
     return kHoverNone;
   }
 
@@ -333,6 +482,77 @@ private:
       }
     return orm::Tr(kIds[idx], lang);
   }
+
+#if ORM_ENABLE_TEST_GEN
+  // 频率滑杆: 1 Hz .. 20 kHz 对数映射
+  static double GenFreqFromNorm(float n) { return std::pow(20000.0, (double)std::clamp(n, 0.f, 1.f)); }
+  float GenFreqNorm() const {
+    const double f = std::clamp(mHooks.gen.freq(), 1.0, 20000.0);
+    return (float)(std::log(f) / std::log(20000.0));
+  }
+  // 电平滑杆: -120 .. 0 dBFS 线性 (含底噪测试所需极低电平)
+  static double GenLevelFromNorm(float n) { return -120.0 + 120.0 * (double)std::clamp(n, 0.f, 1.f); }
+  float GenLevelNorm() const {
+    const double db = std::clamp(mHooks.gen.level(), -120.0, 0.0);
+    return (float)((db + 120.0) / 120.0);
+  }
+
+  // 频率读数随信号类型改变语义: 扫频固定 20 Hz-20 kHz, 脉冲串用 FREQ 当速率,
+  // 噪声/静音/直流则不适用 —— 省下一行提示文字的空间。
+  const char *GenFreqLabel() const {
+    static char buf[32];
+    const double f = mHooks.gen.freq();
+    switch (mHooks.gen.type()) {
+      case orm::kGenSweepLog:
+        std::snprintf(buf, sizeof(buf), "20 Hz - 20 kHz");
+        break;
+      case orm::kGenImpulseTrain:
+        std::snprintf(buf, sizeof(buf), "%.1f /s", f);
+        break;
+      case orm::kGenOff:
+      case orm::kGenSilence:
+      case orm::kGenDC:
+      case orm::kGenWhiteNoise:
+      case orm::kGenPinkNoise:
+        std::snprintf(buf, sizeof(buf), "-");
+        break;
+      default:
+        if (f >= 1000.0)
+          std::snprintf(buf, sizeof(buf), "%.2f kHz", f / 1000.0);
+        else
+          std::snprintf(buf, sizeof(buf), "%.1f Hz", f);
+        break;
+    }
+    return buf;
+  }
+
+  const char *GenLevelLabel() const {
+    static char buf[32];
+    const int t = mHooks.gen.type();
+    if (t == orm::kGenOff || t == orm::kGenSilence)
+      std::snprintf(buf, sizeof(buf), "-");
+    else
+      std::snprintf(buf, sizeof(buf), "%.0f dB", mHooks.gen.level());
+    return buf;
+  }
+
+  void OpenGenMenu() {
+    if (!GetUI() || !mHooks.gen.onType)
+      return;
+    mGenMenu.Clear();
+    mGenMenu.SetFunction([this](IPopupMenu *menu) {
+      const int idx = menu ? menu->GetChosenItemIdx() : -1;
+      if (idx < 0 || idx >= orm::kNumGenSignals)
+        return;
+      mHooks.gen.onType(idx);
+      SetDirty(false);
+    });
+    for (int i = 0; i < orm::kNumGenSignals; ++i)
+      mGenMenu.AddItem(orm::TestSignalName(i));
+    mGenMenu.CheckItemAlone(std::clamp(mHooks.gen.type(), 0, orm::kNumGenSignals - 1));
+    GetUI()->CreatePopupMenu(*this, mGenMenu, mDevSignalRow, kNoValIdx);
+  }
+#endif
 
   void OpenDeviceMenu(bool isInput) {
     if (!GetUI() || !mHooks.onAudioDevice)
@@ -438,6 +658,18 @@ private:
   static constexpr float kAudioRow2Y = 352.f;
   static constexpr float kAudioRowH = 28.f;
 
+  // 开发者分区 (内置测试信号发生器): 相对分区基准 Y 的偏移
+  static constexpr float kDevBtnGap = 8.f;
+  static constexpr float kDevTitleOff = 12.f;
+  static constexpr float kDevSignalOff = 36.f;
+  static constexpr float kDevFreqHdrOff = 70.f;
+  static constexpr float kDevFreqOff = 96.f;   // = 上一行 header 偏移 + kHeaderH, 不重叠
+  static constexpr float kDevLevelHdrOff = 128.f;
+  static constexpr float kDevLevelOff = 154.f; // = 上一行 header 偏移 + kHeaderH, 不重叠
+  static constexpr float kDevBtnOff = 188.f;
+  static constexpr float kDevToggleOff = 224.f;
+  static constexpr float kDevH = 266.f; // 分区总高, 叠加到基础卡片高度上
+
   static constexpr int kHueMin = 15;
   static constexpr int kHueMax = 360;
   static constexpr int kHueStep = 15;
@@ -454,10 +686,20 @@ private:
   IRECT mSliderTrack[2];
   IRECT mAudioRow[2];
   IRECT mDriverRow;
+#if ORM_ENABLE_TEST_GEN
+  IRECT mDevTitle;
+  IRECT mDevSignalRow;
+  IRECT mDevSliderHeader[2];
+  IRECT mDevSliderTrack[2];
+  IRECT mDevBtn[2];
+  IRECT mDevToggle[2];
+  IPopupMenu mGenMenu;
+#endif
   IPopupMenu mMenu;
   IPopupMenu mDriverMenu;
   bool mHasAudio = false;
   bool mHasDriver = false;
+  bool mHasGen = false;
   EHover mHover = kHoverNone;
   EDrag mDrag = kDragNone;
 };

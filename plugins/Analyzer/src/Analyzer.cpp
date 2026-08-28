@@ -105,6 +105,14 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
       ThemeSatMax() = s.satMax;
       mThemeMode = s.themeMode;
       ThemeMode() = s.themeMode;
+#if ORM_ENABLE_TEST_GEN
+      if (s.genType >= 0 && s.genType < orm::kNumGenSignals)
+        mGenType.store(s.genType, std::memory_order_relaxed);
+      mGenFreq.store((float)std::clamp(s.genFreq, 1.0, 20000.0), std::memory_order_relaxed);
+      mGenLevel.store((float)std::clamp(s.genLevel, -120.0, 0.0), std::memory_order_relaxed);
+      mGenHold.store(s.genHold != 0, std::memory_order_relaxed);
+      mGenToOutput.store(s.genToOutput != 0, std::memory_order_relaxed);
+#endif
     }
   }
   // 初始化参数（默认值、范围与步长）
@@ -410,6 +418,45 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
       RefreshThemeColors();
       SaveSettingsToDisk();
     };
+#if ORM_ENABLE_TEST_GEN
+    // 内置测试信号发生器 (开发者工具): 只改原子标量, 音频线程下一 block 生效。
+    // 频率/电平拖动不逐像素写盘 —— 打 pending 标记, 由 OnIdle 稳定 0.5 s 后落盘。
+    auto markGenSave = [this]() {
+      mGenSavePending.store(true, std::memory_order_relaxed);
+      mGenSaveTp = std::chrono::steady_clock::now();
+    };
+    settingsHooks.gen.type = [this]() { return mGenType.load(std::memory_order_relaxed); };
+    settingsHooks.gen.onType = [this](int t) {
+      mGenType.store(std::clamp(t, 0, orm::kNumGenSignals - 1), std::memory_order_relaxed);
+      SaveSettingsToDisk();
+    };
+    settingsHooks.gen.freq = [this]() { return (double)mGenFreq.load(std::memory_order_relaxed); };
+    settingsHooks.gen.onFreq = [this, markGenSave](double f) {
+      mGenFreq.store((float)std::clamp(f, 1.0, 20000.0), std::memory_order_relaxed);
+      markGenSave();
+    };
+    settingsHooks.gen.level = [this]() { return (double)mGenLevel.load(std::memory_order_relaxed); };
+    settingsHooks.gen.onLevel = [this, markGenSave](double db) {
+      mGenLevel.store((float)std::clamp(db, -120.0, 0.0), std::memory_order_relaxed);
+      markGenSave();
+    };
+    settingsHooks.gen.hold = [this]() { return mGenHold.load(std::memory_order_relaxed); };
+    settingsHooks.gen.onHold = [this](bool on) {
+      mGenHold.store(on, std::memory_order_relaxed);
+      SaveSettingsToDisk();
+    };
+    settingsHooks.gen.toOutput = [this]() { return mGenToOutput.load(std::memory_order_relaxed); };
+    settingsHooks.gen.onToOutput = [this](bool on) {
+      mGenToOutput.store(on, std::memory_order_relaxed);
+      SaveSettingsToDisk();
+    };
+    settingsHooks.gen.onRestart = [this]() { mGenRestartReq.store(true, std::memory_order_relaxed); };
+    settingsHooks.gen.onReseed = [this]() {
+      // 换种子: 每次取一个新的非零值, 音频线程下一 block 生效
+      const auto ticks = std::chrono::steady_clock::now().time_since_epoch().count();
+      mGenSeedReq.store((int)(((uint32_t)ticks | 1u) & 0x7FFFFFFFu), std::memory_order_relaxed);
+    };
+#endif
 #ifdef APP_API
     settingsHooks.listAudioAPIs = [this]() {
       std::vector<std::string> names;
@@ -509,55 +556,82 @@ void ORMAnalyzer::ProcessBlock(sample **inputs, sample **outputs, int nFrames) {
   // 采集输入数据到当前分析引擎
   const int mode = (int)GetParam(kMode)->Value();
   const bool frozen = GetParam(kFreeze)->Value() > 0.5; // Freeze 激活: 挂起采集, 画面定格
-  if (nIns >= 2) {
+
+#if ORM_ENABLE_TEST_GEN
+  // ── 内置测试信号发生器 (开发者工具) ──────────────────────────────────
+  // 开启时用内部生成的已知信号替换宿主输入:
+  //   · 固定 seed → 逐样本可复现;
+  //   · 与引擎共用同一 nFrames → 脉冲/扫频的时间对齐是样本级精确的;
+  //   · 正弦可吸附到 bin 中心或 bin 之间 → scalloping loss 成为可测量的量;
+  //   · 生成的信号同样写进冻结环形缓冲 —— 于是"冻结 + 切引擎"就是拿同一段
+  //     信号跑不同算法, 这是外部音源给不了的公平对比。
+  // 冻结 + HOLD 时停止推进样本索引, 保证重算的始终是同一段信号。
+  const bool genOn = mGenType.load(std::memory_order_relaxed) != orm::kGenOff;
+  if (genOn) {
+    if (mGenRestartReq.exchange(false, std::memory_order_relaxed))
+      mTestGen.Restart();
+    if (const int sd = mGenSeedReq.exchange(0, std::memory_order_relaxed))
+      mTestGen.SetSeed((uint32_t)sd);
+    orm::TestSignalGenerator::Config gc;
+    gc.type = mGenType.load(std::memory_order_relaxed);
+    gc.freqHz = (double)mGenFreq.load(std::memory_order_relaxed);
+    gc.levelDb = (double)mGenLevel.load(std::memory_order_relaxed);
+    gc.fftSize = mSpectrum.GetFFTSize(); // bin 吸附网格跟随 FFT 引擎实际尺寸
+    mTestGen.SetConfig(gc);
+    const bool advance = !(frozen && mGenHold.load(std::memory_order_relaxed));
+    mTestGen.Fill(mSpecInL.data(), mSpecInR.data(), nFrames, GetSampleRate(), advance);
+    for (int s = 0; s < nFrames; ++s)
+      mSpecInM[s] = (mSpecInL[s] + mSpecInR[s]) * 0.7071067811865475;
+    if (mGenToOutput.load(std::memory_order_relaxed) && nOuts >= 1) {
+      // 输出路由 (默认关闭): 便于外录或与第三方分析器交叉验证。
+      // 硬限幅 -1 dBFS —— 脉冲与白噪以满量程直送监听是危险的。
+      constexpr sample kOutCeil = (sample)0.8912504381337891; // -1 dBFS
+      for (int s = 0; s < nFrames; ++s) {
+        outputs[0][s] = std::clamp(mSpecInL[s], -kOutCeil, kOutCeil);
+        if (nOuts >= 2)
+          outputs[1][s] = std::clamp(mSpecInR[s], -kOutCeil, kOutCeil);
+      }
+      for (int c = 2; c < nOuts; ++c)
+        std::memcpy(outputs[c], outputs[0], nFrames * sizeof(sample));
+    }
+  }
+#else
+  const bool genOn = false;
+#endif
+
+  sample *spec[3] = {mSpecInL.data(), mSpecInR.data(), mSpecInM.data()};
+  if (genOn) {
+    // 输入已由发生器填充 (mSpecInL/R/M 就绪)
+  } else if (nIns >= 2) {
     std::memcpy(mSpecInL.data(), inputs[0], nFrames * sizeof(sample));
     std::memcpy(mSpecInR.data(), inputs[1], nFrames * sizeof(sample));
     for (int s = 0; s < nFrames; ++s)
       mSpecInM[s] = (mSpecInL[s] + mSpecInR[s]) * 0.7071067811865475;
-    sample *spec[3] = {mSpecInL.data(), mSpecInR.data(), mSpecInM.data()};
-    if (!frozen) {
-      // 冻结环形缓冲: 常驻记录最近 kFreezeRingLen 样本; freeze on 后停止写入, 即冻结时刻快照。
-      // (UI 线程 Read + 音频线程 Write 由 kFreeze 参数 (原子) 协调: 写入先停, 读取后才开始,
-      // 边缘至多混入冻结生效前最后一块输入, 无碍。)
-      for (int s = 0; s < nFrames; ++s) {
-        const int p = mFreezeRingPos.load(std::memory_order_relaxed);
-        mFreezeRing[0][p] = mSpecInL[s];
-        mFreezeRing[1][p] = mSpecInR[s];
-        mFreezeRing[2][p] = mSpecInM[s];
-        mFreezeRingPos.store((p + 1) & (kFreezeRingLen - 1), std::memory_order_relaxed);
-      }
-      if (mode == kModeVQT)
-        mVQT.ProcessBlock(spec, nFrames, kCtrlTagPad, 3);
-      else if (mode == kModePAZ)
-        mPAZ.ProcessBlock(spec, nFrames, kCtrlTagPad, 3);
-      else if (mode == kModeMRFFT)
-        mMRFFT.ProcessBlock(spec, nFrames, kCtrlTagPad, 3);
-      else
-        mSpectrum.ProcessBlock(spec, nFrames, kCtrlTagPad, 3);
-    }
   } else {
     std::memcpy(mSpecInL.data(), inputs[0], nFrames * sizeof(sample));
     std::memcpy(mSpecInR.data(), inputs[0], nFrames * sizeof(sample));
     for (int s = 0; s < nFrames; ++s)
       mSpecInM[s] = mSpecInL[s] * 0.7071067811865475;
-    sample *spec[3] = {mSpecInL.data(), mSpecInR.data(), mSpecInM.data()};
-    if (!frozen) {
-      for (int s = 0; s < nFrames; ++s) {
-        const int p = mFreezeRingPos.load(std::memory_order_relaxed);
-        mFreezeRing[0][p] = mSpecInL[s];
-        mFreezeRing[1][p] = mSpecInR[s];
-        mFreezeRing[2][p] = mSpecInM[s];
-        mFreezeRingPos.store((p + 1) & (kFreezeRingLen - 1), std::memory_order_relaxed);
-      }
-      if (mode == kModeVQT)
-        mVQT.ProcessBlock(spec, nFrames, kCtrlTagPad, 3);
-      else if (mode == kModePAZ)
-        mPAZ.ProcessBlock(spec, nFrames, kCtrlTagPad, 3);
-      else if (mode == kModeMRFFT)
-        mMRFFT.ProcessBlock(spec, nFrames, kCtrlTagPad, 3);
-      else
-        mSpectrum.ProcessBlock(spec, nFrames, kCtrlTagPad, 3);
+  }
+  if (!frozen) {
+    // 冻结环形缓冲: 常驻记录最近 kFreezeRingLen 样本; freeze on 后停止写入, 即冻结时刻快照。
+    // (UI 线程 Read + 音频线程 Write 由 kFreeze 参数 (原子) 协调: 写入先停, 读取后才开始,
+    // 边缘至多混入冻结生效前最后一块输入, 无碍。)
+    for (int s = 0; s < nFrames; ++s) {
+      const int p = mFreezeRingPos.load(std::memory_order_relaxed);
+      mFreezeRing[0][p] = mSpecInL[s];
+      mFreezeRing[1][p] = mSpecInR[s];
+      mFreezeRing[2][p] = mSpecInM[s];
+      mFreezeRingPos.store((p + 1) & (kFreezeRingLen - 1), std::memory_order_relaxed);
     }
+    if (mode == kModeVQT)
+      mVQT.ProcessBlock(spec, nFrames, kCtrlTagPad, 3);
+    else if (mode == kModePAZ)
+      mPAZ.ProcessBlock(spec, nFrames, kCtrlTagPad, 3);
+    else if (mode == kModeMRFFT)
+      mMRFFT.ProcessBlock(spec, nFrames, kCtrlTagPad, 3);
+    else
+      mSpectrum.ProcessBlock(spec, nFrames, kCtrlTagPad, 3);
   }
 
   // 电平表测量 (冻结中挂起: 保持最后快照, 画面随频谱一起定格; 重置请求仍被消费, 避免解冻后误触发)
@@ -617,6 +691,9 @@ void ORMAnalyzer::OnReset() {
   mLevelSetSR.store(GetSampleRate(), std::memory_order_relaxed); // 音频线程下一 block 执行 SetSampleRate+Reset
   mPeakL.store(0.f, std::memory_order_relaxed);
   mPeakR.store(0.f, std::memory_order_relaxed);
+#if ORM_ENABLE_TEST_GEN
+  mTestGen.Restart(); // 采样率/缓冲变化后信号从头开始, 保证可复现
+#endif
 }
 
 void ORMAnalyzer::SendSpectrumConfig() {
@@ -924,6 +1001,15 @@ void ORMAnalyzer::OnIdle() {
   }
   SendControlMsgFromDelegate(kCtrlTagCpu, CpuMeterControl::kMsgTagCpu, sizeof(double), &mCpuPct);
 
+#if ORM_ENABLE_TEST_GEN
+  // 发生器频率/电平拖动稳定 0.5 s 后落盘 (避免拖动过程中逐像素写文件)
+  if (mGenSavePending.load(std::memory_order_relaxed) &&
+      duration<double, std::milli>(steady_clock::now() - mGenSaveTp).count() > 500.0) {
+    mGenSavePending.store(false, std::memory_order_relaxed);
+    SaveSettingsToDisk();
+  }
+#endif
+
   const double now = duration<double>(steady_clock::now().time_since_epoch()).count();
   if (mGesturePending && now - mLastUIChangeTime > kGestureGapSec) {
     mStableSnapshot = Snapshot();
@@ -940,6 +1026,10 @@ void ORMAnalyzer::OnUIOpen() {
 
 void ORMAnalyzer::OnUIClose() {
   mUIOpen.store(false, std::memory_order_release);
+#if ORM_ENABLE_TEST_GEN
+  if (mGenSavePending.exchange(false, std::memory_order_relaxed))
+    SaveSettingsToDisk(); // 关 UI 前补写未落盘的发生器设置
+#endif
   mSpectrumPad = nullptr;
   mBpoSlider = nullptr;
   mResBtn = nullptr;
@@ -1199,5 +1289,12 @@ void ORMAnalyzer::SaveSettingsToDisk() {
   s.hue = ThemeHue();
   s.satMax = ThemeSatMax();
   s.themeMode = mThemeMode;
+#if ORM_ENABLE_TEST_GEN
+  s.genType = mGenType.load(std::memory_order_relaxed);
+  s.genFreq = (double)mGenFreq.load(std::memory_order_relaxed);
+  s.genLevel = (double)mGenLevel.load(std::memory_order_relaxed);
+  s.genHold = mGenHold.load(std::memory_order_relaxed) ? 1 : 0;
+  s.genToOutput = mGenToOutput.load(std::memory_order_relaxed) ? 1 : 0;
+#endif
   SaveSettings(s);
 }
