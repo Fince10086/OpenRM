@@ -240,13 +240,18 @@ private:
   void InitLayerWindows() {
     constexpr double kPi = 3.14159265358979323846;
     for (int l = 0; l < kMaxLayers; ++l) {
-      const int sz = (l <= 4) ? (1024 >> l) : 64;
+      // 尺寸下限 256: bpo=24 时深层 (旧 64 点) 每 band 仅 ~0.5 bin, 相邻 band
+      // 共享 kPeak 造成阶梯与锯齿; 下限 256 后每 band ≥2 个独立 bin
+      const int sz = std::max(1024 >> l, 256);
       mFftSize[l] = sz;
       mWindows[l].resize(sz);
       double sum = 0.0;
       for (int i = 0; i < sz; ++i) {
-        // Hamming 窗
-        const double w = 0.54 - 0.46 * std::cos(2.0 * kPi * i / (sz - 1));
+        // 4 项 Blackman-Harris 窗: 旁瓣 -92 dB (旧 Hamming 仅 -42 dB, 强音裙边拖满整层)
+        const double theta = 2.0 * kPi * i / (sz - 1);
+        const double w = 0.35875 - 0.48829 * std::cos(theta)
+                                 + 0.14128 * std::cos(2.0 * theta)
+                                 - 0.01168 * std::cos(3.0 * theta);
         mWindows[l][i] = (float)w;
         sum += w;
       }
@@ -284,13 +289,23 @@ private:
       const double kFrac = fc * (double)nFft / layerFs;
       const int kPeak = std::clamp((int)std::round(kFrac), 0, nFft / 2 - 1);
 
-      // Hamming 窗反折损补偿
+      // 窗 DTFT 精确 scalloping 校正 (窗无关): 单音落在分数 bin 时
+      // |X(kPeak)| = A/2·|W(2πp/N)|, 故 corr = W(0)/|W(2πp/N)|。
+      // 旧 Hamming 闭式是近似式, 共享 bin 的相邻 band 修正不同 → 锯齿
       const double p = std::clamp(kFrac - (double)kPeak, -0.5, 0.5);
       constexpr double kPi = 3.14159265358979323846;
       double corr = 1.0;
-      if (std::abs(p) > 1e-4) {
-        const double sincP = std::sin(kPi * p) / (kPi * p);
-        corr = (0.54 * (1.0 - p * p)) / (sincP * (0.54 - 0.08 * p * p));
+      if (std::abs(p) > 1e-9) {
+        const std::vector<float> &win = mWindows[layer];
+        auto dtftMag = [&](double w) {
+          double s = 0.0;
+          for (int i = 0; i < (int)win.size(); ++i)
+            s += (double)win[i] * std::cos(w * i);
+          return std::abs(s);
+        };
+        const double denom = dtftMag(2.0 * kPi * p / (double)nFft);
+        if (denom > 1e-9)
+          corr = std::clamp(dtftMag(0.0) / denom, 1.0, 24.0);
       }
 
       Band bd;

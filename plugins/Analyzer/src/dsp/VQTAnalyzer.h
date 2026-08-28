@@ -68,7 +68,9 @@ struct AntiAliasDec {
       double dp = cur - prev;
       while (dp > kPi) dp -= 2.0 * kPi;
       while (dp < -kPi) dp += 2.0 * kPi;
-      mTauTab[k] = (float)(-dp / (kPi / 64.0));
+      // 真最小相位系统群延迟恒非负; 截断 FIR 在阻带/过渡带相位无物理意义,
+      // 差分会出负 τ (实测低至 -38), 负 τ 会令 readOff<0 → 取窗越过缓冲区末端
+      mTauTab[k] = std::max(0.f, (float)(-dp / (kPi / 64.0)));
       prev = cur;
     }
   }
@@ -410,10 +412,11 @@ protected:
         if (--rs.phase <= 0) {
           const std::vector<float> &buf = mLayers[c][bd.layer];
             const int wl = bd.winLen;
-            // 跨层延迟对齐
-            const int have = std::max(0, std::min(wl, (int)buf.size() - bd.readOff));
+            // 跨层延迟对齐 (readOff 夹非负: 即使上游失效也保证取窗不越界)
+            const int readOff = std::max(0, bd.readOff);
+            const int have = std::max(0, std::min(wl, (int)buf.size() - readOff));
             const int skip = wl - have;
-            const int start = std::max(0, (int)buf.size() - bd.readOff - have);
+            const int start = std::max(0, (int)buf.size() - readOff - have);
             const float *x = buf.data() + start;
             const float *kr = bd.kernelRe.data() + skip;
             const float *ki = bd.kernelIm.data() + skip;
@@ -608,7 +611,8 @@ private:
     const double gdL = GdTotalSamples(fc, fs, L);
     const double gdD = (nextDeep > 0) ? GdTotalSamples(fc, fs, nextDeep) : gdL;
     const double R = gdD + (gdL - gdD) * fSeg;
-    bd.readOff = (int)std::lround((R - gdL) / fs * fsL);
+    // 夹非负: 负 readOff 会让取窗起点越过缓冲区末端 (读越界)
+    bd.readOff = std::max(0, (int)std::lround((R - gdL) / fs * fsL));
     bd.kernelRe.resize(wl);
     bd.kernelIm.resize(wl);
     const double step = 2.0 * PI * fc / fsL; // 该层速率的归一化频率

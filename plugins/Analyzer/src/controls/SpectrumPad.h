@@ -352,6 +352,9 @@ private:
   };
   struct BandAcc {
     float max[3] = {0.f, 0.f, 0.f};
+    // 是否收到过 bin (与幅度无关)。FFT 模式的 band 是 bin 的聚合桶, 低频 band
+    // 宽度可小于 bin 间距而完全无 bin; 无 bin 的空桶跳过以桥接, 有 bin 的照常收录
+    char used[3] = {0, 0, 0};
   };
 
   // 频率(Hz) -> 归一化 x (0..1), 与 BandPass Freq 参数 (20..20000, ShapeExp) 一致
@@ -724,6 +727,7 @@ private:
           const float amp = mSpectrum[c][i];
           if (amp > mBandAcc[b].max[c])
             mBandAcc[b].max[c] = amp;
+          mBandAcc[b].used[c] = 1;
         }
       }
     }
@@ -734,11 +738,15 @@ private:
       const float aL = acc.max[0], aR = acc.max[1], aSum = acc.max[2];
       const float yL = ampToY(aL);
       const float yR = ampToY(aR);
-      mSpecPtsL.push_back({x, yL});
-      mSpecPtsR.push_back({x, yR});
+      if (acc.used[0])
+        mSpecPtsL.push_back({x, yL});
+      if (acc.used[1])
+        mSpecPtsR.push_back({x, yR});
 
       const float aM = (mMergeAlgo == 0) ? std::sqrt(aL * aL + aR * aR) : aSum;
-      mSpecPtsM.push_back({x, ampToY(aM)});
+      const bool usedM = (mMergeAlgo == 0) ? (acc.used[0] || acc.used[1]) : (acc.used[2] != 0);
+      if (usedM)
+        mSpecPtsM.push_back({x, ampToY(aM)});
     }
 
     if (mChanMode == 0) {
