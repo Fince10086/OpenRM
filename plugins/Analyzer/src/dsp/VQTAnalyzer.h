@@ -1,10 +1,9 @@
 #pragma once
 
 // VQTAnalyzer — 多速率变分辨率 Q 变换 (Multirate VQT) 频谱分析引擎
-// 金字塔降采样路径可在 3 种算法间切换 (SetPyramidMode, UI 按钮 PYR):
-//   A  = 逐级 2x 半带级联 (101t BH, 线性相位), 群延迟最大但混叠抑制最强
-//   B1 = 浅层逐级 2x + 深层 4x 抽取 (减少级数 → 深层群延迟大幅降低)
-//   B2 = 逐级 2x 最小相位半带 (倒谱构造, 幅度谱不变, 群延迟约为线性相位一半)
+// 金字塔降采样路径可在 2 种算法间切换 (SetPyramidMode, UI 按钮 PYR):
+//   LIN = 线性相位 (浅层逐级 2x 半带级联 + 深层 4x 低通; 混合倍率, CPU 低, 深层延迟最大)
+//   MIN = 最小相位 (逐级 2x 半带倒谱最小相位化; 延迟最低, 幅频响应与 LIN 一致)
 // 各档位共享同一 band 频率表 (显示/冻结路径无需改动), 切换仅触发 RebuildBands。
 
 #include "ISender.h"
@@ -284,10 +283,9 @@ public:
   static constexpr double kGuard = 0.78;     // band 上边距该层新奈奎斯特的比例 (防混叠)
   static constexpr double kCycleFloor = 4.0; // 深层窗长下限: 至少覆盖 ~4 个 fc 周期 (稳定)
 
-  // 金字塔算法档位 (UI 按钮 PYR 切换对比)
-  static constexpr int kPyramidA = 0;   // 逐级 2x 半带级联 (101t BH, 线性相位)
-  static constexpr int kPyramidB1 = 1;  // 浅层 2x + 深层 4x 抽取
-  static constexpr int kPyramidB2 = 2;  // 逐级 2x 最小相位半带
+  // 金字塔算法档位 (UI 按钮 PYR 二选一)
+  static constexpr int kPyramidLin = 0; // 线性相位: 浅层 2x 半带 + 深层 4x 低通 (混合倍率)
+  static constexpr int kPyramidMin = 1; // 最小相位: 逐级 2x (倒谱谱因式分解, 延迟最低)
 
   VQTAnalyzer() {
     for (int c = 0; c < MAXNC; ++c) {
@@ -299,8 +297,9 @@ public:
 
   // 返回是否实际请求了重建 (参数与当前值相同则返回 false)。调用方据此决定
   // 是否需要通知显示层重置。实际重建发生在 UI 线程 (CheckRebuild/PrepareDataForUI)。
+  // 旧状态文件存的 0/1/2 (A/B1/B2) 由 clamp 自然迁移: 2(MIN) → 1, 0/1 → LIN。
   bool SetPyramidMode(int mode) {
-    const int v = std::clamp(mode, 0, 2);
+    const int v = std::clamp(mode, 0, 1);
     if (v != mPyramid) {
       mPyramid = v;
       mNeedRebuild.store(true);
@@ -541,7 +540,7 @@ private:
     // ── 1. 金字塔路径 / 有效层 ──
     mLayerValid.fill(1);
     int nSteps = 0;
-    if (mode == kPyramidB1) {
+    if (mode == kPyramidLin) {
       // 浅层逐级 2x (L0→L5), 深层 4x 一次合并两级 (L5→L7, L7→L9)
       for (int l = 0; l <= 4; ++l)
         mPath[nSteps++] = {l + 1, l};
@@ -555,12 +554,12 @@ private:
     }
     mNumPathSteps = nSteps;
 
-    // 抽取器 (A: 全 2x; B1: 前 5 级 2x + 2 个 4x; B2: 全 2x 最小相位)
+    // 抽取器 (LIN: 前 5 级 2x + 2 个 4x; MIN: 全 2x 最小相位)
     for (int l = 0; l < kMaxLayers; ++l) {
       int kind = 0;
-      if (mode == kPyramidB2)
+      if (mode == kPyramidMin)
         kind = 2;
-      else if (mode == kPyramidB1 && (l == 5 || l == 6))
+      else if (mode == kPyramidLin && (l == 5 || l == 6))
         kind = 1;
       for (int c = 0; c < MAXNC; ++c)
         mDecim[c][l].Build(kind);
@@ -661,7 +660,7 @@ private:
     mMaxWinPerLayer[L] = std::max(mMaxWinPerLayer[L], wl + bd.readOff);
   }
 
-  int mPyramid = 0;                       // 金字塔档位 (kPyramidA/B1/B2)
+  int mPyramid = 0;                       // 金字塔档位 (kPyramidLin/kPyramidMin)
   int mWindowType = 0;                    // 窗函数档位 (0=SHARP/Hann, 1=CLEAN/BH4)
   int mBpo = 24;                          // bins per octave (插件层固定 24)
   int mGamma = 5;                         // 低频带宽下限 Hz (插件层固定 HIGH 档)

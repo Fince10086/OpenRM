@@ -1,6 +1,6 @@
 #pragma once
 
-// PAZAnalyzer — 心理声学临界频带频谱分析引擎 (支持 IIR 与 FFT 双算法)
+// PAZAnalyzer — 心理声学临界频带频谱分析引擎 (并联滤波器组算法)
 
 #ifndef STANDALONE_TEST
 #include "ISender.h"
@@ -89,10 +89,8 @@ public:
   static constexpr int kMaxLayers = 10;
 
   PAZAnalyzer() {
-    WDL_fft_init();
     for (int c = 0; c < MAXNC; ++c)
       mPending[c].assign(kHop, 0.f);
-    InitLayerWindows();
     RebuildBands();
   }
 
@@ -119,12 +117,6 @@ public:
     }
     return false;
   }
-
-  // 设置算法模式 (0: IIR, 1: FFT)
-  void SetAlgo(int algo) {
-    mAlgo = std::clamp(algo, 0, 1);
-  }
-  int GetAlgo() const { return mAlgo; }
 
   // 设置声道模式 (0: LR, 1: PWR, 2: SUM)
   void SetChannelMode(int chanTri) {
@@ -160,7 +152,7 @@ public:
 // Freeze (冻结) 支持: UI 线程离线分析一帧原始样本 (冻结重算预热, 与实时路径共用实现)
   void PrepareFrameUI(Data &d) { PrepareDataForUI(d); }
 
-  // Freeze (冻结) 支持: 复位分析侧运行态 (IIR 状态/FFT 历史/层/抽取器), 不动输入侧
+  // Freeze (冻结) 支持: 复位分析侧运行态 (IIR 状态/层/抽取器), 不动输入侧
   // mBufCount/mPending 与 band 表 —— 冻结回放的确定性起点 (等价于引擎冷启动)
   void ResetRuntimeState() {
     const int nbIir = (int)mBands.size();
@@ -171,10 +163,8 @@ public:
       mIirIC2b[c].assign(nbIir, 0.f);
       for (int l = 0; l < kMaxLayers - 1; ++l)
         mDecim[c][l].Reset();
-      for (int l = 0; l < kMaxLayers; ++l) {
+      for (int l = 0; l < kMaxLayers; ++l)
         mLayers[c][l].assign(kHop >> l, 0.f);
-        mFftHist[c][l].assign(mFftSize[l], 0.f);
-      }
     }
   }
 
@@ -214,69 +204,29 @@ protected:
         nin = mDecim[c][l].Process(mLayers[c][l].data(), nin, mLayers[c][l + 1].data());
       }
 
-      if (mAlgo == 1) {
-        // FFT 算法
-        for (int l = 0; l < kMaxLayers; ++l) {
-          const int nFft = mFftSize[l];
-          const int nNew = kHop >> l;
-          float *hist = mFftHist[c][l].data();
-
-          if (nNew >= nFft) {
-            std::memcpy(hist, mLayers[c][l].data() + (nNew - nFft), nFft * sizeof(float));
-          } else {
-            std::memmove(hist, hist + nNew, (nFft - nNew) * sizeof(float));
-            std::memcpy(hist + (nFft - nNew), mLayers[c][l].data(), nNew * sizeof(float));
-          }
-
-          WDL_FFT_COMPLEX *fb = mFftBuf[c][l].data();
-          const float *win = mWindows[l].data();
-          for (int i = 0; i < nFft; ++i) {
-            fb[i].re = hist[i] * win[i];
-            fb[i].im = 0.0f;
-          }
-
-          WDL_fft(fb, nFft, false);
-
-          float *mags = mMagBuf[c][l].data();
-          const int nBins = nFft / 2;
-          const float norm = mFftScaling[l];
-          for (int i = 0; i < nBins; ++i) {
-            const int si = WDL_fft_permute(nFft, i);
-            const float re = fb[si].re, im = fb[si].im;
-            mags[i] = std::sqrt(re * re + im * im) * norm;
+      // 滤波器组算法 (4 阶 TPT SVF 级联带通 + hop 内峰值检测, 分层 SoA 批处理)
+      float *pk = mPkScratch.data();
+      for (const LayerSeg &seg : mIirSegs) {
+        const int n = seg.count;
+        for (int i = 0; i < n; ++i)
+          pk[seg.start + i] = 0.f;
+        const int ns = kHop >> seg.layer;
+        ProcessIirSeg(mLayers[c][seg.layer].data(), ns,
+                      mA1.data() + seg.start, mA2.data() + seg.start,
+                      mA3.data() + seg.start, mKb.data() + seg.start,
+                      mIirIC1a[c].data() + seg.start, mIirIC2a[c].data() + seg.start,
+                      mIirIC1b[c].data() + seg.start, mIirIC2b[c].data() + seg.start,
+                      pk + seg.start, n);
+        for (int i = 0; i < n; ++i) {
+          if (std::abs(mIirIC1a[c][seg.start + i]) < 1e-30f) {
+            mIirIC1a[c][seg.start + i] = 0.f;
+            mIirIC2a[c][seg.start + i] = 0.f;
+            mIirIC1b[c][seg.start + i] = 0.f;
+            mIirIC2b[c][seg.start + i] = 0.f;
           }
         }
-
-        for (int b = 0; b < nb; ++b) {
-          const FftBandInfo &fbd = mFftBands[b];
-          const float rawMag = mMagBuf[c][fbd.layer][fbd.kPeak];
-          d.vals[c][b] = rawMag * fbd.corrFactor;
-        }
-      } else {
-        // IIR 算法 (4 阶 TPT SVF 滤波)
-        float *pk = mPkScratch.data();
-        for (const LayerSeg &seg : mIirSegs) {
-          const int n = seg.count;
-          for (int i = 0; i < n; ++i)
-            pk[seg.start + i] = 0.f;
-          const int ns = kHop >> seg.layer;
-          ProcessIirSeg(mLayers[c][seg.layer].data(), ns,
-                        mA1.data() + seg.start, mA2.data() + seg.start,
-                        mA3.data() + seg.start, mKb.data() + seg.start,
-                        mIirIC1a[c].data() + seg.start, mIirIC2a[c].data() + seg.start,
-                        mIirIC1b[c].data() + seg.start, mIirIC2b[c].data() + seg.start,
-                        pk + seg.start, n);
-          for (int i = 0; i < n; ++i) {
-            if (std::abs(mIirIC1a[c][seg.start + i]) < 1e-30f) {
-              mIirIC1a[c][seg.start + i] = 0.f;
-              mIirIC2a[c][seg.start + i] = 0.f;
-              mIirIC1b[c][seg.start + i] = 0.f;
-              mIirIC2b[c][seg.start + i] = 0.f;
-            }
-          }
-          for (int i = 0; i < n; ++i)
-            d.vals[c][seg.start + i] = pk[seg.start + i];
-        }
+        for (int i = 0; i < n; ++i)
+          d.vals[c][seg.start + i] = pk[seg.start + i];
       }
 
       for (int b = nb; b < MAX_BANDS; ++b)
@@ -333,34 +283,6 @@ private:
     }
   }
 
-  struct FftBandInfo {
-    int layer;
-    int kPeak;
-    float corrFactor;
-  };
-
-  void InitLayerWindows() {
-    constexpr double kPi = 3.14159265358979323846;
-    for (int l = 0; l < kMaxLayers; ++l) {
-      const int sz = (l <= 4) ? (1024 >> l) : 64;
-      mFftSize[l] = sz;
-      mWindows[l].resize(sz);
-      double sum = 0.0;
-      for (int i = 0; i < sz; ++i) {
-        const double w = 0.54 - 0.46 * std::cos(2.0 * kPi * i / (sz - 1));
-        mWindows[l][i] = (float)w;
-        sum += w;
-      }
-      mFftScaling[l] = (float)(2.0 / sum);
-
-      for (int c = 0; c < MAXNC; ++c) {
-        mFftHist[c][l].assign(sz, 0.f);
-        mFftBuf[c][l].resize(sz);
-        mMagBuf[c][l].assign(sz / 2, 0.f);
-      }
-    }
-  }
-
   static constexpr double kPazFreqs40[52] = {
       23.0, 70.0, 117.0, 164.0, 211.0, 258.0, 305.0, 352.0, 422.0, 516.0,
       609.0, 703.0, 797.0, 891.0, 984.0, 1078.0, 1219.0, 1406.0, 1594.0, 1781.0,
@@ -391,7 +313,6 @@ private:
 
   void RebuildBands() {
     mBands.clear();
-    mFftBands.clear();
     mFreqs.clear();
     const double fs = std::max(mSampleRate, 1.0);
     const double scale = fs / 48000.0;
@@ -454,23 +375,6 @@ private:
 
       mBands.push_back(coef);
       mFreqs.push_back(fc);
-
-      // FFT 频点与校正系数
-      const int nFft = mFftSize[layer];
-      const double kFrac = fc * (double)nFft / layerFs;
-      const int kPeak = std::clamp((int)std::round(kFrac), 0, nFft / 2 - 1);
-      const double p = std::clamp(kFrac - (double)kPeak, -0.5, 0.5);
-      double corr = 1.0;
-      if (std::abs(p) > 1e-4) {
-        const double sincP = std::sin(kPi * p) / (kPi * p);
-        corr = (0.54 * (1.0 - p * p)) / (sincP * (0.54 - 0.08 * p * p));
-      }
-
-      FftBandInfo fbd;
-      fbd.layer = layer;
-      fbd.kPeak = kPeak;
-      fbd.corrFactor = (float)corr;
-      mFftBands.push_back(fbd);
     }
 
     const int nbIir = (int)mBands.size();
@@ -495,14 +399,12 @@ private:
     ResetRuntimeState();
   }
 
-  int mAlgo = 0; // 0: IIR, 1: FFT
   double mSampleRate = 48000.0;
   int mLfMode = 0; // 0=40Hz, 1=20Hz, 2=10Hz
   int mChanTri = 0; // 0=LR, 1=PWR, 2=SUM
   std::atomic<bool> mNeedRebuild{false};
 
   std::vector<BandCoef> mBands;
-  std::vector<FftBandInfo> mFftBands;
   std::vector<double> mFreqs;
 
   // IIR 分层批处理状态
@@ -517,15 +419,8 @@ private:
   std::array<std::vector<float>, MAXNC> mPending;
   int mBufCount = 0;
 
-  std::array<int, kMaxLayers> mFftSize{};
-  std::array<float, kMaxLayers> mFftScaling{};
-  std::array<std::vector<float>, kMaxLayers> mWindows;
-
   std::array<std::array<detail::HalfbandDec2, kMaxLayers - 1>, MAXNC> mDecim;
   std::array<std::array<std::vector<float>, kMaxLayers>, MAXNC> mLayers;
-  std::array<std::array<std::vector<float>, kMaxLayers>, MAXNC> mFftHist;
-  std::array<std::array<std::vector<WDL_FFT_COMPLEX>, kMaxLayers>, MAXNC> mFftBuf;
-  std::array<std::array<std::vector<float>, kMaxLayers>, MAXNC> mMagBuf;
 };
 
 END_IPLUG_NAMESPACE

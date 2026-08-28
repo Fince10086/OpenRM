@@ -96,11 +96,10 @@ private:
 
   SpectrumPad *mSpectrumPad = nullptr;
   ORMSlider *mBpoSlider = nullptr;
-  FlatCycleButton *mResBtn = nullptr;      // FFT 分辨率循环按钮 (LOW/MID/HIGH)
-  FlatCycleButton *mWindowBtn = nullptr;   // FFT 窗函数循环按钮 (Hann / BH4)
+  FlatCycleButton *mResBtn = nullptr;      // STFT 分辨率循环按钮 (LOW/MID/HIGH)
+  FlatCycleButton *mWindowBtn = nullptr;   // 窗函数循环按钮 (Hann / BH4, STFT 与 VQT 共用)
   FlatCycleButton *mPazLfResBtn = nullptr; // PAZ 低频分辨率循环按钮 (40/20/10 Hz)
-  FlatCycleButton *mPazAlgoBtn = nullptr;  // PAZ 算法模式循环按钮 (IIR / FFT)
-  FlatCycleButton *mPyramidBtn = nullptr;  // VQT 金字塔算法循环按钮 (A / B1 / B2 / B3)
+  FlatCycleButton *mPyramidBtn = nullptr;  // VQT 金字塔算法循环按钮 (LIN / MIN)
   FlatCycleButton *mRangeBtn = nullptr;    // 动态范围循环按钮 (刻度底部 80/100/120)
   FlatCycleButton *mSlopeBtn = nullptr;    // 频谱斜率循环按钮 (刻度底部左缘, 档值随引擎)
   ORMSlider *mAttackSlider = nullptr;
@@ -137,7 +136,6 @@ private:
   int mFreezeWindow = -1;
   int mFreezeLf = -1;
   int mFreezeBpo = -1;
-  int mFreezePazAlgo = -1;
   int mFreezePyramid = -1;
 
   // 冻结回放 (UI 线程, 定义见 Analyzer.cpp)。回放分 tick 泵送避免长 UI 卡顿;

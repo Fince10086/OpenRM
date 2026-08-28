@@ -11,13 +11,13 @@ enum EParams {
   kRes,           // FFT 分辨率档位 (2048/4096/8192)
   kLfRes,         // 低频分辨率档位 (PAZ: 40/20/10 Hz; VQT 不再使用)
   kBpo,           // MR-FFT 每八度频带数 (12/24); VQT 固定 24 (kVQTBpo)
-  kMode,          // 分析引擎模式 (0: FFT, 1: VQT, 2: PAZ, 3: MR-FFT)
+  kMode,          // 分析引擎模式 (0: STFT, 1: VQT, 2: PAZ, 3: MR-FFT)
   kChannelMode,   // 声道显示模式 (0: LR, 1: PWR, 2: SUM)
   kLevelMode,     // 电平表模式 (0: dBTP, 1: dBFS+RMS, 2: VU)
   kLevelHold,     // 峰值保持时长档位 (0: 0.5s, 1: 2s, 2: KEEP 持久)
-  kPazAlgo,       // PAZ 算法模式 (0: IIR, 1: FFT)
+  kPazAlgo,       // 已废弃: PAZ 固定滤波器组算法, 切换按钮已移除 (下标保留保旧状态文件兼容, 勿复用)
   kFreeze,        // 冻结/保持 (0: LIVE 实时, 1: FREEZE 定格; 冻结中切换引擎用新算法重算冻结音频)
-  kPyramidDecim,  // VQT 金字塔降采样档位 (0: A 逐级2x, 1: B1 浅2x+深4x, 2: B2 2x最小相位)
+  kPyramidDecim,  // VQT 金字塔降采样档位 (0: LIN 线性相位, 1: MIN 最小相位)
   kLevelHoldOn,   // 峰值保持开关 (频谱 hold 曲线与电平表 hold 亮线共用; 追加末尾, 保旧状态文件下标兼容)
   kSlopeFFT,      // 频谱斜率档位索引, FFT 引擎独立保存 (0/3/4.5 dB/oct)
   kSlopeVQT,      // 频谱斜率档位索引, VQT 引擎独立保存 (-3/0/1.5 dB/oct)
@@ -28,8 +28,6 @@ enum EParams {
 };
 
 enum EFFTWindow { kFFTWindowHann = 0, kFFTWindowBH4 = 1, kNumFFTWindows = 2 };
-
-enum EPazAlgo { kPazAlgoIIR = 0, kPazAlgoFFT = 1, kNumPazAlgos = 2 };
 
 using ParamSnapshot = std::array<double, kNumParams>;
 
@@ -60,7 +58,7 @@ constexpr int kNumSlopeOptions = 3;
 constexpr int kVQTGammaHz = 5;
 constexpr int kVQTBpo = 24;
 
-// 分析引擎模式 (四态: FFT, VQT, PAZ, MR-FFT)
+// 分析引擎模式 (四态: STFT, VQT, PAZ, MR-FFT)
 enum EAnalyzerMode { kModeFFT = 0, kModeVQT = 1, kModePAZ = 2, kModeMRFFT = 3, kNumModes = 4 };
 
 // 声道显示模式 (三态: LR / PWR(Merge) / SUM(Merge))

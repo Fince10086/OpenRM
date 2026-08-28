@@ -133,10 +133,10 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
   GetParam(kLevelMode)->InitInt("LevelMode", kLevelModeDBTP, 0, kNumLevelModes - 1, "");
   GetParam(kLevelHold)->InitInt("LevelHold", 1, 0, kNumHoldTimeOptions - 1, ""); // 档位: 0=0.5s 1=2s 2=KEEP
   GetParam(kLevelHoldOn)->InitBool("LevelHoldOn", true);
-  GetParam(kPazAlgo)->InitInt("PazAlgo", kPazAlgoIIR, 0, kNumPazAlgos - 1, "");
+  // kPazAlgo 槽位已废弃 (PAZ 固定滤波器组算法), 保留下标兼容旧状态文件, 不再初始化参数
   GetParam(kFreeze)->InitInt("Freeze", 0, 0, 1, ""); // 0=LIVE 实时, 1=FREEZE 定格
-  GetParam(kPyramidDecim)->InitInt("Pyramid", 0, 0, 2, ""); // VQT 金字塔档位: 0=A 1=B1 2=B2
-  // 频谱斜率档位 (各引擎独立保存; 默认档 1: FFT = 3 dB/oct, 逐 band 引擎 = 0 dB/oct)
+  GetParam(kPyramidDecim)->InitInt("Pyramid", 0, 0, 1, ""); // VQT 金字塔档位: 0=LIN 1=MIN
+  // 频谱斜率档位 (各引擎独立保存; 默认档 1: STFT = 3 dB/oct, 逐 band 引擎 = 0 dB/oct)
   GetParam(kSlopeFFT)->InitInt("SlopeFFT", 1, 0, kNumSlopeOptions - 1, "");
   GetParam(kSlopeVQT)->InitInt("SlopeVQT", 1, 0, kNumSlopeOptions - 1, "");
   GetParam(kSlopePAZ)->InitInt("SlopePAZ", 1, 0, kNumSlopeOptions - 1, "");
@@ -244,10 +244,10 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     pGraphics->AttachControl(mChanModeBtn);
     bindTip(mChanModeBtn, orm::kTxtTipChanMode);
 
-    // 分析引擎切换按钮 (FFT / VQT / PAZ / MR-FFT) — LR 右侧, 留 kTopBtnGap 空隙
+    // 分析引擎切换按钮 (STFT / VQT / PAZ / MR-FFT) — LR 右侧, 留 kTopBtnGap 空隙
     constexpr float kModeX = 20.f + kTopBtnW + kTopBtnGap;
     mModeBtn = new FlatCycleButton(IRECT(kModeX, kTopBtnY, kModeX + kTopBtnW, kTopBtnY + kTopBtnH),
-                                   kMode, {"FFT", "VQT", "PAZ", "MR-FFT"}, btnStyle);
+                                   kMode, {"STFT", "VQT", "PAZ", "MR-FFT"}, btnStyle);
     pGraphics->AttachControl(mModeBtn);
     bindTip(mModeBtn, orm::kTxtTipMode);
 
@@ -265,17 +265,9 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     bindTip(mPazLfResBtn, orm::kTxtTipLfRes);
     mPazLfResBtn->Hide(true);
 
-    // PAZ 算法模式循环按钮 (IIR / FFT) — 位于 PAZ LF RES 右侧, 仅 PAZ 模式可见
-    constexpr float kPazAlgoX = kResX + kTopBtnW + kTopBtnGap;
-    mPazAlgoBtn = new FlatCycleButton(IRECT(kPazAlgoX, kTopBtnY, kPazAlgoX + kTopBtnW, kTopBtnY + kTopBtnH),
-                                      kPazAlgo, {"IIR", "FFT"}, btnStyle);
-    pGraphics->AttachControl(mPazAlgoBtn);
-    bindTip(mPazAlgoBtn, orm::kTxtTipPazAlgo);
-    mPazAlgoBtn->Hide(true);
-
-    // VQT 金字塔算法循环按钮 (A / B1 / B2) — 位于 PAZ 算法按钮位置, 仅 VQT 模式可见
-    mPyramidBtn = new FlatCycleButton(IRECT(kPazAlgoX, kTopBtnY, kPazAlgoX + kTopBtnW, kTopBtnY + kTopBtnH),
-                                      kPyramidDecim, {"A", "B1", "B2"}, btnStyle);
+    // VQT 金字塔算法循环按钮 (LIN / MIN) — 与 STFT 分辨率/PAZ 低频档同槽位, 按模式互斥可见
+    mPyramidBtn = new FlatCycleButton(IRECT(kResX, kTopBtnY, kResX + kTopBtnW, kTopBtnY + kTopBtnH),
+                                      kPyramidDecim, {"LIN", "MIN"}, btnStyle);
     pGraphics->AttachControl(mPyramidBtn);
     bindTip(mPyramidBtn, orm::kTxtTipPyramid);
     mPyramidBtn->Hide(true);
@@ -739,7 +731,6 @@ void ORMAnalyzer::OnReset() {
   mVQT.SetBpo(kVQTBpo);       // VQT 固定 BPO = 24
   mPAZ.SetSampleRate(GetSampleRate());
   mPAZ.SetLfWidth(CurrentPazLfRes());
-  mPAZ.SetAlgo((int)GetParam(kPazAlgo)->Value());
   mMRFFT.SetSampleRate(GetSampleRate());
   mMRFFT.SetBpo(CurrentBpo());
   mLevelSetSR.store(GetSampleRate(), std::memory_order_relaxed); // 音频线程下一 block 执行 SetSampleRate+Reset
@@ -813,7 +804,7 @@ void ORMAnalyzer::SendResetToPad() {
 }
 
 void ORMAnalyzer::OnParamChange(int paramIdx, EParamSource source, int sampleOffset) {
-  // 冻结中抑制 SendResetToPad: 画面保持定格; 引擎配置 (γ/BPO/PAZ 算法) 照常更新,
+  // 冻结中抑制 SendResetToPad: 画面保持定格; 引擎配置 (PAZ 低频档等) 照常更新,
   // 解冻后由 OnIdle 防抖重发完整配置与 band 表。
   const bool frozen = GetParam(kFreeze)->Value() > 0.5;
   // 参数变化时更新分析引擎配置
@@ -835,10 +826,6 @@ void ORMAnalyzer::OnParamChange(int paramIdx, EParamSource source, int sampleOff
       if (mMRFFT.SetBpo(CurrentBpo()) && !frozen)
         SendResetToPad();
     }
-  } else if (paramIdx == kPazAlgo) {
-    mPAZ.SetAlgo((int)GetParam(kPazAlgo)->Value());
-    if (!frozen)
-      SendResetToPad();
   } else if (paramIdx == kPyramidDecim) {
     if (GetParam(kMode)->Value() < 1.5) { // VQT 模式
       if (mVQT.SetPyramidMode((int)std::lround(GetParam(kPyramidDecim)->Value())) && !frozen)
@@ -886,9 +873,6 @@ void ORMAnalyzer::OnIdle() {
   mPAZ.CheckRebuild();
   mMRFFT.CheckRebuild();
 
-  // 同步 PAZ 算法模式
-  mPAZ.SetAlgo((int)GetParam(kPazAlgo)->Value());
-
   const bool frozen = GetParam(kFreeze)->Value() > 0.5; // Freeze 激活: 画面定格
 
   // 冻结档位快照同步 (冻结中已重算的档位索引)
@@ -897,7 +881,6 @@ void ORMAnalyzer::OnIdle() {
     mFreezeWindow = CurrentFFTWindow();
     mFreezeLf = (int)std::lround(GetParam(kLfRes)->Value());
     mFreezeBpo = (int)std::lround(GetParam(kBpo)->Value());
-    mFreezePazAlgo = (int)std::lround(GetParam(kPazAlgo)->Value());
     mFreezePyramid = (int)std::lround(GetParam(kPyramidDecim)->Value());
   };
 
@@ -905,12 +888,11 @@ void ORMAnalyzer::OnIdle() {
   const int mode = (int)GetParam(kMode)->Value();
   if (mode != mSentMode) {
     mSentMode = mode;
-    if (mResBtn && mPazLfResBtn && mPazAlgoBtn && mBpoSlider) {
+    if (mResBtn && mPazLfResBtn && mBpoSlider) {
       mResBtn->Hide(mode != kModeFFT);
       if (mWindowBtn)
         mWindowBtn->Hide(mode != kModeFFT && mode != kModeVQT);
       mPazLfResBtn->Hide(mode != kModePAZ);
-      mPazAlgoBtn->Hide(mode != kModePAZ);
       mPyramidBtn->Hide(mode != kModeVQT);
       mBpoSlider->Hide(mode != kModeMRFFT);
     }
@@ -999,7 +981,7 @@ void ORMAnalyzer::OnIdle() {
     }
   }
 
-  // 冻结中: 同一算法内档位变化 (FFT 尺寸 / 窗函数 / VQT γ·BPO / PAZ LF·算法 / MRFFT BPO)
+  // 冻结中: 同一算法内档位变化 (STFT 尺寸 / 窗函数 / VQT 金字塔 / PAZ LF / MRFFT BPO)
   // → 引擎配置已在音频线程更新 (OnParamChange), band 表已由上方防抖重发 (先于回放帧),
   // 这里用冻结缓冲确定性回放, 画面 = 冻结音频 × 当前档位。刚冻结 (mFreezeOn 边沿) 只同步
   // 快照不回放: 画面保持按下瞬间的实时定格, 避免不必要的跳变与回放开销。
@@ -1012,13 +994,12 @@ void ORMAnalyzer::OnIdle() {
       const int winIdx = CurrentFFTWindow();
       const int lfIdx = (int)std::lround(GetParam(kLfRes)->Value());
       const int bpoIdx = (int)std::lround(GetParam(kBpo)->Value());
-      const int pazAlgo = (int)std::lround(GetParam(kPazAlgo)->Value());
       const int pyrIdx = (int)std::lround(GetParam(kPyramidDecim)->Value());
       const bool cfgChanged =
           (mode == kModeFFT && (resIdx != mFreezeRes || winIdx != mFreezeWindow)) ||
           (mode == kModeVQT &&
            (lfIdx != mFreezeLf || bpoIdx != mFreezeBpo || pyrIdx != mFreezePyramid || winIdx != mFreezeWindow)) ||
-          (mode == kModePAZ && (lfIdx != mFreezeLf || pazAlgo != mFreezePazAlgo)) ||
+          (mode == kModePAZ && lfIdx != mFreezeLf) ||
           (mode == kModeMRFFT && bpoIdx != mFreezeBpo);
       if (cfgChanged) {
         StartFreezeReplay();
@@ -1027,7 +1008,6 @@ void ORMAnalyzer::OnIdle() {
       mFreezeWindow = winIdx;
       mFreezeLf = lfIdx;
       mFreezeBpo = bpoIdx;
-      mFreezePazAlgo = pazAlgo;
       mFreezePyramid = pyrIdx;
     }
     // 冻结回放泵送: 每 tick 回放一批帧 (kUpdateMessage → pad 实时平滑), 收敛后定格
@@ -1147,7 +1127,7 @@ void ORMAnalyzer::OnUIClose() {
   mSentChanMode = -1;
   // 冻结档位快照复位: 重开 UI 后冻结画面与档位重算按新控件状态重新建立
   mFreezeOn = false;
-  mFreezeRes = mFreezeWindow = mFreezeLf = mFreezeBpo = mFreezePazAlgo = mFreezePyramid = -1;
+  mFreezeRes = mFreezeWindow = mFreezeLf = mFreezeBpo = mFreezePyramid = -1;
   mReplayMode = -1;
 }
 
