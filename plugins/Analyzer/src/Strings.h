@@ -66,6 +66,7 @@ enum EText {
   kTxtGenReseed,
   kTxtGenToOutput,
   kTxtGenHold,
+  kTxtTipLevelHoldTime,
   kNumTexts
 };
 
@@ -110,7 +111,7 @@ inline const char *Tr(int id, int lang) {
           "HOLD",
           "RESET",
           "Meter mode: dBTP (true peak, ITU-R BS.1770) / dBFS + RMS / VU (0 VU = -18 dBFS)",
-          "Peak hold time in seconds, 0 = off",
+          "Peak hold on/off (spectrum hold curve and meter hold line)",
           "Clear peak hold and overload latch",
           "LOW",
           "MID",
@@ -127,6 +128,7 @@ inline const char *Tr(int id, int lang) {
           "RESEED",
           "TO OUTPUT",
           "HOLD",
+          "Peak hold duration: click to cycle 0.5s / 2s / KEEP (hold forever)",
       },
       {
           "释放",
@@ -167,7 +169,7 @@ inline const char *Tr(int id, int lang) {
           "保持",
           "重置",
           "电平表模式：dBTP 真峰值（ITU-R BS.1770）/ dBFS+RMS / VU（0 VU = -18 dBFS）",
-          "峰值保持时长（秒），0 = 关闭",
+          "峰值保持开关（频谱保持曲线与电平表保持亮线）",
           "清除峰值保持与过载锁存",
           "低",
           "中",
@@ -184,6 +186,7 @@ inline const char *Tr(int id, int lang) {
           "换种子",
           "送到输出",
           "锁相位",
+          "峰值保持时长：点击循环切换 0.5s / 2s / KEEP（一直保持）",
       },
   };
   return kTable[lang][id];

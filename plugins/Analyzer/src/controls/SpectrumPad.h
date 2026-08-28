@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <vector>
@@ -61,6 +62,17 @@ public:
       const double fCenter = kSpecFreqLo * std::exp2(logBand * (b + 0.5));
       mBandNormX[b] = FreqNorm(fCenter);
     }
+    mHoldPts.reserve(kSpectrumBands);
+  }
+
+  // 清空频谱峰值保持 (RESET 按钮联动; hold 关闭时由 UpdatePeakHold 自动调用一次)
+  void ClearPeakHold() {
+    for (int c = 0; c < 3; ++c) {
+      mHoldSpec[c].assign(mHoldSpec[c].size(), 0.f);
+      mHoldAge[c].assign(mHoldAge[c].size(), 0.f);
+    }
+    mHoldSignal = false;
+    SetDirty(false);
   }
 
   void OnMsgFromDelegate(int msgTag, int dataSize, const void *pData) override {
@@ -111,6 +123,7 @@ public:
           }
         }
       }
+      UpdatePeakHold(nVals);
       SetDirty(false);
     } else if (msgTag == kMsgTagSampleRate) {
       double sr;
@@ -230,6 +243,7 @@ public:
     } else if (msgTag == kMsgTagReset) {
       for (int c = 0; c < 3; ++c)
         mSpectrum[c].assign(mSpectrum[c].size(), 0.f);
+      ClearPeakHold();
       SetDirty(false);
     }
   }
@@ -352,6 +366,7 @@ private:
   };
   struct BandAcc {
     float max[3] = {0.f, 0.f, 0.f};
+    float holdMax[3] = {0.f, 0.f, 0.f}; // 峰值保持: 同域聚合的各通道 hold 幅度 (FFT 模式 bin -> band)
     // 是否收到过 bin (与幅度无关)。FFT 模式的 band 是 bin 的聚合桶, 低频 band
     // 宽度可小于 bin 间距而完全无 bin; 无 bin 的空桶跳过以桥接, 有 bin 的照常收录
     char used[3] = {0, 0, 0};
@@ -601,6 +616,75 @@ private:
     }
   }
 
+  // 频谱峰值保持: 开关/时长与电平表 hold 共用 (mHoldSec 随电平表数据帧透传, 0 = 关,
+  // KEEP 档为 1e9)。逐点跟踪平滑后幅度 (与显示同域: FFT 为 bin, 其余为 band):
+  // 刷新峰值即清计时; 超时时长后按 20 dB/s 回落 (幅度域每秒 ×0.1), 下限为当前幅度。
+  // 帧间 dt 取 steady_clock 实测, 首帧/挂起恢复后只采峰不回落。
+  void UpdatePeakHold(int nVals) {
+    if (mHoldSec <= 0.f) {
+      if (mHoldWasActive) {
+        ClearPeakHold();
+        mHoldWasActive = false;
+      }
+      mHoldTpValid = false;
+      return;
+    }
+    mHoldWasActive = true;
+
+    const auto now = std::chrono::steady_clock::now();
+    float dt = 0.f;
+    if (mHoldTpValid)
+      dt = std::clamp(std::chrono::duration<float>(now - mLastHoldTp).count(), 0.f, 0.25f);
+    mLastHoldTp = now;
+    mHoldTpValid = true;
+
+    // 回落因子每帧一个; KEEP 档恒为 1, 计时照常累加但永不超时
+    const float decay = (mHoldSec < 1e8f && dt > 0.f) ? std::pow(10.f, -dt) : 1.f;
+    for (int c = 0; c < 3; ++c) {
+      if (mHoldSpec[c].size() != (size_t)nVals) {
+        mHoldSpec[c].assign(nVals, 0.f);
+        mHoldAge[c].assign(nVals, 0.f);
+        mHoldSignal = false;
+      }
+      for (int i = 0; i < nVals; ++i) {
+        const float raw = mSpectrum[c][i];
+        float &hold = mHoldSpec[c][i];
+        if (raw > hold) {
+          hold = raw;
+          mHoldAge[c][i] = 0.f;
+          if (raw > 1e-6f)
+            mHoldSignal = true;
+        } else if (decay < 1.f) {
+          mHoldAge[c][i] += dt;
+          if (mHoldAge[c][i] > mHoldSec && hold * decay < raw)
+            hold = raw;
+          else if (mHoldAge[c][i] > mHoldSec)
+            hold *= decay;
+        }
+      }
+    }
+  }
+
+  // hold 曲线单点值 (VQT/PAZ/MR-FFT: band 域直接取): LR 显示取双通道 hold 较大者,
+  // MERGE 用与显示曲线相同的 merge 公式 (PWR 功率和 / SUM 单声道和)。
+  float HoldValAt(int b) const {
+    const float hL = (mHoldSpec[0].size() > (size_t)b) ? mHoldSpec[0][b] : 0.f;
+    const float hR = (mHoldSpec[1].size() > (size_t)b) ? mHoldSpec[1][b] : 0.f;
+    if (mChanMode == 0)
+      return (hL > hR) ? hL : hR;
+    const float hSum = (mHoldSpec[2].size() > (size_t)b) ? mHoldSpec[2][b] : 0.f;
+    return (mMergeAlgo == 0) ? std::sqrt(hL * hL + hR * hR) : hSum;
+  }
+
+  // hold 曲线单点值 (FFT: 256 band 聚合后): merge 公式同显示曲线
+  float HoldBandVal(const BandAcc &acc) const {
+    if (mChanMode == 0)
+      return std::max(acc.holdMax[0], acc.holdMax[1]);
+    return (mMergeAlgo == 0)
+               ? std::sqrt(acc.holdMax[0] * acc.holdMax[0] + acc.holdMax[1] * acc.holdMax[1])
+               : acc.holdMax[2];
+  }
+
   void DrawSpectrum(IGraphics &g, const IRECT &plot) {
     if (mSpectrum[0].empty() || mSpectrum[1].empty() || mNumBins <= 0)
       return;
@@ -617,6 +701,8 @@ private:
           (amp > 1e-6f) ? std::clamp(orm::FastAmpToDb(amp, mBottomDb), mBottomDb, kTopDb) : mBottomDb;
       return plot.B - (db - mBottomDb) / (kTopDb - mBottomDb) * plot.H();
     };
+
+    mHoldPts.clear();
 
     // VQT 模式: 数据 = band 幅度, 按 band 中心频率的原始对数位置直接绘制 (不做 256 band 聚合)
     if (mMode == 1) {
@@ -637,6 +723,7 @@ private:
 
         const float aM = (mMergeAlgo == 0) ? std::sqrt(aL * aL + aR * aR) : aSum;
         mSpecPtsM.push_back({x, ampToY(aM)});
+        mHoldPts.push_back({x, ampToY(HoldValAt(b))});
       }
 
       if (mChanMode == 0) {
@@ -645,6 +732,7 @@ private:
       } else {
         DrawFill(g, plot, mSpecPtsM, cO, kGradientMinAlpha, 255, true);
       }
+      DrawHoldCurve(g, plot, true);
       return;
     }
 
@@ -667,6 +755,7 @@ private:
 
         const float aM = (mMergeAlgo == 0) ? std::sqrt(aL * aL + aR * aR) : aSum;
         mSpecPtsM.push_back({x, ampToY(aM)});
+        mHoldPts.push_back({x, ampToY(HoldValAt(b))});
       }
 
       if (mChanMode == 0) {
@@ -675,6 +764,7 @@ private:
       } else {
         DrawFill(g, plot, mSpecPtsM, cO, kGradientMinAlpha, 255, false);
       }
+      DrawHoldCurve(g, plot, false);
       return;
     }
 
@@ -697,6 +787,7 @@ private:
 
         const float aM = (mMergeAlgo == 0) ? std::sqrt(aL * aL + aR * aR) : aSum;
         mSpecPtsM.push_back({x, ampToY(aM)});
+        mHoldPts.push_back({x, ampToY(HoldValAt(b))});
       }
 
       if (mChanMode == 0) {
@@ -705,6 +796,7 @@ private:
       } else {
         DrawFill(g, plot, mSpecPtsM, cO, kGradientMinAlpha, 255, true);
       }
+      DrawHoldCurve(g, plot, true);
       return;
     }
 
@@ -729,6 +821,12 @@ private:
             mBandAcc[b].max[c] = amp;
           mBandAcc[b].used[c] = 1;
         }
+        // hold 同域聚合 (hold 与 mSpectrum 同为 bin 域; 缺帧/未积累时按 0 处理)
+        if (i < (int)mHoldSpec[c].size()) {
+          const float h = mHoldSpec[c][i];
+          if (h > mBandAcc[b].holdMax[c])
+            mBandAcc[b].holdMax[c] = h;
+        }
       }
     }
 
@@ -747,6 +845,12 @@ private:
       const bool usedM = (mMergeAlgo == 0) ? (acc.used[0] || acc.used[1]) : (acc.used[2] != 0);
       if (usedM)
         mSpecPtsM.push_back({x, ampToY(aM)});
+
+      // hold 曲线点: 门控与显示点一致 (LR/PWR 看任一通道, SUM 看通道 2)
+      const bool usedH =
+          (mChanMode == 0 || mMergeAlgo == 0) ? (acc.used[0] || acc.used[1]) : (acc.used[2] != 0);
+      if (usedH)
+        mHoldPts.push_back({x, ampToY(HoldBandVal(acc))});
     }
 
     if (mChanMode == 0) {
@@ -755,21 +859,18 @@ private:
     } else {
       DrawFill(g, plot, mSpecPtsM, cO, kGradientMinAlpha, 255, true);
     }
+    DrawHoldCurve(g, plot, true);
   }
 
-  void DrawFill(IGraphics &g, const IRECT &plot, std::vector<Pt> &pts, const IColor &color,
-                int minAlpha = kGradientMinAlpha, int topAlpha = 255, bool smooth = true) {
-    if (pts.size() < 2)
-      return;
-
+  // 建开放曲线主路径 (右缘吸附 + 平滑/折线), 供填充与 hold 细线共用:
+  // PathClear + MoveTo(pts[0]) + 曲线段; 不闭合不填充。
+  void BuildCurvePath(IGraphics &g, const IRECT &plot, std::vector<Pt> &pts, bool smooth) {
     // 右边缘：末端已贴近右缘时吸附到 plot.R，保持"高频在实际最高频点处垂直收口"
     if (pts.back().x >= plot.R - plot.W() * 0.02f)
       pts.back().x = plot.R;
 
-    // 左边缘闭合：从绘图区左下角起笔，再连到最低频带 pts[0]。
     g.PathClear();
-    g.PathMoveTo(plot.L, plot.B);
-    g.PathLineTo(pts[0].x, pts[0].y);
+    g.PathMoveTo(pts[0].x, pts[0].y);
     if (smooth && pts.size() > 3) {
       const float s = 0.6f;
       const int n = (int)pts.size();
@@ -788,6 +889,15 @@ private:
       for (int i = 1; i < (int)pts.size(); ++i)
         g.PathLineTo(pts[i].x, pts[i].y);
     }
+  }
+
+  void DrawFill(IGraphics &g, const IRECT &plot, std::vector<Pt> &pts, const IColor &color,
+                int minAlpha = kGradientMinAlpha, int topAlpha = 255, bool smooth = true) {
+    if (pts.size() < 2)
+      return;
+
+    BuildCurvePath(g, plot, pts, smooth);
+    // 左边缘闭合：连到末端正下方与绘图区左下角。
     g.PathLineTo(pts.back().x, plot.B);
     g.PathLineTo(plot.L, plot.B);
     g.PathClose();
@@ -810,8 +920,19 @@ private:
     g.PathFill(fill);
   }
 
+  // 频谱峰值保持细线: 半透明极细线, 平滑策略与显示曲线一致 (PAZ 折线, 其余贝塞尔);
+  // hold 关闭 / 尚无有效峰值时不画。
+  void DrawHoldCurve(IGraphics &g, const IRECT &plot, bool smooth) {
+    if (mHoldSec <= 0.f || !mHoldSignal || mHoldPts.size() < 2)
+      return;
+    BuildCurvePath(g, plot, mHoldPts, smooth);
+    const IColor c(kHoldLineAlpha, COL_900().R, COL_900().G, COL_900().B);
+    g.PathStroke(IPattern(c), 1.f);
+  }
+
   static constexpr int kGradientMinAlpha = 10; // L/R 实体填充底部最小不透明度
   static constexpr int kLayerTopAlpha = 160;   // L/R 顶部不透明度 (从 255 降低, 更透明)
+  static constexpr int kHoldLineAlpha = 75;    // 频谱峰值保持细线不透明度 (低 = 更浅更透)
   static constexpr int kGradientStops = 12;    // 渐变 stops 数 (指数近似精度)
   static constexpr float kGradientDecay = 3.5f;
   // 渐变 alpha 权重 exp(-kGradientDecay·t), 与绘制参数无关, 静态局部只在首帧初始化一次
@@ -885,7 +1006,16 @@ private:
   std::vector<Pt> mSpecPtsL;    // 预分配: L 填充点
   std::vector<Pt> mSpecPtsR;    // 预分配: R 填充点
   std::vector<Pt> mSpecPtsM;    // 预分配: 合并声道 (L+R) 填充点
+  std::vector<Pt> mHoldPts;     // hold 曲线绘制点 (每帧重建, 与显示点同 x)
   std::vector<BandAcc> mBandAcc; // 预分配: 每 band 双通道峰值
+
+  // 频谱峰值保持 (与 mSpectrum 同域同长: FFT 为 bin, 其余为 band); 开关/时长随电平表数据帧透传
+  std::vector<float> mHoldSpec[3]; // 各通道 hold 幅度 (显示域, 非 dB)
+  std::vector<float> mHoldAge[3];  // 各通道距上次刷新峰值的时间 (s)
+  bool mHoldSignal = false;        // 已有有效峰值 (全零不画线)
+  bool mHoldTpValid = false;       // 帧时间戳有效 (首帧不衰减)
+  bool mHoldWasActive = false;     // hold 开关边沿检测 (关闭时清一次积累)
+  std::chrono::steady_clock::time_point mLastHoldTp{};
 
   // hover 十字准线 (OnMouseOver/OnMouseOut 维护; 仅图形区内绘制)
   bool mHoverActive = false;

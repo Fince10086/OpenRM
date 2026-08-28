@@ -125,7 +125,8 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
   GetParam(kMode)->InitInt("Mode", kModeFFT, 0, kNumModes - 1, "");
   GetParam(kChannelMode)->InitInt("ChanMode", kChanModeLR, 0, kNumChanModes - 1, "");
   GetParam(kLevelMode)->InitInt("LevelMode", kLevelModeDBTP, 0, kNumLevelModes - 1, "");
-  GetParam(kLevelHold)->InitDouble("LevelHold", 2., 0., 5., 0.1, "s");
+  GetParam(kLevelHold)->InitInt("LevelHold", 1, 0, kNumHoldTimeOptions - 1, ""); // 档位: 0=0.5s 1=2s 2=KEEP
+  GetParam(kLevelHoldOn)->InitBool("LevelHoldOn", true);
   GetParam(kPazAlgo)->InitInt("PazAlgo", kPazAlgoIIR, 0, kNumPazAlgos - 1, "");
   GetParam(kFreeze)->InitInt("Freeze", 0, 0, 1, ""); // 0=LIVE 实时, 1=FREEZE 定格
   GetParam(kPyramidDecim)->InitInt("Pyramid", 0, 0, 2, ""); // VQT 金字塔档位: 0=A 1=B1 2=B2
@@ -195,6 +196,9 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
 
     const IVStyle style = MakeORMStyle();
     const IVStyle btnStyle = MakeButtonStyle();
+    IVStyle toggleStyle = btnStyle; // 反色开关 (HOLD): 隐藏标签/值, 绘制全由控件自绘接管
+    toggleStyle.showLabel = false;
+    toggleStyle.showValue = false;
 
     mTextBindings.clear();
     mTooltipBindings.clear();
@@ -348,10 +352,13 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     pGraphics->AttachControl(mLevelModeBtn);
     bindTip(mLevelModeBtn, orm::kTxtTipLevelMode);
 
-    // 电平表 RESET (清除峰值保持与过载锁存)
+    // 电平表 RESET (清除峰值保持与过载锁存; 频谱 hold 曲线同步清空, 与电平表保持联动)
     mLevelResetBtn =
-        MakeMomentary(IRECT(kCol2X, 351, kPanelR, 381), [this](IControl *) { mLevelResetFlag.store(true); },
-                      "RESET", btnStyle);
+        MakeMomentary(IRECT(kCol2X, 351, kPanelR, 381), [this](IControl *) {
+          mLevelResetFlag.store(true);
+          if (mSpectrumPad)
+            mSpectrumPad->ClearPeakHold();
+        }, "RESET", btnStyle);
     pGraphics->AttachControl(mLevelResetBtn);
     bindText(orm::kTxtReset, [this](const char *s) {
       if (mLevelResetBtn) {
@@ -369,15 +376,24 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     pGraphics->AttachControl(mFreezeBtn);
     bindTip(mFreezeBtn, orm::kTxtTipFreeze);
 
-    // 电平表峰值保持时长滑块 (s)
-    mLevelHoldSlider =
-        new ORMSlider(IRECT(kCol1X, 390, kPanelR, 432), kLevelHold, "HOLD", style, EDirection::Horizontal);
-    pGraphics->AttachControl(mLevelHoldSlider);
+    // 峰值保持开关 + 时长循环按钮 (替代原 HOLD 滑块): 开关为 BandPass LINK 同款反色开关,
+    // 时长按钮点击循环 0.5s / 2s / KEEP (持久)。两者同时控制电平表 hold 亮线与频谱 hold 曲线;
+    // RESET 按钮清除已积累的保持 (见上方 RESET lambda)。
+    mLevelHoldBtn = new FlatToggleControl(IRECT(kCol1X, 390, kCol1X + kBtnW, 420), kLevelHoldOn, " ", toggleStyle,
+                                          "HOLD", "HOLD");
+    pGraphics->AttachControl(mLevelHoldBtn);
     bindText(orm::kTxtLevelHold, [this](const char *s) {
-      if (mLevelHoldSlider)
-        mLevelHoldSlider->SetHeaderLabel(s);
+      if (mLevelHoldBtn) {
+        mLevelHoldBtn->SetOnText(s);
+        mLevelHoldBtn->SetOffText(s);
+      }
     });
-    bindTip(mLevelHoldSlider, orm::kTxtTipLevelHold);
+    bindTip(mLevelHoldBtn, orm::kTxtTipLevelHold);
+
+    mLevelHoldTimeBtn =
+        new FlatCycleButton(IRECT(kCol1X, 424, kPanelR, 454), kLevelHold, {"0.5s", "2s", "KEEP"}, btnStyle);
+    pGraphics->AttachControl(mLevelHoldTimeBtn);
+    bindTip(mLevelHoldTimeBtn, orm::kTxtTipLevelHoldTime);
 
     // 底部标题栏：ORM 标识、设置齿轮与版本号
     IText ormText(32, COL_900(), kFontBold, EAlign::Near, EVAlign::Bottom);
@@ -649,7 +665,7 @@ void ORMAnalyzer::ProcessBlock(sample **inputs, sample **outputs, int nFrames) {
     if (mLevelResetFlag.exchange(false))
       mLevelMeter.ResetHoldOver();
     mLevelMeter.Process(mSpecInL.data(), mSpecInR.data(), nFrames, (int)GetParam(kLevelMode)->Value(),
-                        GetParam(kLevelHold)->Value());
+                        CurrentHoldSec());
     {
       LevelMeter::Snapshot s;
       mLevelMeter.Store(s);
@@ -1042,7 +1058,8 @@ void ORMAnalyzer::OnUIClose() {
   mChanModeBtn = nullptr;
   mLevelModeBtn = nullptr;
   mLevelResetBtn = nullptr;
-  mLevelHoldSlider = nullptr;
+  mLevelHoldBtn = nullptr;
+  mLevelHoldTimeBtn = nullptr;
   mFreezeBtn = nullptr;
   mSettingsPanel = nullptr;
   mTextBindings.clear();

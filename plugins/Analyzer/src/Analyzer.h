@@ -107,7 +107,8 @@ private:
   FlatCycleButton *mChanModeBtn = nullptr;
   FlatCycleButton *mLevelModeBtn = nullptr;
   IVButtonControl *mLevelResetBtn = nullptr;
-  ORMSlider *mLevelHoldSlider = nullptr;
+  FlatToggleControl *mLevelHoldBtn = nullptr;   // 峰值保持开关 (HOLD, 反色开关样式)
+  FlatCycleButton *mLevelHoldTimeBtn = nullptr; // 峰值保持时长循环按钮 (0.5s / 2s / KEEP)
   FlatCycleButton *mFreezeBtn = nullptr; // 冻结/保持循环按钮 (LIVE / FREEZE)
 
   int mSentMode = -1;
@@ -195,6 +196,14 @@ private:
     const int idx = (int)std::clamp(std::lround(GetParam(kRange)->Value()), 0L, 2L);
     static constexpr float kRangeDb[3] = {80.f, 100.f, 120.f};
     return kRangeDb[idx];
+  }
+  // 峰值保持有效时长 (s): 开关关闭 -> 0 (LevelMeter 不保持, UI 不画 hold 线/曲线);
+  // 开启 -> kHoldTimeSecs 档位值 (KEEP 档为 1e9, 超时永不触发 = 无限保持)。
+  double CurrentHoldSec() const {
+    if (GetParam(kLevelHoldOn)->Value() < 0.5)
+      return 0.0;
+    const int idx = (int)std::clamp(std::lround(GetParam(kLevelHold)->Value()), 0L, (long)kNumHoldTimeOptions - 1);
+    return kHoldTimeSecs[idx];
   }
   void SendVQTBandFreqs();
   void SendPAZBandFreqs();

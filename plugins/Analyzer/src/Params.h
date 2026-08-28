@@ -14,10 +14,11 @@ enum EParams {
   kMode,          // 分析引擎模式 (0: FFT, 1: VQT, 2: PAZ, 3: MR-FFT)
   kChannelMode,   // 声道显示模式 (0: LR, 1: PWR, 2: SUM)
   kLevelMode,     // 电平表模式 (0: dBTP, 1: dBFS+RMS, 2: VU)
-  kLevelHold,     // 峰值保持时长 (s)
+  kLevelHold,     // 峰值保持时长档位 (0: 0.5s, 1: 2s, 2: KEEP 持久)
   kPazAlgo,       // PAZ 算法模式 (0: IIR, 1: FFT)
   kFreeze,        // 冻结/保持 (0: LIVE 实时, 1: FREEZE 定格; 冻结中切换引擎用新算法重算冻结音频)
   kPyramidDecim,  // VQT 金字塔降采样档位 (0: A 逐级2x, 1: B1 浅2x+深4x, 2: B2 2x最小相位)
+  kLevelHoldOn,   // 峰值保持开关 (频谱 hold 曲线与电平表 hold 亮线共用; 追加末尾, 保旧状态文件下标兼容)
   kNumParams
 };
 
@@ -34,6 +35,11 @@ constexpr int kPazLfResOptions[] = {40, 20, 10};
 constexpr int kNumPazLfResOptions = 3;
 constexpr int kBpoOptions[] = {12, 24};
 constexpr int kNumBpoOptions = 2;
+
+// 峰值保持时长档位 (kLevelHold 存索引)。持久档用 1e9s 表示: LevelMeter 的超时逻辑
+// (holdT >= holdSec 才回落) 永不触发, 即无限保持, 且 holdSec > 0 的"画 hold 线"判定照常成立。
+constexpr double kHoldTimeSecs[] = {0.5, 2.0, 1e9};
+constexpr int kNumHoldTimeOptions = 3;
 
 // VQT 固定档位 (不再暴露 UI): γ 取原 HIGH 档, BPO 固定 24
 constexpr int kVQTGammaHz = 5;
