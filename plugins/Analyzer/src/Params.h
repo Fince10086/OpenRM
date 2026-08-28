@@ -9,8 +9,8 @@ enum EParams {
   kRange,         // 频谱显示动态范围下限 (dBFS)
   kAttack,        // 频谱上升响应时间 (s)
   kRes,           // FFT 分辨率档位 (2048/4096/8192)
-  kLfRes,         // VQT 低频带宽保底 γ 档位 (低/中/高: 20/10/5 Hz)
-  kBpo,           // VQT 每八度频带数 (12/24)
+  kLfRes,         // 低频分辨率档位 (PAZ: 40/20/10 Hz; VQT 不再使用)
+  kBpo,           // MR-FFT 每八度频带数 (12/24); VQT 固定 24 (kVQTBpo)
   kMode,          // 分析引擎模式 (0: FFT, 1: VQT, 2: PAZ, 3: MR-FFT)
   kChannelMode,   // 声道显示模式 (0: LR, 1: PWR, 2: SUM)
   kLevelMode,     // 电平表模式 (0: dBTP, 1: dBFS+RMS, 2: VU)
@@ -34,6 +34,10 @@ constexpr int kPazLfResOptions[] = {40, 20, 10};
 constexpr int kNumPazLfResOptions = 3;
 constexpr int kBpoOptions[] = {12, 24};
 constexpr int kNumBpoOptions = 2;
+
+// VQT 固定档位 (不再暴露 UI): γ 取原 HIGH 档, BPO 固定 24
+constexpr int kVQTGammaHz = 5;
+constexpr int kVQTBpo = 24;
 
 // 分析引擎模式 (四态: FFT, VQT, PAZ, MR-FFT)
 enum EAnalyzerMode { kModeFFT = 0, kModeVQT = 1, kModePAZ = 2, kModeMRFFT = 3, kNumModes = 4 };

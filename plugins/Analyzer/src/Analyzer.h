@@ -93,7 +93,6 @@ private:
   SpectrumPad *mSpectrumPad = nullptr;
   ORMSlider *mBpoSlider = nullptr;
   FlatCycleButton *mResBtn = nullptr;      // FFT 分辨率循环按钮 (LOW/MID/HIGH)
-  FlatCycleButton *mLfResBtn = nullptr;    // VQT 低频分辨率循环按钮 (LOW/MID/HIGH: 20/10/5 Hz)
   FlatCycleButton *mPazLfResBtn = nullptr; // PAZ 低频分辨率循环按钮 (40/20/10 Hz)
   FlatCycleButton *mPazAlgoBtn = nullptr;  // PAZ 算法模式循环按钮 (IIR / FFT)
   FlatCycleButton *mPyramidBtn = nullptr;  // VQT 金字塔算法循环按钮 (A / B1 / B2 / B3)
@@ -160,10 +159,6 @@ private:
   int CurrentFFTSize() const {
     const int idx = (int)std::clamp(GetParam(kRes)->Value(), 0.0, (double)kNumResOptions - 1);
     return kResOptions[idx];
-  }
-  int CurrentLfRes() const {
-    const int idx = (int)std::clamp(GetParam(kLfRes)->Value(), 0.0, (double)kNumLfResOptions - 1);
-    return kLfResOptions[idx];
   }
   int CurrentPazLfRes() const {
     const int idx = (int)std::clamp(GetParam(kLfRes)->Value(), 0.0, (double)kNumPazLfResOptions - 1);

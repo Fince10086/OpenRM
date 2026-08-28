@@ -631,8 +631,8 @@ private:
   }
 
   int mPyramid = 0;                       // 金字塔档位 (kPyramidA/B1/B2)
-  int mBpo = 24;                          // bins per octave (12/24)
-  int mGamma = 20;                        // 低频带宽下限 Hz
+  int mBpo = 24;                          // bins per octave (插件层固定 24)
+  int mGamma = 5;                         // 低频带宽下限 Hz (插件层固定 HIGH 档)
   int mChanTri = 0;                       // 0=LR, 1=PWR, 2=SUM
   double mSampleRate = 48000.0;
   std::atomic<bool> mNeedRebuild{false};

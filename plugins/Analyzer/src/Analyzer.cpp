@@ -234,13 +234,6 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     pGraphics->AttachControl(mResBtn);
     bindTip(mResBtn, orm::kTxtTipRes);
 
-    // VQT 低频分辨率循环按钮 (LOW/MID/HIGH = 20/10/5 Hz) — 同位置, 仅 VQT 模式可见
-    mLfResBtn = new FlatCycleButton(IRECT(kResX, kTopBtnY, kResX + kTopBtnW, kTopBtnY + kTopBtnH), kLfRes,
-                                    {"LOW", "MID", "HIGH"}, btnStyle);
-    pGraphics->AttachControl(mLfResBtn);
-    bindTip(mLfResBtn, orm::kTxtTipLfRes);
-    mLfResBtn->Hide(true); // 默认 FFT 模式, 初始隐藏
-
     // PAZ 低频分辨率循环按钮 (40/20/10 Hz) — 同位置, 仅 PAZ 模式可见
     mPazLfResBtn = new FlatCycleButton(IRECT(kResX, kTopBtnY, kResX + kTopBtnW, kTopBtnY + kTopBtnH), kLfRes,
                                        {"40Hz", "20Hz", "10Hz"}, btnStyle);
@@ -285,10 +278,11 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     mCpuMeter = new CpuMeterControl(IRECT(kCol1X, 30, kPanelR, 60));
     pGraphics->AttachControl(mCpuMeter, kCtrlTagCpu);
 
-    // BPO 滑块（每八度频带数，仅 VQT 模式生效）
+    // BPO 滑块（每八度频带数，仅 MR-FFT 模式生效; VQT 固定 24 不暴露 UI）
     mBpoSlider =
         new ORMSlider(IRECT(kCol1X, 69, kPanelR, 111), kBpo, "BPO", style, EDirection::Horizontal);
     pGraphics->AttachControl(mBpoSlider);
+    mBpoSlider->Hide((int)GetParam(kMode)->Value() != kModeMRFFT);
     bindText(orm::kTxtBpo, [this](const char *s) { mBpoSlider->SetHeaderLabel(s); });
     bindTip(mBpoSlider, orm::kTxtTipBpo);
 
@@ -613,8 +607,8 @@ void ORMAnalyzer::ProcessBlock(sample **inputs, sample **outputs, int nFrames) {
 void ORMAnalyzer::OnReset() {
   mSpectrum.SetFFTSizeAndOverlap(CurrentFFTSize(), 4);
   mVQT.SetSampleRate(GetSampleRate());
-  mVQT.SetGamma(CurrentLfRes());
-  mVQT.SetBpo(CurrentBpo());
+  mVQT.SetGamma(kVQTGammaHz); // VQT 固定 γ = HIGH (5 Hz)
+  mVQT.SetBpo(kVQTBpo);       // VQT 固定 BPO = 24
   mPAZ.SetSampleRate(GetSampleRate());
   mPAZ.SetLfWidth(CurrentPazLfRes());
   mPAZ.SetAlgo((int)GetParam(kPazAlgo)->Value());
@@ -696,15 +690,10 @@ void ORMAnalyzer::OnParamChange(int paramIdx, EParamSource source, int sampleOff
     if (GetParam(kMode)->Value() > 1.5 && GetParam(kMode)->Value() < 2.5) { // PAZ 模式
       if (mPAZ.SetLfWidth(CurrentPazLfRes()) && !frozen)
         SendResetToPad();
-    } else if (GetParam(kMode)->Value() < 1.5) { // VQT 模式
-      if (mVQT.SetGamma(CurrentLfRes()) && !frozen)
-        SendResetToPad();
     }
   } else if (paramIdx == kBpo) {
-    if (GetParam(kMode)->Value() > 0.5 && GetParam(kMode)->Value() < 1.5) {
-      if (mVQT.SetBpo(CurrentBpo()) && !frozen)
-        SendResetToPad();
-    } else if (GetParam(kMode)->Value() > 2.5) {
+    // VQT 的 γ/BPO 已固定 (kVQTGammaHz/kVQTBpo), 不再随参数变化; 仅 MR-FFT 使用 BPO
+    if (GetParam(kMode)->Value() > 2.5) {
       if (mMRFFT.SetBpo(CurrentBpo()) && !frozen)
         SendResetToPad();
     }
@@ -777,13 +766,12 @@ void ORMAnalyzer::OnIdle() {
   const int mode = (int)GetParam(kMode)->Value();
   if (mode != mSentMode) {
     mSentMode = mode;
-    if (mResBtn && mLfResBtn && mPazLfResBtn && mPazAlgoBtn && mBpoSlider) {
+    if (mResBtn && mPazLfResBtn && mPazAlgoBtn && mBpoSlider) {
       mResBtn->Hide(mode != kModeFFT);
-      mLfResBtn->Hide(mode != kModeVQT);
       mPazLfResBtn->Hide(mode != kModePAZ);
       mPazAlgoBtn->Hide(mode != kModePAZ);
       mPyramidBtn->Hide(mode != kModeVQT);
-      mBpoSlider->Hide(mode != kModeVQT && mode != kModeMRFFT);
+      mBpoSlider->Hide(mode != kModeMRFFT);
     }
     SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagMode, sizeof(int), &mode);
     if (mode == kModeVQT)
@@ -955,7 +943,6 @@ void ORMAnalyzer::OnUIClose() {
   mSpectrumPad = nullptr;
   mBpoSlider = nullptr;
   mResBtn = nullptr;
-  mLfResBtn = nullptr;
   mPazLfResBtn = nullptr;
   mRangeBtn = nullptr;
   mAttackSlider = nullptr;
