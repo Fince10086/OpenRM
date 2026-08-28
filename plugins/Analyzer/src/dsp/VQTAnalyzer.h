@@ -338,6 +338,18 @@ public:
     return false;
   }
 
+  bool SetWindowType(int windowType) {
+    const int w = std::clamp(windowType, 0, 1);
+    if (w != mWindowType) {
+      mWindowType = w;
+      mNeedRebuild.store(true);
+      return true;
+    }
+    return false;
+  }
+
+  int GetWindowType() const { return mWindowType; }
+
   void SetChannelMode(int chanTri) {
     mChanTri = std::clamp(chanTri, 0, 2);
   }
@@ -627,11 +639,17 @@ private:
     const double step = 2.0 * PI * fc / fsL; // 该层速率的归一化频率
     double sum = 0.0;
     for (int n = 0; n < wl; ++n) {
-      // 4-term Blackman-Harris 窗: 极大化阻带衰减至 -92dB, 杜绝相邻音乐频段横向泄漏
+      double w = 0.0;
       const double theta = 2.0 * PI * n / (wl - 1);
-      const double w = 0.35875 - 0.48829 * std::cos(theta)
-                               + 0.14128 * std::cos(2.0 * theta)
-                               - 0.01168 * std::cos(3.0 * theta);
+      if (mWindowType == 0) {
+        // 0: Hann 窗 (SHARP 档): 窄主瓣, 提升相邻音符分辨力与时域起振敏锐度
+        w = 0.5 * (1.0 - std::cos(theta));
+      } else {
+        // 1: 4-term Blackman-Harris 窗 (CLEAN 档): 阻带衰减至 -92dB, 杜绝相邻音乐频段横向泄漏
+        w = 0.35875 - 0.48829 * std::cos(theta)
+                    + 0.14128 * std::cos(2.0 * theta)
+                    - 0.01168 * std::cos(3.0 * theta);
+      }
       sum += w;
       const double ph = step * n;
       bd.kernelRe[n] = (float)(w * std::cos(ph));
@@ -644,6 +662,7 @@ private:
   }
 
   int mPyramid = 0;                       // 金字塔档位 (kPyramidA/B1/B2)
+  int mWindowType = 0;                    // 窗函数档位 (0=SHARP/Hann, 1=CLEAN/BH4)
   int mBpo = 24;                          // bins per octave (插件层固定 24)
   int mGamma = 5;                         // 低频带宽下限 Hz (插件层固定 HIGH 档)
   int mChanTri = 0;                       // 0=LR, 1=PWR, 2=SUM

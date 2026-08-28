@@ -18,35 +18,66 @@ public:
   using Data = ISenderData<MAXNC, TDataPacket>;
   using Base = ISender<MAXNC, QUEUE_SIZE, TDataPacket>;
 
-  SpectrumSTFT(int fftSize = 4096, int overlap = 4) {
+  enum EWindowType { kWindowHann = 0, kWindowBH4 = 1, kNumWindowTypes = 2 };
+
+  SpectrumSTFT(int fftSize = 4096, int overlap = 4, int windowType = 0) {
     WDL_fft_init();
-    SetFFTSizeAndOverlap(fftSize, overlap);
+    SetFFTSizeAndOverlap(fftSize, overlap, windowType);
   }
 
-  void SetFFTSizeAndOverlap(int fftSize, int overlap) {
+  void SetFFTSizeAndOverlap(int fftSize, int overlap, int windowType = -1) {
     mFFTSize = std::clamp(fftSize, 64, MAX_FFT_SIZE);
     mOverlap = std::max(overlap, 1);
     mHop = mFFTSize / mOverlap;
     mNumBins = mFFTSize / 2;
-
-    const float M = static_cast<float>(mFFTSize - 1);
-    double sum = 0.0;
-    for (int i = 0; i < mFFTSize; ++i) {
-      mWindow[i] = 0.5f * (1.0f - std::cos(PI * 2.0f * i / M));
-      sum += mWindow[i];
-    }
-    mScaling = static_cast<float>(sum * sum);
+    if (windowType >= 0)
+      mWindowType = std::clamp(windowType, 0, 1);
+    RebuildWindow();
 
     for (auto &h : mHistory)
       h.fill(0.f);
     mBufCount = 0;
   }
 
+  void SetWindowType(int windowType) {
+    const int newType = std::clamp(windowType, 0, 1);
+    if (newType != mWindowType) {
+      mWindowType = newType;
+      RebuildWindow();
+    }
+  }
+
+  int GetWindowType() const { return mWindowType; }
+
+  void RebuildWindow() {
+    const float M = static_cast<float>(mFFTSize - 1);
+    double sum = 0.0;
+    if (mWindowType == 1) {
+      // 4-term Blackman-Harris 窗: 旁瓣抑制达 -92 dB
+      constexpr float a0 = 0.35875f;
+      constexpr float a1 = 0.48829f;
+      constexpr float a2 = 0.14128f;
+      constexpr float a3 = 0.01168f;
+      for (int i = 0; i < mFFTSize; ++i) {
+        const float theta = 2.0f * PI * i / M;
+        mWindow[i] = a0 - a1 * std::cos(theta) + a2 * std::cos(2.0f * theta) - a3 * std::cos(3.0f * theta);
+        sum += mWindow[i];
+      }
+    } else {
+      // 标准 Hann 窗: 主瓣较窄, 旁瓣 -31.5 dB
+      for (int i = 0; i < mFFTSize; ++i) {
+        mWindow[i] = 0.5f * (1.0f - std::cos(2.0f * PI * i / M));
+        sum += mWindow[i];
+      }
+    }
+    mScaling = static_cast<float>(sum * sum);
+  }
+
   void SetChannelMode(int chanTri) {
     mChanTri = std::clamp(chanTri, 0, 2);
   }
 
-  void SetFFTSize(int fftSize) { SetFFTSizeAndOverlap(fftSize, mOverlap); }
+  void SetFFTSize(int fftSize) { SetFFTSizeAndOverlap(fftSize, mOverlap, mWindowType); }
 
   int GetFFTSize() const { return mFFTSize; }
   int GetOverlap() const { return mOverlap; }
@@ -128,6 +159,7 @@ private:
   int mNumBins = 2048;
   int mBufCount = 0;
   int mChanTri = 0; // 0=LR, 1=PWR, 2=SUM
+  int mWindowType = 0; // 0=Hann, 1=BH4
   float mScaling = 0.f;
   std::array<float, MAX_FFT_SIZE> mWindow{};
   std::array<std::array<float, MAX_FFT_SIZE>, MAXNC> mHistory{};

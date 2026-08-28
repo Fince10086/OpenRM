@@ -23,8 +23,11 @@ enum EParams {
   kSlopeVQT,      // 频谱斜率档位索引, VQT 引擎独立保存 (-3/0/1.5 dB/oct)
   kSlopePAZ,      // 频谱斜率档位索引, PAZ 引擎独立保存 (-3/0/1.5 dB/oct)
   kSlopeMRFFT,    // 频谱斜率档位索引, MR-FFT 引擎独立保存 (-3/0/1.5 dB/oct)
+  kFFTWindow,     // FFT 窗函数档位 (0: Hann, 1: BH4 4阶Blackman-Harris)
   kNumParams
 };
+
+enum EFFTWindow { kFFTWindowHann = 0, kFFTWindowBH4 = 1, kNumFFTWindows = 2 };
 
 enum EPazAlgo { kPazAlgoIIR = 0, kPazAlgoFFT = 1, kNumPazAlgos = 2 };
 

@@ -97,6 +97,7 @@ private:
   SpectrumPad *mSpectrumPad = nullptr;
   ORMSlider *mBpoSlider = nullptr;
   FlatCycleButton *mResBtn = nullptr;      // FFT 分辨率循环按钮 (LOW/MID/HIGH)
+  FlatCycleButton *mWindowBtn = nullptr;   // FFT 窗函数循环按钮 (Hann / BH4)
   FlatCycleButton *mPazLfResBtn = nullptr; // PAZ 低频分辨率循环按钮 (40/20/10 Hz)
   FlatCycleButton *mPazAlgoBtn = nullptr;  // PAZ 算法模式循环按钮 (IIR / FFT)
   FlatCycleButton *mPyramidBtn = nullptr;  // VQT 金字塔算法循环按钮 (A / B1 / B2 / B3)
@@ -114,6 +115,7 @@ private:
   FlatCycleButton *mFreezeBtn = nullptr; // 冻结/保持循环按钮 (LIVE / FREEZE)
 
   int mSentMode = -1;
+  int mSentWindow = -1;
 
   // ── Freeze (冻结/保持), 确定性回放方案 ─────────────────────────────
   // 音频线程把最近输入滚环记录进 mFreezeRing (freeze 后停止写入, 即冻结时刻快照),
@@ -132,6 +134,7 @@ private:
   bool mFreezeOn = false;                          // 冻结激活边沿/状态 (UI 线程)
   // 冻结中已重算的档位快照 (参数档位索引, -1 = 未同步); 变化时用冻结缓冲重算直显
   int mFreezeRes = -1;
+  int mFreezeWindow = -1;
   int mFreezeLf = -1;
   int mFreezeBpo = -1;
   int mFreezePazAlgo = -1;
@@ -193,6 +196,10 @@ private:
   int CurrentFFTSize() const {
     const int idx = (int)std::clamp(GetParam(kRes)->Value(), 0.0, (double)kNumResOptions - 1);
     return kResOptions[idx];
+  }
+  int CurrentFFTWindow() const {
+    const int idx = (int)std::clamp(std::lround(GetParam(kFFTWindow)->Value()), 0L, (long)kNumFFTWindows - 1);
+    return idx;
   }
   int CurrentPazLfRes() const {
     const int idx = (int)std::clamp(GetParam(kLfRes)->Value(), 0.0, (double)kNumPazLfResOptions - 1);
