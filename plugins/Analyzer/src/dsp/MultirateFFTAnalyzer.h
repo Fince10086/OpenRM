@@ -234,11 +234,14 @@ protected:
         }
       }
 
-      // 提取频带幅度并应用主瓣校正
+      // 提取频带能量: 带内 bin 幅度平方和开方, poolNorm 归一到中心单音幅度 A。
       for (int b = 0; b < nb; ++b) {
         const Band &bd = mBands[b];
-        const float rawMag = mMagBuf[c][bd.layer][bd.kPeak];
-        d.vals[c][b] = rawMag * bd.corrFactor;
+        const float *mags = mMagBuf[c][bd.layer].data();
+        float e = 0.f;
+        for (int k = bd.binLo; k <= bd.binHi; ++k)
+          e += mags[k] * mags[k];
+        d.vals[c][b] = std::sqrt(e) * bd.poolNorm;
       }
 
       for (int b = nb; b < MAX_BANDS; ++b)
@@ -249,8 +252,9 @@ protected:
 private:
   struct Band {
     int layer;         // 所属金字塔层级 (0..9)
-    int kPeak;         // FFT Bin 序号
-    float corrFactor;  // 窗函数反折损补偿系数
+    int binLo;         // 带内能量池化的 bin 区间 [binLo, binHi]
+    int binHi;
+    float poolNorm;    // 中心单音增益归一 1/sqrt(Σ r_k²), r_k = |W(2π(k−kc)/N)|/W(0)
   };
 
   void InitLayerWindows() {
@@ -299,35 +303,46 @@ private:
         layer = std::clamp(layer, 0, kMaxLayers - 1);
       }
 
-      // 计算对应层 FFT 的谱线位置
+      // 带内能量池化的 bin 区间: [fc−Δf/2, fc+Δf/2] 映射到本层 FFT 的 bin 下/上界。
+      // 单 bin 采样的幅度服从瑞利分布 (对噪声类内容每个 band 是一次独立抽签, 逐层
+      // 重复即呈"倍频状梳齿伪峰"); 池化后方差随 bin 数下降, 且带内能量对音调的
+      // 落 bin 位置不敏感 (主瓣能量守恒, BH4 旁瓣 -92dB), 无需扇贝补偿。
       const double layerFs = fs / (double)(1 << layer);
       const int nFft = mFftSize[layer];
-      const double kFrac = fc * (double)nFft / layerFs;
-      const int kPeak = std::clamp((int)std::round(kFrac), 0, nFft / 2 - 1);
+      const double sp = 0.5 * fc * (std::pow(2.0, 1.0 / mBpo) - 1.0);
+      const int nBins = nFft / 2;
+      int lo = (int)std::floor((fc - sp) * (double)nFft / layerFs);
+      int hi = (int)std::ceil((fc + sp) * (double)nFft / layerFs);
+      lo = std::clamp(lo, 1, nBins - 1);
+      hi = std::clamp(hi, lo, nBins - 1);
 
-      // 窗 DTFT 精确 scalloping 校正 (窗无关): 单音落在分数 bin 时
-      // |X(kPeak)| = A/2·|W(2πp/N)|, 故 corr = W(0)/|W(2πp/N)|。
-      // 旧 Hamming 闭式是近似式, 共享 bin 的相邻 band 修正不同 → 锯齿
-      const double p = std::clamp(kFrac - (double)kPeak, -0.5, 0.5);
-      constexpr double kPi = 3.14159265358979323846;
-      double corr = 1.0;
-      if (std::abs(p) > 1e-9) {
+      // 池化能量归一: r_k = |W(2π(k−kc)/N)|/W(0) 为中心单音在第 k bin 的幅度系数,
+      // sqrt(Σ r_k²) 即池化路径对中心单音的增益, 取其倒数使中心单音读数恰为 A。
+      double poolGain = 1.0;
+      {
+        constexpr double kPi = 3.14159265358979323846;
         const std::vector<float> &win = mWindows[layer];
-        auto dtftMag = [&](double w) {
-          double s = 0.0;
+        const double kFracC = fc * (double)nFft / layerFs;
+        double w0 = 0.0;
+        for (double w : win)
+          w0 += w;
+        double s2 = 0.0;
+        for (int m = lo; m <= hi; ++m) {
+          double r = 0.0;
           for (int i = 0; i < (int)win.size(); ++i)
-            s += (double)win[i] * std::cos(w * i);
-          return std::abs(s);
-        };
-        const double denom = dtftMag(2.0 * kPi * p / (double)nFft);
-        if (denom > 1e-9)
-          corr = std::clamp(dtftMag(0.0) / denom, 1.0, 24.0);
+            r += (double)win[i] * std::cos(2.0 * kPi * (double)(m - kFracC) / (double)nFft);
+          r /= w0;
+          s2 += r * r;
+        }
+        if (s2 > 1e-12)
+          poolGain = std::sqrt(s2);
       }
 
       Band bd;
       bd.layer = layer;
-      bd.kPeak = kPeak;
-      bd.corrFactor = (float)corr;
+      bd.binLo = lo;
+      bd.binHi = hi;
+      bd.poolNorm = (float)(1.0 / poolGain);
 
       mBands.push_back(bd);
       mFreqs.push_back(fc);
