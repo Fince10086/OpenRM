@@ -132,12 +132,6 @@ protected:
       ds.Set(orm::Tr(orm::kTxtLfLow + idx, orm::UILang()));
       break;
     }
-    case kBpo: {
-      const int idx = (int)std::clamp(p->Value(), 0.0, (double)kNumBpoOptions - 1);
-      std::snprintf(buf, sizeof(buf), "%d", kBpoOptions[idx]);
-      ds.Set(buf);
-      break;
-    }
     default:
       p->GetDisplay(ds, false);
       break;

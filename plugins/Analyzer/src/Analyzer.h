@@ -90,15 +90,14 @@ private:
   double mSentRange = -1.0;
   double mSentAttack = -1.0;
   double mSentLfRes = -1.0;
-  double mSentBpo = -1.0;
   double mSentSlope = -1e9; // 当前模式生效斜率 (dB/oct), 用于 OnIdle 增量去重
   int mSentChanMode = -1; // 存储三态值 (0=LR,1=PWR,2=SUM), 用于 OnIdle 增量去重
 
   SpectrumPad *mSpectrumPad = nullptr;
-  ORMSlider *mBpoSlider = nullptr;
   FlatCycleButton *mResBtn = nullptr;      // STFT 分辨率循环按钮 (LOW/MID/HIGH)
-  FlatCycleButton *mWindowBtn = nullptr;   // 窗函数循环按钮 (Hann / BH4, STFT 与 VQT 共用)
+  FlatCycleButton *mWindowBtn = nullptr;   // 窗函数循环按钮 (SHARP/CLEAN, STFT 与 VQT 各自独立档位, 按模式改绑参数)
   FlatCycleButton *mPazLfResBtn = nullptr; // PAZ 低频分辨率循环按钮 (40/20/10 Hz)
+  FlatCycleButton *mPazKernelBtn = nullptr; // PAZ 解调核长系数循环按钮 (K3.0~K8.0, 与原版对比调校用)
   FlatCycleButton *mPyramidBtn = nullptr;  // VQT 金字塔算法循环按钮 (LIN / MIN)
   FlatCycleButton *mRangeBtn = nullptr;    // 动态范围循环按钮 (刻度底部 80/100/120)
   FlatCycleButton *mSlopeBtn = nullptr;    // 频谱斜率循环按钮 (刻度底部左缘, 档值随引擎)
@@ -111,10 +110,11 @@ private:
   IVButtonControl *mLevelResetBtn = nullptr;
   FlatToggleControl *mLevelHoldBtn = nullptr;   // 峰值保持开关 (HOLD, 反色开关样式)
   FlatCycleButton *mLevelHoldTimeBtn = nullptr; // 峰值保持时长循环按钮 (0.5s / 2s / KEEP)
-  FlatCycleButton *mFreezeBtn = nullptr; // 冻结/保持循环按钮 (LIVE / FREEZE)
+  FlatToggleControl *mFreezeBtn = nullptr; // 冻结开关 (FREEZE, 反色开关样式, 同 HOLD)
 
   int mSentMode = -1;
-  int mSentWindow = -1;
+  int mSentWindowFFT = -1; // STFT 窗函数档位 (kFFTWindow), OnIdle 增量去重
+  int mSentWindowVQT = -1; // VQT 窗函数档位 (kWindowVQT), OnIdle 增量去重
 
   // ── Freeze (冻结/保持), 确定性回放方案 ─────────────────────────────
   // 音频线程把最近输入滚环记录进 mFreezeRing (freeze 后停止写入, 即冻结时刻快照),
@@ -133,10 +133,11 @@ private:
   bool mFreezeOn = false;                          // 冻结激活边沿/状态 (UI 线程)
   // 冻结中已重算的档位快照 (参数档位索引, -1 = 未同步); 变化时用冻结缓冲重算直显
   int mFreezeRes = -1;
-  int mFreezeWindow = -1;
+  int mFreezeWindowFFT = -1; // STFT 窗函数档位快照 (冻结中重算去重)
+  int mFreezeWindowVQT = -1; // VQT 窗函数档位快照 (冻结中重算去重)
   int mFreezeLf = -1;
-  int mFreezeBpo = -1;
   int mFreezePyramid = -1;
+  int mFreezeKernel = -1;
 
   // 冻结回放 (UI 线程, 定义见 Analyzer.cpp)。回放分 tick 泵送避免长 UI 卡顿;
   // 回放期间再次切换配置 → StartFreezeReplay 重启 (复位后重放, 确定性不变);
@@ -199,13 +200,17 @@ private:
     const int idx = (int)std::clamp(std::lround(GetParam(kFFTWindow)->Value()), 0L, (long)kNumFFTWindows - 1);
     return idx;
   }
+  int CurrentVQTWindow() const {
+    const int idx = (int)std::clamp(std::lround(GetParam(kWindowVQT)->Value()), 0L, (long)kNumFFTWindows - 1);
+    return idx;
+  }
   int CurrentPazLfRes() const {
     const int idx = (int)std::clamp(GetParam(kLfRes)->Value(), 0.0, (double)kNumPazLfResOptions - 1);
     return kPazLfResOptions[idx];
   }
-  int CurrentBpo() const {
-    const int idx = (int)std::clamp(GetParam(kBpo)->Value(), 0.0, (double)kNumBpoOptions - 1);
-    return kBpoOptions[idx];
+  double CurrentPazKernelLen() const {
+    const int idx = (int)std::clamp(std::lround(GetParam(kPazKernel)->Value()), 0L, (long)kNumPazKernelLenOptions - 1);
+    return kPazKernelLenOptions[idx];
   }
   // 频谱显示范围 (刻度底部 dB): 离散三档 80/100/120, 由 Range 循环按钮切换。
   // 用 lround 取档位 (与按钮显示取整一致), 避免宿主旧状态恢复出档位间值 (如 0.5) 时

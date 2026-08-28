@@ -18,6 +18,7 @@ struct SettingsData {
   int hue = 45;
   int satMax = 15;
   int themeMode = 0;
+  int holdOn = -1;     // 峰值保持开关 (-1 = 未保存过, 用参数默认; 0/1 = 用户上次设置)
   // 内置测试信号发生器 (开发者工具, ORM_ENABLE_TEST_GEN 关闭时不生效)
   int genType = 0;       // orm::ETestSignal, 0 = OFF
   double genFreq = 1000.0;  // Hz (对数滑杆 1 Hz .. 20 kHz)
@@ -65,6 +66,8 @@ inline bool LoadSettings(SettingsData &out) {
       out.satMax = j["satMax"].get<int>();
     if (j.contains("themeMode"))
       out.themeMode = j["themeMode"].get<int>();
+    if (j.contains("holdOn"))
+      out.holdOn = j["holdOn"].get<int>();
     if (j.contains("genType"))
       out.genType = j["genType"].get<int>();
     if (j.contains("genFreq"))
@@ -95,6 +98,7 @@ inline bool SaveSettings(const SettingsData &d) {
     j["hue"] = d.hue;
     j["satMax"] = d.satMax;
     j["themeMode"] = d.themeMode;
+    j["holdOn"] = d.holdOn;
     j["genType"] = d.genType;
     j["genFreq"] = d.genFreq;
     j["genLevel"] = d.genLevel;
