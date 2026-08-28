@@ -351,8 +351,7 @@ private:
     float x, y;
   };
   struct BandAcc {
-    float max[3] = {0.f, 0.f, 0.f}; // 每 band 每通道峰值 (0: L, 1: R, 2: Sum)
-    char used[3] = {0, 0, 0};       // 每 band 每通道是否有数据
+    float max[3] = {0.f, 0.f, 0.f};
   };
 
   // 频率(Hz) -> 归一化 x (0..1), 与 BandPass Freq 参数 (20..20000, ShapeExp) 一致
@@ -630,14 +629,11 @@ private:
         const float aSum = (mSpectrum[2].size() > (size_t)b) ? mSpectrum[2][b] : 0.f;
         const float yL = ampToY(aL);
         const float yR = ampToY(aR);
-        if (aL > 1e-6f)
-          mSpecPtsL.push_back({x, yL});
-        if (aR > 1e-6f)
-          mSpecPtsR.push_back({x, yR});
+        mSpecPtsL.push_back({x, yL});
+        mSpecPtsR.push_back({x, yR});
 
         const float aM = (mMergeAlgo == 0) ? std::sqrt(aL * aL + aR * aR) : aSum;
-        if (aM > 1e-6f)
-          mSpecPtsM.push_back({x, ampToY(aM)});
+        mSpecPtsM.push_back({x, ampToY(aM)});
       }
 
       if (mChanMode == 0) {
@@ -663,14 +659,11 @@ private:
         const float aSum = (mSpectrum[2].size() > (size_t)b) ? mSpectrum[2][b] : 0.f;
         const float yL = ampToY(aL);
         const float yR = ampToY(aR);
-        if (aL > 1e-6f)
-          mSpecPtsL.push_back({x, yL});
-        if (aR > 1e-6f)
-          mSpecPtsR.push_back({x, yR});
+        mSpecPtsL.push_back({x, yL});
+        mSpecPtsR.push_back({x, yR});
 
         const float aM = (mMergeAlgo == 0) ? std::sqrt(aL * aL + aR * aR) : aSum;
-        if (aM > 1e-6f)
-          mSpecPtsM.push_back({x, ampToY(aM)});
+        mSpecPtsM.push_back({x, ampToY(aM)});
       }
 
       if (mChanMode == 0) {
@@ -696,14 +689,11 @@ private:
         const float aSum = (mSpectrum[2].size() > (size_t)b) ? mSpectrum[2][b] : 0.f;
         const float yL = ampToY(aL);
         const float yR = ampToY(aR);
-        if (aL > 1e-6f)
-          mSpecPtsL.push_back({x, yL});
-        if (aR > 1e-6f)
-          mSpecPtsR.push_back({x, yR});
+        mSpecPtsL.push_back({x, yL});
+        mSpecPtsR.push_back({x, yR});
 
         const float aM = (mMergeAlgo == 0) ? std::sqrt(aL * aL + aR * aR) : aSum;
-        if (aM > 1e-6f)
-          mSpecPtsM.push_back({x, ampToY(aM)});
+        mSpecPtsM.push_back({x, ampToY(aM)});
       }
 
       if (mChanMode == 0) {
@@ -734,8 +724,6 @@ private:
           const float amp = mSpectrum[c][i];
           if (amp > mBandAcc[b].max[c])
             mBandAcc[b].max[c] = amp;
-          if (amp > 1e-6f)
-            mBandAcc[b].used[c] = 1;
         }
       }
     }
@@ -746,14 +734,11 @@ private:
       const float aL = acc.max[0], aR = acc.max[1], aSum = acc.max[2];
       const float yL = ampToY(aL);
       const float yR = ampToY(aR);
-      if (acc.used[0])
-        mSpecPtsL.push_back({x, yL});
-      if (acc.used[1])
-        mSpecPtsR.push_back({x, yR});
+      mSpecPtsL.push_back({x, yL});
+      mSpecPtsR.push_back({x, yR});
 
       const float aM = (mMergeAlgo == 0) ? std::sqrt(aL * aL + aR * aR) : aSum;
-      if (aM > 1e-6f)
-        mSpecPtsM.push_back({x, ampToY(aM)});
+      mSpecPtsM.push_back({x, ampToY(aM)});
     }
 
     if (mChanMode == 0) {
@@ -769,13 +754,14 @@ private:
     if (pts.size() < 2)
       return;
 
-    // 左右边缘闭合：低频延伸至左边缘贴底，高频在实际最高频点处垂直收口
-    pts.front().x = plot.L;
+    // 右边缘：末端已贴近右缘时吸附到 plot.R，保持"高频在实际最高频点处垂直收口"
     if (pts.back().x >= plot.R - plot.W() * 0.02f)
       pts.back().x = plot.R;
 
+    // 左边缘闭合：从绘图区左下角起笔，再连到最低频带 pts[0]。
     g.PathClear();
-    g.PathMoveTo(pts[0].x, pts[0].y);
+    g.PathMoveTo(plot.L, plot.B);
+    g.PathLineTo(pts[0].x, pts[0].y);
     if (smooth && pts.size() > 3) {
       const float s = 0.6f;
       const int n = (int)pts.size();
@@ -795,7 +781,7 @@ private:
         g.PathLineTo(pts[i].x, pts[i].y);
     }
     g.PathLineTo(pts.back().x, plot.B);
-    g.PathLineTo(pts[0].x, plot.B);
+    g.PathLineTo(plot.L, plot.B);
     g.PathClose();
 
     // 渐变范围跟随曲线峰值，保证弱信号在底部也有足够的对比度
