@@ -121,6 +121,10 @@ protected:
       std::snprintf(buf, sizeof(buf), "%.3fs", p->Value());
       ds.Set(buf);
       break;
+    case kPazKernel:
+      std::snprintf(buf, sizeof(buf), "%.2f", p->Value());
+      ds.Set(buf);
+      break;
     case kRes: {
       const int idx = (int)std::clamp(p->Value(), 0.0, (double)kNumResOptions - 1);
       std::snprintf(buf, sizeof(buf), "%d", kResOptions[idx]);

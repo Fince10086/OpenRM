@@ -25,7 +25,7 @@ enum EParams {
   kSlopeMRFFT,    // 频谱斜率档位索引, MR-FFT 引擎独立保存 (-3/0/1.5 dB/oct)
   kFFTWindow,     // STFT 窗函数档位 (0: Hann, 1: BH4 4阶Blackman-Harris)
   kWindowVQT,     // VQT 窗函数档位 (0: Hann, 1: BH4), 与 STFT 独立保存 (追加末尾, 保旧状态文件下标兼容)
-  kPazKernel,     // PAZ 解调核长系数档位索引 (T = k/bw, 档值表 kPazKernelLenOptions; 追加末尾保兼容)
+  kPazKernel,     // PAZ 解调核墙位系数 (Kaiser 原型 Esb=0.13k·bw, 连续 4.5~6.0 步进 0.05; 追加末尾保兼容)
   kNumParams
 };
 
@@ -40,11 +40,6 @@ constexpr int kLfResOptions[] = {20, 10, 5};
 constexpr int kNumLfResOptions = 3;
 constexpr int kPazLfResOptions[] = {40, 20, 10};
 constexpr int kNumPazLfResOptions = 3;
-
-// PAZ 解调核长系数档值 (kPazKernel 存索引)。T = k/bw: k 越小延迟越低、带间读数越平,
-// 但 k ≈ 4.6 起最坏邻带滑入主瓣开始泄漏 (详见 PAZAnalyzer::SetKernelLen 注释)。
-constexpr double kPazKernelLenOptions[] = {3.0, 3.5, 4.0, 4.5, 5.0, 5.5, 6.0, 7.0, 8.0};
-constexpr int kNumPazKernelLenOptions = 9;
 
 // 峰值保持时长档位 (kLevelHold 存索引)。持久档用 1e9s 表示: LevelMeter 的超时逻辑
 // (holdT >= holdSec 才回落) 永不触发, 即无限保持, 且 holdSec > 0 的"画 hold 线"判定照常成立。

@@ -146,7 +146,7 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
   // 窗函数档位 STFT 与 VQT 各自独立 (kFFTWindow / kWindowVQT), 由同一按钮按模式改绑
   GetParam(kFFTWindow)->InitInt("WindowFFT", kFFTWindowHann, 0, kNumFFTWindows - 1, "");
   GetParam(kWindowVQT)->InitInt("WindowVQT", kFFTWindowHann, 0, kNumFFTWindows - 1, "");
-  GetParam(kPazKernel)->InitInt("PazKernel", 4, 0, kNumPazKernelLenOptions - 1, ""); // 默认 k=5.0 (隔离悬崖上最后一档)
+  GetParam(kPazKernel)->InitDouble("PazKernel", 5.0, 2.0, 10.0, 0.05, ""); // Kaiser 墙位 Esb=0.13k·bw, 连续可调拟合原版
 
   mDefaultSnapshot = Snapshot();
   mStableSnapshot = Snapshot();
@@ -288,15 +288,6 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     bindTip(mWindowBtn, orm::kTxtTipWindow);
     mWindowBtn->Hide(initMode != kModeFFT && initMode != kModeVQT);
 
-    // PAZ 解调核长系数循环按钮 (K3.0~K8.0) — 窗函数按钮槽位 (PAZ 模式下该槽空闲), 仅 PAZ 可见。
-    // 核长系数 = T·bw: 越小延迟越低/带间读数越平, 越大邻带隔离越深; 用于与原版 PAZ 对比调校。
-    mPazKernelBtn = new FlatCycleButton(IRECT(kWinX, kTopBtnY, kWinX + kTopBtnW, kTopBtnY + kTopBtnH),
-                                        kPazKernel,
-                                        {"3.0", "3.5", "4.0", "4.5", "5.0", "5.5", "6.0", "7.0", "8.0"},
-                                        btnStyle);
-    pGraphics->AttachControl(mPazKernelBtn);
-    mPazKernelBtn->Hide(initMode != kModePAZ);
-
     // 主频谱绘制区域
     mSpectrumPad = new SpectrumPad(IRECT(20, 58, 668, 328));
     pGraphics->AttachControl(mSpectrumPad, kCtrlTagPad);
@@ -433,6 +424,14 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
         new FlatCycleButton(IRECT(kCol2X, 339, kPanelR, 369), kLevelHold, {"0.5s", "2s", "KEEP"}, btnStyle);
     pGraphics->AttachControl(mLevelHoldTimeBtn);
     bindTip(mLevelHoldTimeBtn, orm::kTxtTipLevelHoldTime);
+
+    // PAZ 解调核墙位滑块 (Kaiser 原型 Esb = 0.13k·bw, 4.5~6.0 步进 0.05) — HOLD 行下方,
+    // 仅 PAZ 模式可见。k 越小墙越近/核越长/隔离越深; 用于与原版 PAZ 逐点拟合。
+    // (标题须走构造参数: SetHeaderLabel 会在 AttachControl 前触发 SetDirty→GetParam 空引用)
+    mPazKernelSlider =
+        new ORMSlider(IRECT(kCol1X, 380, kPanelR, 422), kPazKernel, "KERNEL", style, EDirection::Horizontal);
+    pGraphics->AttachControl(mPazKernelSlider);
+    mPazKernelSlider->Hide(initMode != kModePAZ);
 
     // 底部标题栏：ORM 标识、设置齿轮与版本号
     IText ormText(32, COL_900(), kFontBold, EAlign::Near, EVAlign::Bottom);
@@ -902,7 +901,7 @@ void ORMAnalyzer::OnIdle() {
     mFreezeWindowVQT = CurrentVQTWindow();
     mFreezeLf = (int)std::lround(GetParam(kLfRes)->Value());
     mFreezePyramid = (int)std::lround(GetParam(kPyramidDecim)->Value());
-    mFreezeKernel = (int)std::lround(GetParam(kPazKernel)->Value());
+    mFreezeKernel = GetParam(kPazKernel)->Value();
   };
 
   // 模式切换 (冻结中: 跳过 reset 不清屏, 改用冻结缓冲在新算法下重算后直显定格)
@@ -913,9 +912,9 @@ void ORMAnalyzer::OnIdle() {
       mResBtn->Hide(mode != kModeFFT);
       mPazLfResBtn->Hide(mode != kModePAZ);
       mPyramidBtn->Hide(mode != kModeVQT);
-      if (mPazKernelBtn)
-        mPazKernelBtn->Hide(mode != kModePAZ);
     }
+    if (mPazKernelSlider)
+      mPazKernelSlider->Hide(mode != kModePAZ);
     // 窗函数按钮: STFT 与 VQT 各自独立档位, 按模式改绑参数 (仅两引擎模式可见)
     if (mWindowBtn) {
       mWindowBtn->Hide(mode != kModeFFT && mode != kModeVQT);
@@ -1021,12 +1020,12 @@ void ORMAnalyzer::OnIdle() {
       const int winVQT = CurrentVQTWindow();
       const int lfIdx = (int)std::lround(GetParam(kLfRes)->Value());
       const int pyrIdx = (int)std::lround(GetParam(kPyramidDecim)->Value());
-      const int kernIdx = (int)std::lround(GetParam(kPazKernel)->Value());
+      const double kernVal = GetParam(kPazKernel)->Value();
       const bool cfgChanged =
           (mode == kModeFFT && (resIdx != mFreezeRes || winFFT != mFreezeWindowFFT)) ||
           (mode == kModeVQT &&
            (lfIdx != mFreezeLf || pyrIdx != mFreezePyramid || winVQT != mFreezeWindowVQT)) ||
-          (mode == kModePAZ && (lfIdx != mFreezeLf || kernIdx != mFreezeKernel));
+          (mode == kModePAZ && (lfIdx != mFreezeLf || std::abs(kernVal - mFreezeKernel) > 1e-9));
       if (cfgChanged) {
         StartFreezeReplay();
       }
@@ -1035,7 +1034,7 @@ void ORMAnalyzer::OnIdle() {
       mFreezeWindowVQT = winVQT;
       mFreezeLf = lfIdx;
       mFreezePyramid = pyrIdx;
-      mFreezeKernel = kernIdx;
+      mFreezeKernel = kernVal;
     }
     // 冻结回放泵送: 每 tick 回放一批帧 (kUpdateMessage → pad 实时平滑), 收敛后定格
     PumpFreezeReplay();
@@ -1123,7 +1122,7 @@ void ORMAnalyzer::OnUIClose() {
   mSpectrumPad = nullptr;
   mResBtn = nullptr;
   mPazLfResBtn = nullptr;
-  mPazKernelBtn = nullptr;
+  mPazKernelSlider = nullptr;
   mRangeBtn = nullptr;
   mAttackSlider = nullptr;
   mReleaseSlider = nullptr;

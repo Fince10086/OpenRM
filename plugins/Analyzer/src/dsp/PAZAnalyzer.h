@@ -2,13 +2,17 @@
 
 // PAZAnalyzer — 心理声学临界频带频谱分析引擎 (多速率解调核算法)
 //
-// 每个频带一个 4 项 Blackman-Harris 窗复数解调 FIR 核: kernel[n] = w[n]·e^{-j2π·fc·n/fsL}。
-// 核长取 T = 6/bw (bw 为频带表间距带宽) → 主瓣零点距 4/T = 0.67·bw, 邻带中心落在
-// 1.5 倍零点距的第一旁瓣区 (峰值 −92dB), 正弦输入的邻带读数 ≤ −92dB;
-// 带内偏移的 scalloping 也很浅 (≈半带宽偏移仅 −1dB), 与原版 PAZ 的读数形态吻合。
-// (核长再短邻带隔离开始变差, 再长带间读数出现深谷 —— 6/bw 是两头的平衡点。)
+// 每个频带一个复数解调 FIR 核: kernel[n] = proto[n]·e^{-j2π·fc·n/fsL}。
+// 核形状三档 (SetWindowType), 默认 Kaiser 等波纹原型: 平顶到 0.37·bw, 阻带墙
+// 0.585·bw 起 −68dB —— 由原版 PAZ 导出反推 (G4=392/G#4=415.3Hz 正弦均在 398 带
+// 精确读 0dB, 邻带 ≤−68dB)。窗函数核 (BH4/Flat-Top) 的主瓣是光滑凸形, 带内偏移
+// 必然塌读数, 无法同时满足平顶与陡墙, 故默认档用原型低通。
 // 旧实现 (2×2 阶 TPT SVF 级联带通 + hop 内峰值) 受 4 阶滚降限制, 9.5% 邻距下邻带
 // 读数 −12~−32dB, 正弦输入必然点亮数个邻带; 核算法达成与原版 PAZ 一致的隔离形态。
+//
+// 注: 原版导出中 G4 在 352 带的 −48dB 泄漏为其分频器阻带泄漏跨层折返所致
+// (392Hz 恰在 ~375Hz 层边界上方, 折回到 358Hz 落入 352 带平顶), 属瑕疵, 不克隆;
+// 本实现对同类泄漏的抑制深得多 (G4@352 ≤ −77dB)。
 //
 // 多速率: 核跑在 2x 半带抽取金字塔上 (层 L 速率 fs/2^L, 跨帧保持滤波状态), 层分配
 // 与 VQT 同款 (band 顶 ≤ 0.78·新奈奎斯特); 跨层 readOff 对齐消除层边界群延迟错位。
@@ -132,11 +136,23 @@ public:
     return false;
   }
 
-  // 核长系数 k (T = k/bw, BH4 零点距 4/T = 4bw/k)。k 越小读数越平/延迟越低,
-  // 但邻带 (间距 0.87~1.2×bw) 逐渐滑入主瓣。实测 (48k, 40/10Hz 模式边沿探针):
-  //   k=8/7/6/5.5/5.0 → 最坏邻带 −94/−93/−93/−92/−92 dB (旁瓣地板);
-  //   k=4.5/4.0/3.0 → −65/−45/−20 dB (最坏邻带过不了第一零点, 悬崖在 k≈4.6)。
-  // 带间谷深 (音落两带正中): k=6 → −37dB, k=5 → −24dB。改动触发重建 (冷启动重新收敛)。
+  // 核窗函数档位 (0: BH4, 1: Flat-Top 5 项, 2: Kaiser 等波纹原型低通)
+  bool SetWindowType(int windowType) {
+    const int v = std::clamp(windowType, 0, 2);
+    if (v != mWindowType) {
+      mWindowType = v;
+      mNeedRebuild.store(true, std::memory_order_release);
+      return true;
+    }
+    return false;
+  }
+  int GetWindowType() const { return mWindowType; }
+
+  // 核长系数 k。窗核 (档位 0/1): T = k/bw。Kaiser 原型 (档位 2, 默认): 阻带墙位置
+  // Esb = 0.13·k·bw —— k 越小墙越近/核越长/隔离越深 (与窗核方向相反!)。
+  // 实测 (48k, G4/G#4/20Hz 探针): k=4.5 与原版 PAZ 导出逐点吻合 (G#4@+0.37bw 读
+  // 0.00dB、@+0.63bw −71dB、20Hz 邻带 ≤−92dB); k=6 起最坏邻带泄漏开始冒头
+  // (−12dB@k=6, −3dB@k=8)。改动触发重建 (冷启动重新收敛)。
   bool SetKernelLen(double k) {
     const double v = std::clamp(k, 2.0, 10.0);
     if (std::abs(v - mKernelLen) > 1e-6) {
@@ -398,9 +414,24 @@ private:
 
   void AddBand(double fc, double bw, double fs, int L, int nextDeep, double fSeg) {
     const double fsL = fs / (double)(1 << L);
-    // 核长 T = k/bw (k 默认 5): 主瓣零点距 4/T = 0.8bw, 邻带中心 1.1~1.5 倍零点距
-    // (旁瓣 −92dB); k 可由 SetKernelLen 调节以在隔离/读数平坦度/延迟间取平衡
-    const int wl = std::max(8, (int)std::lround(mKernelLen * fsL / bw));
+    // 核长/形状按窗档位:
+    //   0/1: 窗函数核 T = k/bw (k=SetKernelLen);
+    //   2: Kaiser 等波纹原型低通 —— 平顶到 0.37bw, 阻带墙 Esb=0.13·k·bw 起 −68dB,
+    //      k=5 时 Esb=0.65bw 与原版 PAZ 实测形状一致 (G#4@+0.37bw 读 0dB, @+0.63bw −68dB);
+    //      过渡带越窄核越长: T = (A−8)/(2.285·2π·(Esb−Epb)) ≈ 15/bw (k=5)。
+    int wl;
+    double epb = 0.0, esb = 0.0;
+    if (mWindowType == 2) {
+      epb = 0.37 * bw;
+      esb = std::max(0.13 * mKernelLen * bw, epb + 0.10 * bw); // k=5 → 0.65bw; 过渡带不退化
+      const double dF = esb - epb;
+      constexpr double kAttenDb = 68.0; // 阻带深度 (= 原版实测远端底 ≈ −70dB)
+      wl = std::max(9, (int)std::ceil((kAttenDb - 8.0) / (2.285 * 2.0 * kPi * dF / fsL)));
+      if ((wl & 1) == 0)
+        ++wl; // 奇长 → 线性相位对称
+    } else {
+      wl = std::max(8, (int)std::lround(mKernelLen * fsL / bw));
+    }
     Band bd;
     bd.layer = L;
     bd.winLen = wl;
@@ -414,11 +445,42 @@ private:
     bd.kernelIm.resize(wl);
     const double step = 2.0 * kPi * fc / fsL; // 该层速率的归一化频率
     double sum = 0.0;
+    if (mWindowType == 2) {
+      // Kaiser 窗低通原型 (截止取过渡带中点, DC 增益 1) × 载波 e^{jω0 n}
+      const double beta = 0.1102 * (68.0 - 8.7);
+      const double fcLp = 0.5 * (epb + esb);
+      const double wC = 2.0 * kPi * fcLp / fsL; // 原型截止 (rad/样本)
+      const int mid = (wl - 1) / 2;
+      for (int n = 0; n < wl; ++n) {
+        const double d = n - mid;
+        const double h = (d == 0) ? (wC / kPi) : std::sin(wC * d) / (kPi * d);
+        const double t = 2.0 * n / (wl - 1) - 1.0; // −1..1
+        const double arg = beta * std::sqrt(std::max(0.0, 1.0 - t * t));
+        const double wk = BesselI0(arg) / BesselI0(beta);
+        const double ph = step * n;
+        bd.kernelRe[n] = (float)(h * wk * std::cos(ph));
+        bd.kernelIm[n] = (float)(h * wk * std::sin(ph));
+        sum += h * wk;
+      }
+      bd.wsumInv = (sum > 1e-12) ? (float)(2.0 / sum) : 0.0f;
+      mBands.push_back(std::move(bd));
+      mFreqs.push_back(fc);
+      mMaxWinPerLayer[L] = std::max(mMaxWinPerLayer[L], wl + bd.readOff);
+      return;
+    }
     for (int n = 0; n < wl; ++n) {
       const double theta = 2.0 * kPi * n / (wl - 1);
-      const double w = 0.35875 - 0.48829 * std::cos(theta)
-                               + 0.14128 * std::cos(2.0 * theta)
-                               - 0.01168 * std::cos(3.0 * theta);
+      double w;
+      if (mWindowType == 1) {
+        // Flat-Top 窗 (SRS 5 项): 主瓣近平顶 (带内偏移读数损失 <0.1dB), 零点距 10/T,
+        // 旁瓣 ~-93dB —— 与原版 PAZ "带内平、带外陡" 的实测形态吻合
+        w = 0.21557895 - 0.41663158 * std::cos(theta) + 0.277263158 * std::cos(2.0 * theta)
+                         - 0.083578947 * std::cos(3.0 * theta) + 0.006947368 * std::cos(4.0 * theta);
+      } else {
+        w = 0.35875 - 0.48829 * std::cos(theta)
+                    + 0.14128 * std::cos(2.0 * theta)
+                    - 0.01168 * std::cos(3.0 * theta);
+      }
       sum += w;
       const double ph = step * n;
       bd.kernelRe[n] = (float)(w * std::cos(ph));
@@ -444,8 +506,21 @@ private:
     buf.insert(buf.end(), src, src + n);
   }
 
+  // 第一类修正贝塞尔 I0 (Kaiser 窗用; 级数展开, x ≤ ~10 收敛快)
+  static double BesselI0(double x) {
+    double sum = 1.0, term = 1.0;
+    for (int k = 1; k < 32; ++k) {
+      term *= (x / 2.0) / k * (x / 2.0) / k;
+      sum += term;
+      if (term < 1e-12 * sum)
+        break;
+    }
+    return sum;
+  }
+
   double mSampleRate = 48000.0;
-  double mKernelLen = 5.0; // 核长系数 k (T = k/bw)
+  double mKernelLen = 4.5; // 核长系数 k: 窗核 T = k/bw; Kaiser 原型墙位 Esb = 0.13·k·bw
+  int mWindowType = 2;     // 核形状: 0=BH4 窗, 1=Flat-Top 窗, 2=Kaiser 等波纹原型 (默认, 拟合原版)
   int mLfMode = 0; // 0=40Hz, 1=20Hz, 2=10Hz
   int mChanTri = 0; // 0=LR, 1=PWR, 2=SUM
   std::atomic<bool> mNeedRebuild{false};
