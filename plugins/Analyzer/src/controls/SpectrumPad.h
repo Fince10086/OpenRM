@@ -270,7 +270,9 @@ public:
         mHoverActive && mHoverX >= plot.L && mHoverX <= plot.R && mHoverY >= plot.T && mHoverY <= plot.B;
     IRECT hzSkip, dbSkip; // 默认空矩形 = 不跳过任何刻度
     char hzBuf[16] = "", dbBuf[16] = "";
+    char noteBuf[8];   // 音高标签 (C4 等最近音名), inPlot 内计算
     IText hzText, dbText;
+    IRECT pitchR, freqR; // 音高/频率标签绘制矩形, inPlot 内计算
     float xLine = 0.f, yLine = 0.f;
     if (inPlot) {
       xLine = mHoverX;
@@ -278,6 +280,7 @@ public:
 
       // x -> 对数频率 (与 FreqNorm 反函数一致): 20Hz..20kHz
       const double hz = 20.0 * std::pow(1000.0, (double)(xLine - plot.L) / plot.W());
+      FreqToNoteName(hz, noteBuf, sizeof(noteBuf));
       if (hz < 1000.0)
         std::snprintf(hzBuf, sizeof(hzBuf), "%.0f Hz", hz);
       else
@@ -287,16 +290,33 @@ public:
       const float db = mBottomDb + (kTopDb - mBottomDb) * (plot.B - yLine) / plot.H();
       std::snprintf(dbBuf, sizeof(dbBuf), "%.1f dB", db);
 
-      // Hz 标签: 与顶部频率刻度同布局同样式 (文字在竖线右侧, 贴频谱顶端);
-      // 右缘放不下时翻转到线左侧 (右对齐)。矩形取文字实际范围, 供重叠判定。
+      // Hz/音高标签: 与顶部频率刻度同布局同样式, 正常状态音高在准线左侧、频率在准线右侧,
+      // 一侧放不下时折叠到另一侧 (见上方 noteBuf 注释)。矩形取文字实际范围, 供重叠判定。
       hzText = IText(14, COL_700(), kFontRegular, EAlign::Near, EVAlign::Top);
-      hzSkip = IRECT(xLine + 5.f, plot.T + 2.f, plot.R, plot.T + 2.f + kLabelH);
-      g.MeasureText(hzText, hzBuf, hzSkip);
-      if (hzSkip.R > plot.R) {
-        hzText.mAlign = EAlign::Far;
-        hzSkip = IRECT(plot.L, plot.T + 2.f, xLine - 5.f, plot.T + 2.f + kLabelH);
-        g.MeasureText(hzText, hzBuf, hzSkip);
+      // 先量出两标签的实际宽度 (矩形缩小为文字范围, 供两侧摆放)
+      pitchR = IRECT(plot.L, plot.T + 2.f, plot.R, plot.T + 2.f + kLabelH);
+      g.MeasureText(hzText, noteBuf, pitchR);
+      freqR = IRECT(plot.L, plot.T + 2.f, plot.R, plot.T + 2.f + kLabelH);
+      g.MeasureText(hzText, hzBuf, freqR);
+      const float wP = pitchR.W(), wF = freqR.W();
+      constexpr float kHzGap = 6.f; // 折叠并排时两标签间距
+      const bool pitchFitsLeft = (xLine - 5.f - wP >= plot.L);
+      const bool freqFitsRight = (xLine + 5.f + wF <= plot.R);
+      if (pitchFitsLeft && freqFitsRight) {
+        // 正常: 音高在准线左侧, 频率在准线右侧
+        pitchR = IRECT(xLine - 5.f - wP, plot.T + 2.f, xLine - 5.f, plot.T + 2.f + kLabelH);
+        freqR = IRECT(xLine + 5.f, plot.T + 2.f, xLine + 5.f + wF, plot.T + 2.f + kLabelH);
+      } else if (!pitchFitsLeft) {
+        // 音高放不进左侧: 避让到频率读数的右侧 (频率保持在准线右侧原位)
+        freqR = IRECT(xLine + 5.f, plot.T + 2.f, xLine + 5.f + wF, plot.T + 2.f + kLabelH);
+        pitchR = IRECT(freqR.R + kHzGap, plot.T + 2.f, freqR.R + kHzGap + wP, plot.T + 2.f + kLabelH);
+      } else {
+        // 频率放不进右侧: 避让到音高读数的右侧 (两标签并排在准线左侧)
+        pitchR = IRECT(xLine - 5.f - wF - kHzGap - wP, plot.T + 2.f, xLine - 5.f - wF - kHzGap,
+                       plot.T + 2.f + kLabelH);
+        freqR = IRECT(xLine - 5.f - wF, plot.T + 2.f, xLine - 5.f, plot.T + 2.f + kLabelH);
       }
+      hzSkip = pitchR.Union(freqR); // 与固定频率刻度避让: 两标签取并集矩形
 
       // dB 标签: 与右侧 dB 刻度同布局同样式 (文字在横线上方, 右对齐);
       // 顶部放不下时翻转到线下侧。
@@ -317,7 +337,8 @@ public:
       // 准线颜色与刻度文字一致 (COL_700), 1px 细线
       g.DrawLine(COL_700(), xLine, plot.T, xLine, plot.B, nullptr, 1.f);
       g.DrawLine(COL_700(), plot.L, yLine, plot.R, yLine, nullptr, 1.f);
-      g.DrawText(hzText, hzBuf, hzSkip);
+      g.DrawText(hzText, noteBuf, pitchR);
+      g.DrawText(hzText, hzBuf, freqR);
       g.DrawText(dbText, dbBuf, dbSkip);
     }
 
@@ -362,6 +383,13 @@ private:
   // 频率(Hz) -> 归一化 x (0..1), 与 BandPass Freq 参数 (20..20000, ShapeExp) 一致
   static float FreqNorm(double hz) {
     return (float)(std::log(std::clamp(hz, 20.0, 20000.0) / 20.0) / std::log(20000.0 / 20.0));
+  }
+
+  // 频率 -> 最近音高
+  static void FreqToNoteName(double hz, char *out, int outSize) {
+    static const char *const kNoteNames[12] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
+    const int nn = (int)std::lround(12.0 * std::log2(hz / 440.0)) + 69; // MIDI 音符号
+    std::snprintf(out, outSize, "%s%d", kNoteNames[(nn % 12 + 12) % 12], nn / 12 - 1);
   }
 
   float XOf(const IRECT &plot, double f) const { return plot.L + FreqNorm(f) * plot.W(); }
