@@ -18,13 +18,6 @@
 BEGIN_IPLUG_NAMESPACE
 BEGIN_IGRAPHICS_NAMESPACE
 
-// 冻结直显帧 (方案 B 冻结重算): 插件把冻结音频缓冲重算出的最后一帧一次性下发。
-// 与 kUpdateMessage 同尺寸 (8192), 本控件按当前模式的有效长度 (nVals) 截取,
-// 直接覆盖平滑缓冲 (跳过攻击/释放), 使冻结画面精确显示冻结音频的谱。
-struct FreezeFrameData {
-  std::array<float, 8192> vals[3]{};
-};
-
 class SpectrumPad : public IControl {
 public:
   // 尺寸必须与四个分析引擎的数据包严格一致 (SpectrumSTFT/VQT/PAZ/MRFFT 均为 8192):
@@ -45,7 +38,6 @@ public:
     kMsgTagLevelMeter,  // 电平表数据 (LevelMeterUiData)
     kMsgTagPAZBands,    // PAZ 频带中心频率 (Hz)
     kMsgTagMRFFTBands,  // MR-FFT 频带中心频率 (Hz)
-    kMsgTagFreezeFrame, // 冻结直显帧 (FreezeFrameData, 跳过平滑直接覆盖)
   };
 
   SpectrumPad(const IRECT &bounds) : IControl(bounds) {
@@ -89,7 +81,9 @@ public:
       if (nVals <= 0)
         return;
 
-      const double hop = (mMode == 0) ? (double)nVals * 2.0 / 4.0 : 1024.0;
+      // 帧进给周期恒 1024 样本: FFT 档位 overlap 规则 (2048/2, 4096/4, 8192/8)
+      // 保证 hop 恒 1024, 其余引擎 kHop 固定 1024 —— 平滑时间常数与引擎同步
+      const double hop = 1024.0;
       const double updatePeriod = hop / std::max(mSampleRate, 1.0);
       mAttackCoeff = (float)std::exp(-updatePeriod / mAttackSec);
       mReleaseCoeff = (float)std::exp(-updatePeriod / mReleaseSec);
@@ -220,25 +214,6 @@ public:
       mMeterMode = std::clamp(d.mode, 0, 2);
       mOverL = d.overL != 0;
       mOverR = d.overR != 0;
-      SetDirty(false);
-    } else if (msgTag == kMsgTagFreezeFrame) {
-      if (dataSize != (int)sizeof(FreezeFrameData))
-        return;
-      FreezeFrameData d;
-      std::memcpy(&d, pData, sizeof(d));
-      // 直显帧按当前模式有效长度 (nVals) 截取: 与渲染循环读取范围一致,
-      // 长度匹配 (== nVals) 保证解冻后 kUpdateMessage 的分支不再清空缓冲,
-      // 平滑从冻结值自然续接。
-      const int nVals = (mMode == 0) ? std::max(mNumBins, 0)
-                                     : (mMode == 1) ? (int)mVQTFreqs.size()
-                                     : (mMode == 2) ? (int)mPAZFreqs.size()
-                                                    : (int)mMRFFTFreqs.size();
-      if (nVals <= 0)
-        return;
-      for (int c = 0; c < 3; ++c) {
-        mSpectrum[c].assign(nVals, 0.f);
-        std::memcpy(mSpectrum[c].data(), d.vals[c].data(), (size_t)nVals * sizeof(float));
-      }
       SetDirty(false);
     } else if (msgTag == kMsgTagReset) {
       for (int c = 0; c < 3; ++c)

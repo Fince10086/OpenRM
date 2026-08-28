@@ -69,6 +69,16 @@ public:
 // Freeze (冻结) 支持: UI 线程离线分析一帧原始样本 (冻结重算预热, 与实时路径共用实现)
   void PrepareFrameUI(Data &d) { PrepareDataForUI(d); }
 
+  // Freeze (冻结) 支持: 输入侧 hop 相位查询 (音频线程 pending 计数, 冻结回放帧格对齐用)
+  int HopPhase() const { return mBufCount; }
+
+  // Freeze (冻结) 支持: 复位分析侧运行态 (窗历史), 不动输入侧 mBufCount/mPending
+  // (输入计数冻结期间保持, 解冻后实时帧格无缝续接)
+  void ResetRuntimeState() {
+    for (auto &h : mHistory)
+      h.fill(0.f);
+  }
+
 protected:
   void PrepareDataForUI(Data &d) override {
     const int nCh = std::min(d.nChans, MAXNC);

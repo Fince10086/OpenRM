@@ -371,6 +371,21 @@ public:
 // Freeze (冻结) 支持: UI 线程离线分析一帧原始样本 (冻结重算预热, 与实时路径共用实现)
   void PrepareFrameUI(Data &d) { PrepareDataForUI(d); }
 
+  // Freeze (冻结) 支持: 复位分析侧运行态 (band 相位/层缓冲/抽取器), 不动输入侧
+  // mBufCount/mPending 与 band 表 —— 冻结回放的确定性起点 (等价于引擎冷启动)
+  void ResetRuntimeState() {
+    for (int c = 0; c < MAXNC; ++c) {
+      mRun[c].assign((size_t)mBands.size(), RunState{0, 0.f});
+      for (int l = 0; l < kMaxLayers; ++l)
+        mLayers[c][l].clear();
+      for (int l = 0; l < kMaxLayers; ++l)
+        mDecim[c][l].Reset();
+    }
+  }
+
+  // Freeze (冻结) 支持: 输入侧 hop 相位查询 (音频线程 pending 计数, 冻结回放帧格对齐用)
+  int HopPhase() const { return mBufCount; }
+
 protected:
   void PrepareDataForUI(Data &d) override {
     CheckRebuild();
@@ -573,13 +588,7 @@ private:
       i = j;
     }
 
-    for (int c = 0; c < MAXNC; ++c) {
-      mRun[c].assign((size_t)mBands.size(), RunState{0, 0.f});
-      for (int l = 0; l < kMaxLayers; ++l)
-        mLayers[c][l].clear();
-      for (int l = 0; l < kMaxLayers; ++l)
-        mDecim[c][l].Reset();
-    }
+    ResetRuntimeState();
   }
 
   // 频率相关总群延迟 (输入采样单位): 沿路径累计各级滤波器在 fc 处的 τ。

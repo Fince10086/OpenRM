@@ -66,6 +66,12 @@ static uint64_t ThreadCpuNs() {
 // 手势撤销的时间窗: 两次 UI 改动间隔超过该值时, 下一次改动前推一次撤销快照
 static constexpr double kGestureGapSec = 0.4;
 
+// FFT 档位 overlap 规则: hop 恒 1024 (2048/2, 4096/4, 8192/8), 与其余引擎 kHop 一致 ——
+// 四引擎帧进给同格, pad 平滑时间常数跨档位同源, 冻结回放帧格对齐无需按档位分支
+static inline int FFTOverlapForSize(int fftSize) {
+  return std::max(1, fftSize / 1024);
+}
+
 int orm::DetectSystemLanguage() {
 #if defined(OS_MAC)
   bool zh = false;
@@ -640,14 +646,19 @@ void ORMAnalyzer::ProcessBlock(sample **inputs, sample **outputs, int nFrames) {
       mFreezeRing[2][p] = mSpecInM[s];
       mFreezeRingPos.store((p + 1) & (kFreezeRingLen - 1), std::memory_order_relaxed);
     }
-    if (mode == kModeVQT)
+    if (mode == kModeVQT) {
       mVQT.ProcessBlock(spec, nFrames, kCtrlTagPad, 3);
-    else if (mode == kModePAZ)
+      mEngineHopPhase[kModeVQT].store(mVQT.HopPhase(), std::memory_order_relaxed);
+    } else if (mode == kModePAZ) {
       mPAZ.ProcessBlock(spec, nFrames, kCtrlTagPad, 3);
-    else if (mode == kModeMRFFT)
+      mEngineHopPhase[kModePAZ].store(mPAZ.HopPhase(), std::memory_order_relaxed);
+    } else if (mode == kModeMRFFT) {
       mMRFFT.ProcessBlock(spec, nFrames, kCtrlTagPad, 3);
-    else
+      mEngineHopPhase[kModeMRFFT].store(mMRFFT.HopPhase(), std::memory_order_relaxed);
+    } else {
       mSpectrum.ProcessBlock(spec, nFrames, kCtrlTagPad, 3);
+      mEngineHopPhase[kModeFFT].store(mSpectrum.HopPhase(), std::memory_order_relaxed);
+    }
   }
 
   // 电平表测量 (冻结中挂起: 保持最后快照, 画面随频谱一起定格; 重置请求仍被消费, 避免解冻后误触发)
@@ -695,7 +706,7 @@ void ORMAnalyzer::ProcessBlock(sample **inputs, sample **outputs, int nFrames) {
 }
 
 void ORMAnalyzer::OnReset() {
-  mSpectrum.SetFFTSizeAndOverlap(CurrentFFTSize(), 4);
+  mSpectrum.SetFFTSizeAndOverlap(CurrentFFTSize(), FFTOverlapForSize(CurrentFFTSize()));
   mVQT.SetSampleRate(GetSampleRate());
   mVQT.SetGamma(kVQTGammaHz); // VQT 固定 γ = HIGH (5 Hz)
   mVQT.SetBpo(kVQTBpo);       // VQT 固定 BPO = 24
@@ -778,7 +789,7 @@ void ORMAnalyzer::OnParamChange(int paramIdx, EParamSource source, int sampleOff
   const bool frozen = GetParam(kFreeze)->Value() > 0.5;
   // 参数变化时更新分析引擎配置
   if (paramIdx == kRes)
-    mSpectrum.SetFFTSizeAndOverlap(CurrentFFTSize(), 4);
+    mSpectrum.SetFFTSizeAndOverlap(CurrentFFTSize(), FFTOverlapForSize(CurrentFFTSize()));
   else if (paramIdx == kLfRes) {
     if (GetParam(kMode)->Value() > 1.5 && GetParam(kMode)->Value() < 2.5) { // PAZ 模式
       if (mPAZ.SetLfWidth(CurrentPazLfRes()) && !frozen)
@@ -874,16 +885,9 @@ void ORMAnalyzer::OnIdle() {
     else if (mode == kModeMRFFT)
       SendMRFFTBandFreqs();
     if (frozen) {
-      // 冻结中: 用冻结输入快照预热新引擎 (推进其内部历史到缓冲尾部) 并直显最后一帧,
-      // 画面直接变成"冻结音频 × 新算法"的谱并继续定格。同步档位快照, 避免同 tick 重复预热。
-      if (mode == kModeVQT)
-        FreezeShowFrozen(mVQT);
-      else if (mode == kModePAZ)
-        FreezeShowFrozen(mPAZ);
-      else if (mode == kModeMRFFT)
-        FreezeShowFrozen(mMRFFT);
-      else
-        FreezeShowFrozen(mSpectrum);
+      // 冻结中: 用冻结输入快照在 (新) 引擎与档位下确定性回放, 画面随分 tick 泵送
+      // 收敛到 "冻结音频 × 当前配置" 并继续定格。同步档位快照, 避免同 tick 重复触发。
+      StartFreezeReplay();
       syncFreezeSnapshot();
     } else {
       SendResetToPad();
@@ -902,6 +906,8 @@ void ORMAnalyzer::OnIdle() {
     const int mergeAlgo = (chanTri == kChanModeSUM) ? 1 : 0;
     SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagChanMode, sizeof(int), &chanMode);
     SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagMergeAlgo, sizeof(int), &mergeAlgo);
+    if (frozen)
+      StartFreezeReplay(); // 声道模式影响分析通道选择: 冻结画面按新声道回放
   }
 
   // 检查并下发参数变动 (冻结中照常: Range 等显示参数即时生效, band 表随档位变化重发;
@@ -919,6 +925,10 @@ void ORMAnalyzer::OnIdle() {
     const double bpo = GetParam(kBpo)->Value();
     if (sr != mSentSampleRate || fftSize != mSentFFTSize || release != mSentRelease ||
         range != mSentRange || attack != mSentAttack || lfRes != mSentLfRes || bpo != mSentBpo) {
+      // 冻结中 attack/release (回放弹道) 或采样率变化需重启回放, 保证确定性;
+      // Range 纯显示参数不参与计算, 不重启
+      const bool restartReplay =
+          frozen && (sr != mSentSampleRate || release != mSentRelease || attack != mSentAttack);
       mSentSampleRate = sr;
       mSentFFTSize = fftSize;
       mSentRelease = release;
@@ -927,13 +937,15 @@ void ORMAnalyzer::OnIdle() {
       mSentLfRes = lfRes;
       mSentBpo = bpo;
       SendSpectrumConfig();
+      if (restartReplay)
+        StartFreezeReplay();
     }
   }
 
   // 冻结中: 同一算法内档位变化 (FFT 尺寸 / VQT γ·BPO / PAZ LF·算法 / MRFFT BPO)
-  // → 引擎配置已在音频线程更新 (OnParamChange), band 表已由上方防抖重发 (先于直显帧),
-  // 这里用冻结缓冲重算直显, 画面 = 冻结音频 × 当前档位。刚冻结 (mFreezeOn 边沿) 只同步
-  // 快照不重算: 画面保持按下瞬间的实时定格, 避免不必要的跳变与预热开销。
+  // → 引擎配置已在音频线程更新 (OnParamChange), band 表已由上方防抖重发 (先于回放帧),
+  // 这里用冻结缓冲确定性回放, 画面 = 冻结音频 × 当前档位。刚冻结 (mFreezeOn 边沿) 只同步
+  // 快照不回放: 画面保持按下瞬间的实时定格, 避免不必要的跳变与回放开销。
   if (frozen) {
     if (!mFreezeOn) {
       mFreezeOn = true;
@@ -951,14 +963,7 @@ void ORMAnalyzer::OnIdle() {
           (mode == kModePAZ && (lfIdx != mFreezeLf || pazAlgo != mFreezePazAlgo)) ||
           (mode == kModeMRFFT && bpoIdx != mFreezeBpo);
       if (cfgChanged) {
-        if (mode == kModeVQT)
-          FreezeShowFrozen(mVQT);
-        else if (mode == kModePAZ)
-          FreezeShowFrozen(mPAZ);
-        else if (mode == kModeMRFFT)
-          FreezeShowFrozen(mMRFFT);
-        else
-          FreezeShowFrozen(mSpectrum);
+        StartFreezeReplay();
       }
       mFreezeRes = resIdx;
       mFreezeLf = lfIdx;
@@ -966,8 +971,11 @@ void ORMAnalyzer::OnIdle() {
       mFreezePazAlgo = pazAlgo;
       mFreezePyramid = pyrIdx;
     }
+    // 冻结回放泵送: 每 tick 回放一批帧 (kUpdateMessage → pad 实时平滑), 收敛后定格
+    PumpFreezeReplay();
   } else {
     mFreezeOn = false;
+    mReplayMode = -1; // 解冻中止未完成的回放, 引擎带部分预热历史续接实时 (仅分析侧)
   }
 
   // 分发激活引擎数据 (冻结中跳过: 画面定格; 引擎队列保持, 解冻后继续消费续接实时)
@@ -1076,26 +1084,55 @@ void ORMAnalyzer::OnUIClose() {
   mSentChanMode = -1;
   // 冻结档位快照复位: 重开 UI 后冻结画面与档位重算按新控件状态重新建立
   mFreezeOn = false;
-  mFreezeRes = mFreezeLf = mFreezeBpo = mFreezePazAlgo = -1;
+  mFreezeRes = mFreezeLf = mFreezeBpo = mFreezePazAlgo = mFreezePyramid = -1;
+  mReplayMode = -1;
 }
 
-// Freeze (冻结) 重算: 把冻结时刻的输入快照整圈 (kFreezeRingLen>>10 = 64 帧 × 1024 hop,
-// ≈1.36s @48k) 按时间顺序 (最旧→最新) 逐帧送入引擎分析。引擎内部历史随之推进到
-// 缓冲尾部——与"冻结输入继续流动"等价, 解冻后实时输入无缝续接。PAZ-IIR 最低频带
-// (10Hz 档 6Hz, τ≈0.8s) 经整圈预热收敛约 82%, 其余引擎/频带完全收敛, 视觉无感。
-// 最后一帧以 FreezeFrameData 直发 pad (跳过攻击/释放平滑), 画面精确显示冻结音频 × 新算法。
-template <typename TEngine>
-void ORMAnalyzer::FreezeShowFrozen(TEngine &engine) {
-  using FPkt = typename TEngine::Data; // 与 pad TDataPacket(8192) 同构
+// 冻结回放 (确定性): "冻结音频 × 当前算法/档位" 的谱由纯函数计算——
+//   display(cfg) = ballistics( replay( ring, cfg ) )
+// 启动时引擎运行态复位 (等价冷启动)、pad 平滑缓冲清零, 因此同样的 (环, 配置) 永远
+// 得到同一画面: 冻结中切走再切回, 结果逐字节一致。帧格与实时对齐: 最新回放帧起点 =
+// 环尾 - hop 相位 - hop, 即冻结瞬间实时显示的最后一帧; 从它向最旧方向铺满整圈
+// (1<<18 环 = 255/256 帧)。帧经 kUpdateMessage 下发, pad 侧攻击/释放平滑照常生效
+// (与实时同一弹道学、单一来源), 画面随回放逐 tick 收敛定格。
+// 注: hop 恒 1024 由 FFT overlap 规则 (2048/2, 4096/4, 8192/8) 与各引擎 kHop 保证。
+void ORMAnalyzer::StartFreezeReplay() {
+  const int mode = (int)GetParam(kMode)->Value();
   constexpr int kHop = 1024;
-  FPkt d, last;
+  const int p = mFreezeRingPos.load(std::memory_order_relaxed); // 下一个写入位置 (= 最旧样本)
+  // 冻结时该引擎输入侧 pending 的 b 个样本尚未成帧 (实时同样未显示), 故最新"已显示"
+  // 帧终点在环尾前 b 个样本处, 起点再退一个 hop
+  const int b = mEngineHopPhase[mode].load(std::memory_order_relaxed);
+  mReplayLastStart = (p - b - kHop) & (kFreezeRingLen - 1);
+  mReplayNFrames = (((mReplayLastStart - p + kFreezeRingLen) & (kFreezeRingLen - 1)) / kHop) + 1;
+  mReplayFrame = 0;
+  mReplayMode = mode;
+  switch (mode) {
+    case kModeVQT: mVQT.ResetRuntimeState(); break;
+    case kModePAZ: mPAZ.ResetRuntimeState(); break;
+    case kModeMRFFT: mMRFFT.ResetRuntimeState(); break;
+    default: mSpectrum.ResetRuntimeState(); break;
+  }
+  // pad 平滑缓冲确定性清零: 回放从零收敛, 显示与切换历史无关
+  SendResetToPad();
+}
+
+// 每 OnIdle 泵送一批回放帧 (kReplayFramesPerTick): 引擎逐帧分析后走实时同款
+// kUpdateMessage 通道 (pad 攻击/释放平滑生效), 收敛完成后回放结束、画面定格。
+void ORMAnalyzer::PumpFreezeReplay() {
+  if (mReplayMode < 0)
+    return;
+  constexpr int kHop = 1024;
+  const int mask = kFreezeRingLen - 1;
+  using FPkt = std::array<float, 8192>; // 与四引擎 Data / pad TDataPacket 同构
+  ISenderData<3, FPkt> d;
   d.ctrlTag = kCtrlTagPad;
   d.nChans = 3;
   d.chanOffset = 0;
-  const int pos = mFreezeRingPos.load(std::memory_order_relaxed);
-  const int nFrame = kFreezeRingLen >> 10;
-  for (int f = 0; f < nFrame; ++f) {
-    const int start = (pos + f * kHop) & (kFreezeRingLen - 1);
+  const int end = std::min(mReplayFrame + kReplayFramesPerTick, mReplayNFrames);
+  for (; mReplayFrame < end; ++mReplayFrame) {
+    // 帧序 0 = 最旧 → nFrames-1 = 最新 (实时定格帧)
+    const int start = (mReplayLastStart - (mReplayNFrames - 1 - mReplayFrame) * kHop) & mask;
     for (int c = 0; c < 3; ++c) {
       const float *src = mFreezeRing[c].data();
       float *dst = d.vals[c].data();
@@ -1107,14 +1144,17 @@ void ORMAnalyzer::FreezeShowFrozen(TEngine &engine) {
         std::memcpy(dst + n1, src, (kHop - n1) * sizeof(float));
       }
     }
-    engine.PrepareFrameUI(d);
-    if (f == nFrame - 1)
-      last = d;
+    switch (mReplayMode) {
+      case kModeVQT: mVQT.PrepareFrameUI(d); break;
+      case kModePAZ: mPAZ.PrepareFrameUI(d); break;
+      case kModeMRFFT: mMRFFT.PrepareFrameUI(d); break;
+      default: mSpectrum.PrepareFrameUI(d); break;
+    }
+    SendControlMsgFromDelegate(kCtrlTagPad, ISender<>::kUpdateMessage,
+                               sizeof(ISenderData<3, FPkt>), &d);
   }
-  FreezeFrameData msg;
-  for (int c = 0; c < 3; ++c)
-    std::memcpy(msg.vals[c].data(), last.vals[c].data(), 8192 * sizeof(float));
-  SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagFreezeFrame, sizeof(msg), &msg);
+  if (mReplayFrame >= mReplayNFrames)
+    mReplayMode = -1;
 }
 
 void ORMAnalyzer::OnParentWindowResize(int width, int height) {

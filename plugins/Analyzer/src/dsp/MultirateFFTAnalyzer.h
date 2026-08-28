@@ -150,6 +150,22 @@ public:
 // Freeze (冻结) 支持: UI 线程离线分析一帧原始样本 (冻结重算预热, 与实时路径共用实现)
   void PrepareFrameUI(Data &d) { PrepareDataForUI(d); }
 
+  // Freeze (冻结) 支持: 复位分析侧运行态 (FFT 历史/层/抽取器), 不动输入侧
+  // mBufCount/mPending 与 band 表 —— 冻结回放的确定性起点 (等价于引擎冷启动)
+  void ResetRuntimeState() {
+    for (int c = 0; c < MAXNC; ++c) {
+      for (int l = 0; l < kMaxLayers - 1; ++l)
+        mDecim[c][l].Reset();
+      for (int l = 0; l < kMaxLayers; ++l) {
+        mLayers[c][l].assign(kHop >> l, 0.f);
+        mFftHist[c][l].assign(mFftSize[l], 0.f);
+      }
+    }
+  }
+
+  // Freeze (冻结) 支持: 输入侧 hop 相位查询 (音频线程 pending 计数, 冻结回放帧格对齐用)
+  int HopPhase() const { return mBufCount; }
+
 #ifdef STANDALONE_TEST
   void TestProcessHop(Data &d) {
     PrepareDataForUI(d);
@@ -317,14 +333,7 @@ private:
       mFreqs.push_back(fc);
     }
 
-    for (int c = 0; c < MAXNC; ++c) {
-      for (int l = 0; l < kMaxLayers - 1; ++l)
-        mDecim[c][l].Reset();
-      for (int l = 0; l < kMaxLayers; ++l) {
-        mLayers[c][l].assign(kHop >> l, 0.f);
-        mFftHist[c][l].assign(mFftSize[l], 0.f);
-      }
-    }
+    ResetRuntimeState();
   }
 
   int mBpo = 24; // 12 或 24

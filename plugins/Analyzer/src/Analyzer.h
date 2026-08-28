@@ -113,15 +113,20 @@ private:
 
   int mSentMode = -1;
 
-  // ── Freeze (冻结/保持), 输入快照方案 ──────────────────────────────
-  // 音频线程把最近输入滚环记录进 mFreezeRing (freeze 后停止写入, 即冻结时刻快照);
-  // UI 线程在冻结中跳过引擎消费 (画面定格), 切换引擎/PAZ 算法/同一算法内档位
-  // (FFT 尺寸 / VQT γ·BPO / PAZ LF) 时把整圈缓冲按 hop 逐帧喂给引擎预热分析
-  // (推进内部历史到缓冲尾部), 最后一帧直发 pad 定格显示。
-  static constexpr int kFreezeRingLen = 1 << 16;   // 65536 样本 ≈1.36s @48k:
-                                                   // 覆盖四引擎最大窗历史 (VQT 深层) 与 PAZ-IIR 低频收敛
+  // ── Freeze (冻结/保持), 确定性回放方案 ─────────────────────────────
+  // 音频线程把最近输入滚环记录进 mFreezeRing (freeze 后停止写入, 即冻结时刻快照),
+  // 并逐块发布活跃引擎的输入侧 hop 相位 mEngineHopPhase (非活跃引擎保持停用前值)。
+  // UI 线程在冻结中跳过引擎消费 (画面定格); 切换引擎/PAZ 算法/同一算法内档位时
+  // StartFreezeReplay: 复位引擎运行态 → pad 平滑缓冲清零 → 把冻结环按实时帧格
+  // (hop 相位对齐, 最新回放帧 = 冻结瞬间实时显示的最后一帧) 逐帧回放, 每帧经
+  // kUpdateMessage 走 pad 的攻击/释放平滑 (与实时同一弹道学)。
+  // display(cfg) = replay(ring, cfg) 为纯函数: 冻结中切走再切回, 画面逐字节一致。
+  static constexpr int kFreezeRingLen = 1 << 18;   // 262144 样本 ≈5.46s @48k:
+                                                   // 覆盖 PAZ-IIR 最低频带 5τ (10Hz 档 τ≈0.8s)
+                                                   // 与最长释放 (1s) 弹道的收敛 (96k 下约 2.7s, 深带欠收敛)
   std::array<std::array<float, kFreezeRingLen>, 3> mFreezeRing{}; // [0]=L [1]=R [2]=M
   std::atomic<int> mFreezeRingPos{0};              // 下一个写入位置 (= 最旧样本)
+  std::array<std::atomic<int>, kNumModes> mEngineHopPhase{}; // 各引擎输入侧 hop 相位 (音频线程发布)
   bool mFreezeOn = false;                          // 冻结激活边沿/状态 (UI 线程)
   // 冻结中已重算的档位快照 (参数档位索引, -1 = 未同步); 变化时用冻结缓冲重算直显
   int mFreezeRes = -1;
@@ -130,10 +135,16 @@ private:
   int mFreezePazAlgo = -1;
   int mFreezePyramid = -1;
 
-  // 冻结重算: 把冻结缓冲整圈 (kFreezeRingLen>>10 = 64 帧 × 1024 hop) 预热情景引擎,
-  // 最后一帧以 FreezeFrameData 直发 pad (跳过攻击/释放平滑)。定义见 Analyzer.cpp。
-  template <typename TEngine>
-  void FreezeShowFrozen(TEngine &engine);
+  // 冻结回放 (UI 线程, 定义见 Analyzer.cpp)。回放分 tick 泵送避免长 UI 卡顿;
+  // 回放期间再次切换配置 → StartFreezeReplay 重启 (复位后重放, 确定性不变);
+  // 解冻时中止, 引擎带部分预热历史续接实时 (仅分析侧, 无声学影响)。
+  static constexpr int kReplayFramesPerTick = 16;  // 每 OnIdle 泵送帧数 (16 帧 ≈0.34s 音频)
+  int mReplayMode = -1;                            // 回放中的引擎模式 (kMode*), -1 = 空闲
+  int mReplayFrame = 0;                            // 下一待回放帧 (0 = 最旧)
+  int mReplayNFrames = 0;                          // 总帧数 (整圈 255/256 帧)
+  int mReplayLastStart = 0;                        // 最新帧 (= 实时定格帧) 的环内样本起点
+  void StartFreezeReplay();                        // 置位回放: 复位引擎 + 清 pad + 计算帧格
+  void PumpFreezeReplay();                         // OnIdle 每 tick 回放一批帧 (kUpdateMessage)
 
   // ── 内置测试信号发生器 (开发者工具, ORM_ENABLE_TEST_GEN) ────────────
   // UI 线程写、音频线程读: 全部用原子标量, 不做跨线程共享对象。
