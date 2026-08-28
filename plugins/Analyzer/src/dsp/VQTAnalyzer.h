@@ -32,17 +32,61 @@ struct AntiAliasDec {
   std::array<float, kMaxTaps> mTap{};
   std::array<float, kMaxTaps - 1> mState{};
   float mWork[kMaxTaps - 1 + 4096];
+  std::array<float, 65> mTauTab{}; // τ(frac) 查找表: frac = fc/输入流Nyquist ∈[0,1), 65 点线性插值
+
+  // 频率相关群延迟 (样本@输入采样速率)。线性相位为常数; 最小相位为差分实测曲线。
+  double TauAt(double frac) const {
+    double f = std::clamp(frac, 0.0, 1.0);
+    const double x = f * 64.0;
+    const int k = std::min(63, (int)x);
+    const double t0 = mTauTab[k], t1 = mTauTab[k + 1];
+    return t0 + (x - k) * (t1 - t0);
+  }
+
+  void BuildTauTab(bool minPhase) {
+    if (!minPhase) {
+      for (int i = 0; i < 65; ++i)
+        mTauTab[i] = (float)mGd;
+      return;
+    }
+    auto phaseAt = [&](double w) {
+      double r = 0.0, iq = 0.0;
+      for (int k = 0; k < mNumTaps; ++k) {
+        const double ph = w * k;
+        r += mTap[k] * std::cos(ph);
+        iq -= mTap[k] * std::sin(ph);
+      }
+      return std::atan2(iq, r);
+    };
+    // 逐点差分 + 相位展开 (每步 Δφ ≈ τ·π/64 < π, 展开安全)。τ[0] 无实际使用
+    // (最深 band 的 frac ≥ ~0.4), 直接置 0 简化。
+    mTauTab[0] = 0.f;
+    double prev = phaseAt(kPi / 64.0);
+    for (int k = 1; k <= 64; ++k) {
+      const double w = kPi * k / 64.0;
+      const double cur = phaseAt(w);
+      double dp = cur - prev;
+      while (dp > kPi) dp -= 2.0 * kPi;
+      while (dp < -kPi) dp += 2.0 * kPi;
+      mTauTab[k] = (float)(-dp / (kPi / 64.0));
+      prev = cur;
+    }
+  }
 
   // kind: 0 = 2x 线性相位 BH 半带 (101t, 偶抽头为 0)
   //       1 = 4x BH 低通 (57t, 截止 fs/8)
   //       2 = 2x 最小相位半带 (101t, 对 kind0 做倒谱最小相位化)
   void Build(int kind) {
-    if (kind == 0)
+    if (kind == 0) {
       BuildHalfband2x(false);
-    else if (kind == 1)
+      BuildTauTab(false);
+    } else if (kind == 1) {
       BuildLowpass4x();
-    else
+      BuildTauTab(false);
+    } else {
       BuildHalfband2x(true);
+      BuildTauTab(true);
+    }
   }
 
   void BuildHalfband2x(bool minPhase) {
@@ -192,7 +236,7 @@ struct AntiAliasDec {
       dc += re[i];
     for (int i = 0; i < n; ++i)
       taps[i] = (float)(re[i] / dc);              // DC 增益归一
-    // 通带群延迟 (相位差分平均)
+    // 通带群延迟 (逐点相位差分 + 展开平均, 0.05π..0.35π; 每步 Δφ ≈ τ·Δw < π)
     auto phaseAt = [&](double w) {
       double r = 0.0, iq = 0.0;
       for (int k = 0; k < n; ++k) {
@@ -203,12 +247,18 @@ struct AntiAliasDec {
       return std::atan2(iq, r);
     };
     constexpr int kPts = 24;
-    double ph0 = phaseAt(kPi * 0.05), ph1 = 0.0;
+    double prev = phaseAt(kPi * 0.05);
+    double acc = 0.0;
     for (int kp = 1; kp <= kPts; ++kp) {
       const double w = kPi * (0.05 + 0.30 * kp / kPts);
-      ph1 = phaseAt(w);
+      const double cur = phaseAt(w);
+      double dp = cur - prev;
+      while (dp > kPi) dp -= 2.0 * kPi;
+      while (dp < -kPi) dp += 2.0 * kPi;
+      acc += dp;
+      prev = cur;
     }
-    double gd = -(ph1 - ph0) / (kPi * 0.30);
+    const double gd = -acc / (kPi * 0.30);
     gdOut = std::max(1, (int)std::lround(gd));
   }
 };
@@ -458,9 +508,8 @@ private:
     const double q = 1.0 / (std::pow(2.0, 1.0 / mBpo) - 1.0);
     const int mode = mPyramid;
 
-    // ── 1. 金字塔路径 / 有效层 / 层群延迟 (输入采样单位) ──
+    // ── 1. 金字塔路径 / 有效层 ──
     mLayerValid.fill(1);
-    mGdSamples.fill(0);
     int nSteps = 0;
     if (mode == kPyramidB1) {
       // 浅层逐级 2x (L0→L5), 深层 4x 一次合并两级 (L5→L7, L7→L9)
@@ -487,14 +536,6 @@ private:
         mDecim[c][l].Build(kind);
     }
 
-    // 层流群延迟 (输入采样): 沿路径累计
-    int prevDst = 0;
-    for (int s = 0; s < nSteps; ++s) {
-      const DecimStep &st = mPath[s];
-      mGdSamples[st.dstLayer] = mGdSamples[prevDst] + mDecim[0][st.decimIdx].mGd * (1 << prevDst);
-      prevDst = st.dstLayer;
-    }
-
     // ── 2. band 表 (频率序; 层内连续段 + B1 上移段自然并入) ──
     struct Spec { double fc, bw; int layer; };
     std::vector<Spec> spec;
@@ -515,7 +556,6 @@ private:
       while (j < n && spec[j].layer == L)
         ++j; // 本层 band 段 [i, j)
 
-      const double gdL = (double)mGdSamples[L] / fs;
       // 下一更深带流层 (B1 跳过无流层)
       int nextDeep = -1;
       for (int d = L + 1; d < kMaxLayers; ++d)
@@ -523,11 +563,9 @@ private:
           nextDeep = d;
           break;
         }
-      const double gdD = (nextDeep > 0) ? (double)mGdSamples[nextDeep] / fs : gdL;
       for (int t = i; t < j; ++t) {
         const double f = (j - i > 1) ? (double)(t - i) / (j - i - 1) : 0.0;
-        const double R = gdD + (gdL - gdD) * f;
-        AddBand(spec[t].fc, spec[t].bw, fs, L, R);
+        AddBand(spec[t].fc, spec[t].bw, fs, L, nextDeep, f);
       }
       i = j;
     }
@@ -541,7 +579,24 @@ private:
     }
   }
 
-  void AddBand(double fc, double bw, double fs, int L, double R) {
+  // 频率相关总群延迟 (输入采样单位): 沿路径累计各级滤波器在 fc 处的 τ。
+  // 线性相位模式下各级 τ 恒定 → 退化为 mGd·(2^L−1); 最小相位 (B2) 下按
+  // band 中心频率精确对齐, 消除层边界群的时序错位 (割裂感)。
+  double GdTotalSamples(double fc, double fs, int L) const {
+    double g = 0.0;
+    int src = 0;
+    for (int s = 0; s < mNumPathSteps; ++s) {
+      const DecimStep &st = mPath[s];
+      if (st.dstLayer > L)
+        break;
+      const double nyqIn = fs / (double)(1 << (src + 1)); // 该级输入流 Nyquist
+      g += mDecim[0][st.decimIdx].TauAt(fc / nyqIn) * (double)(1 << src);
+      src = st.dstLayer;
+    }
+    return g;
+  }
+
+  void AddBand(double fc, double bw, double fs, int L, int nextDeep, double fSeg) {
     const double fsL = fs / (double)(1 << L);
     const int wl = std::max(8, std::max((int)std::round(fsL / bw),
                                         (int)std::round(fsL / fc * kCycleFloor)));
@@ -549,7 +604,11 @@ private:
     bd.layer = L;
     bd.winLen = wl;
     bd.advance = 1;
-    bd.readOff = (int)std::lround((R - (double)mGdSamples[L] / fs) * fsL);
+    // 跨层延迟对齐: 段顶 band (fSeg=0) 对齐到下一深层的基准时刻, 段底 (fSeg=1) 对齐到本层
+    const double gdL = GdTotalSamples(fc, fs, L);
+    const double gdD = (nextDeep > 0) ? GdTotalSamples(fc, fs, nextDeep) : gdL;
+    const double R = gdD + (gdL - gdD) * fSeg;
+    bd.readOff = (int)std::lround((R - gdL) / fs * fsL);
     bd.kernelRe.resize(wl);
     bd.kernelIm.resize(wl);
     const double step = 2.0 * PI * fc / fsL; // 该层速率的归一化频率
@@ -581,7 +640,6 @@ private:
   std::vector<double> mFreqs;
   std::array<int, kMaxLayers> mMaxWinPerLayer{};
   std::array<int, kMaxLayers> mLayerValid{};   // 该层是否有流 (B1 跳过 L6/L8)
-  std::array<int, kMaxLayers> mGdSamples{};    // 层流群延迟 (输入采样单位)
   std::array<DecimStep, kMaxLayers> mPath{};
   int mNumPathSteps = 0;
   std::array<std::vector<std::vector<float>>, MAXNC> mLayers;
