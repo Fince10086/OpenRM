@@ -125,8 +125,13 @@ function(openrm_add_plugin NAME)
     # 否则落到 ~/Applications 的副本会缺主菜单和图标。
     set(_app_extra_res_cmds)
     set(_app_nib "${CMAKE_CURRENT_BINARY_DIR}/${NAME}-macOS-MainMenu.nib")
-    if(EXISTS "${_app_nib}")
-      list(APPEND _app_extra_res_cmds COMMAND ${CMAKE_COMMAND} -E copy "${_app_nib}" "${_sig_app}/Contents/Resources/")
+    set(_app_xib "${CMAKE_CURRENT_SOURCE_DIR}/resources/${NAME}-macOS-MainMenu.xib")
+    if(EXISTS "${_app_xib}")
+      # 若复制先于链接执行, 增量构建时 nib 不会被恢复,
+      # 把 nib 声明为链接依赖, 部署前即可无条件补拷。
+      set_property(TARGET ${NAME}-app APPEND PROPERTY LINK_DEPENDS "${_app_nib}")
+      list(APPEND _app_extra_res_cmds
+        COMMAND ${CMAKE_COMMAND} -E copy "${_app_nib}" "${_sig_app}/Contents/Resources/")
     endif()
     set(_app_icns "${CMAKE_CURRENT_SOURCE_DIR}/resources/${NAME}.icns")
     if(EXISTS "${_app_icns}")

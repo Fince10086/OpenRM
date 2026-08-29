@@ -36,9 +36,13 @@ public:
         mSideLabel(label) {
     SetTextEntryLength(20);
     // 预分配频谱绘制缓冲, 避免每帧 Draw 时动态分配
-    mBandMax.assign(kSpectrumBands, 0.f);
-    mBandUsed.assign(kSpectrumBands, 0);
+    for (int ch = 0; ch < 2; ++ch) {
+      mBandMax[ch].assign(kSpectrumBands, 0.f);
+      mBandUsed[ch].assign(kSpectrumBands, 0);
+    }
     mSpecPts.reserve(kSpectrumBands);
+    RebuildSlopeGain();
+    RebuildBinToBand();
   }
 
   void OnMsgFromDelegate(int msgTag, int dataSize, const void *pData) override {
@@ -53,7 +57,7 @@ public:
 
       const double updatePeriod = (double)nBins * 2.0 / 4.0 / std::max(mSampleRate, 1.0);
       mAttackCoeff = (float)std::exp(-updatePeriod / 0.003);
-      mReleaseCoeff = (float)std::exp(-updatePeriod / 0.08);
+      mReleaseCoeff = (float)std::exp(-updatePeriod / 0.15);
 
       if (mSpectrumIn.size() != (size_t)nBins) {
         mSpectrumIn.assign(nBins, 0.f);
@@ -75,10 +79,12 @@ public:
       double sr;
       stream.Get(&sr, 0);
       mSampleRate = sr;
+      RebuildBinToBand();
     } else if (msgTag == kMsgTagFFTSize) {
       int fftSize;
       stream.Get(&fftSize, 0);
       mNumBins = std::max(fftSize / 2, 1);
+      RebuildBinToBand();
     }
   }
 
@@ -340,40 +346,25 @@ public:
     if (mSpectrumIn.empty() || mSpectrumOut.empty() || mNumBins <= 0)
       return;
 
-    const IParam *pf = GetParam(0);
-    const double binHz = mSampleRate / std::max((double)mNumBins * 2.0, 1.0);
+    AggregateSpectra();
+    ExtrapolateLowBands();
 
-    auto drawFill = [&](const std::vector<float> &spec, const IColor &topColor, const IColor &bottomColor) {
+    const IParam *pf = GetParam(0);
+    const double logBand = (std::log2((double)kSpecFreqHi) - std::log2((double)kSpecFreqLo)) / kSpectrumBands;
+
+    auto drawFill = [&](int ch, const IColor &topColor, const IColor &bottomColor) {
       mSpecPts.clear();
-      std::fill(mBandMax.begin(), mBandMax.end(), 0.f);
-      std::fill(mBandUsed.begin(), mBandUsed.end(), 0);
-      {
-        const double logLo = std::log2(kSpecFreqLo);
-        const double logHi = std::log2(kSpecFreqHi);
-        const double logBand = (logHi - logLo) / kSpectrumBands;
-        for (int i = 0; i < mNumBins && i < (int)spec.size(); ++i) {
-          const double f = (double)i * binHz;
-          if (f < kSpecFreqLo || f > kSpecFreqHi)
-            continue;
-          const int b = (int)((std::log2(f) - logLo) / logBand);
-          if (b < 0 || b >= kSpectrumBands)
-            continue;
-          const float amp = spec[i];
-          if (amp > mBandMax[b])
-            mBandMax[b] = amp;
-          mBandUsed[b] = 1;
-        }
-        for (int b = 0; b < kSpectrumBands; ++b) {
-          if (!mBandUsed[b])
-            continue;
-          const double fCenter = kSpecFreqLo * std::exp2(logBand * (b + 0.5));
-          const float x = tb.L + (float)pf->ToNormalized(fCenter) * tb.W();
-          const float amp = mBandMax[b];
-          const float db =
-              (amp > 1e-6f) ? std::clamp(20.f * std::log10(amp), kSpectrumBottomDb, 0.f) : kSpectrumBottomDb;
-          const float y = tb.B - (db - kSpectrumBottomDb) / (0.f - kSpectrumBottomDb) * tb.H();
-          mSpecPts.push_back({x, y});
-        }
+      for (int b = 0; b < kSpectrumBands; ++b) {
+        if (!mBandUsed[ch][b])
+          continue;
+        const double fCenter = kSpecFreqLo * std::exp2(logBand * (b + 0.5));
+        const float x = tb.L + (float)pf->ToNormalized(fCenter) * tb.W();
+        // 斜率: 每 band 常数增益 (显示域变换, 与聚合/平滑可交换), 固定 3 dB/oct
+        const float amp = mBandMax[ch][b] * mBandSlopeGain[b];
+        const float db =
+            (amp > 1e-6f) ? std::clamp(20.f * std::log10(amp), kSpectrumBottomDb, 0.f) : kSpectrumBottomDb;
+        const float y = tb.B - (db - kSpectrumBottomDb) / (0.f - kSpectrumBottomDb) * tb.H();
+        mSpecPts.push_back({x, y});
       }
       std::vector<Pt> &pts = mSpecPts;
       if (pts.size() < 2)
@@ -413,11 +404,116 @@ public:
 
     const IColor cIn = COL_500();
     const IColor cOut = COL_900();
-    drawFill(mSpectrumIn, IColor(110, cIn.R, cIn.G, cIn.B), IColor(0, cIn.R, cIn.G, cIn.B));
-    drawFill(mSpectrumOut, IColor(170, cOut.R, cOut.G, cOut.B), IColor(0, cOut.R, cOut.G, cOut.B));
+    drawFill(0, IColor(110, cIn.R, cIn.G, cIn.B), IColor(0, cIn.R, cIn.G, cIn.B));
+    drawFill(1, IColor(170, cOut.R, cOut.G, cOut.B), IColor(0, cOut.R, cOut.G, cOut.B));
   }
 
 private:
+  // 预计算 bin -> 对数 band 映射表, 只在采样率/FFT 尺寸变化时重建, 聚合循环直接查表:
+  // -1 = 20Hz..20kHz 之外; kSubBand = [10,20)Hz 锚点桶 (20Hz 下方虚拟锚点, 不单独画点,
+  // 只用于低频空桶外推的支点)。
+  void RebuildBinToBand() {
+    const int nb = mNumBins;
+    mBinToBand.assign(nb, -1);
+    if (nb <= 0)
+      return;
+    const double binHz = mSampleRate / std::max((double)nb * 2.0, 1.0);
+    const double logLo = std::log2((double)kSpecFreqLo);
+    const double logBand = (std::log2((double)kSpecFreqHi) - logLo) / kSpectrumBands;
+    for (int i = 0; i < nb; ++i) {
+      const double f = (double)i * binHz;
+      if (f > kSpecFreqHi)
+        continue;
+      if (f < kSpecFreqLo) {
+        if (f >= kSpecAnchorLo)
+          mBinToBand[i] = kSubBand; // 10-20Hz: 锚点桶
+        continue;
+      }
+      const int b = (int)((std::log2(f) - logLo) / logBand);
+      if (b >= 0 && b < kSpectrumBands)
+        mBinToBand[i] = b;
+    }
+  }
+
+  // 两条频谱 (in/out) 按映射表一次遍历聚合到 256 个对数 band (取 band 内最大值)
+  void AggregateSpectra() {
+    for (int ch = 0; ch < 2; ++ch) {
+      std::fill(mBandMax[ch].begin(), mBandMax[ch].end(), 0.f);
+      std::fill(mBandUsed[ch].begin(), mBandUsed[ch].end(), 0);
+      mAnchorMax[ch] = 0.f;
+      mAnchorUsed[ch] = 0;
+    }
+    if ((int)mBinToBand.size() != mNumBins)
+      RebuildBinToBand();
+    const int nb = std::min(mNumBins, std::min((int)mSpectrumIn.size(), (int)mSpectrumOut.size()));
+    for (int i = 0; i < nb; ++i) {
+      const int b = mBinToBand[i];
+      if (b == kSubBand) {
+        for (int ch = 0; ch < 2; ++ch) {
+          const float amp = ch ? mSpectrumOut[i] : mSpectrumIn[i];
+          if (amp > mAnchorMax[ch])
+            mAnchorMax[ch] = amp;
+          mAnchorUsed[ch] = 1;
+        }
+        continue;
+      }
+      if (b < 0)
+        continue;
+      for (int ch = 0; ch < 2; ++ch) {
+        const float amp = ch ? mSpectrumOut[i] : mSpectrumIn[i];
+        if (amp > mBandMax[ch][b])
+          mBandMax[ch][b] = amp;
+        mBandUsed[ch][b] = 1;
+      }
+    }
+  }
+
+  // 低频空桶外推: 低于首个有 bin 的频带没有分析结果 (bin 间距 > band 宽度)。
+  // 有锚点且锚点与首带均有信号时, 锚点与首带之间按 dB-对数频率线性内插
+  // (幅度域等比) —— 入场线带自然斜率; 无锚点 (如高采样率下 20Hz 下方无 bin)
+  // 或锚点静音时退回首带常值延伸。
+  void ExtrapolateLowBands() {
+    const double logLo = std::log2((double)kSpecFreqLo);
+    const double logBand = (std::log2((double)kSpecFreqHi) - logLo) / kSpectrumBands;
+    for (int ch = 0; ch < 2; ++ch) {
+      int first = 0;
+      while (first < kSpectrumBands && !mBandUsed[ch][first])
+        ++first;
+      if (first >= kSpectrumBands)
+        continue;
+      const double fFirst = kSpecFreqLo * std::exp2(logBand * (first + 0.5));
+      const float aFirst = mBandMax[ch][first];
+      const float aA = mAnchorMax[ch];
+      const bool haveAnchor = mAnchorUsed[ch] && aA > 1e-9f && aFirst > 1e-9f;
+      for (int b = 0; b < first; ++b) {
+        float ext = aFirst;
+        if (haveAnchor) {
+          const double fb = kSpecFreqLo * std::exp2(logBand * (b + 0.5));
+          const double t = std::log2(fb / (double)kSpecAnchorHz) / std::log2(fFirst / (double)kSpecAnchorHz);
+          ext = aA * std::pow(aFirst / aA, (float)t);
+        }
+        mBandMax[ch][b] = ext;
+        mBandUsed[ch][b] = 1;
+      }
+    }
+  }
+
+  // 频谱斜率增益表 (显示域变换, 预计算): g(f) = 10^(S·log2(f/f_pivot)/20),
+  // 固定 3 dB/oct, 支点为显示范围几何中心 sqrt(20·20000) —— 粉噪显示平直。
+  // 增益为每 band 正常数, 与 band 内 max 聚合及平滑可交换, 仅绘制时施加。
+  void RebuildSlopeGain() {
+    constexpr float kSlopeDbPerOct = 3.f;
+    constexpr float kSlopeRefHz = 632.45553f; // sqrt(20·20000)
+    const float k = kSlopeDbPerOct * 0.16609640474f; // log2(10)/20
+    const double logLo = std::log2((double)kSpecFreqLo);
+    const double logBand = (std::log2((double)kSpecFreqHi) - logLo) / kSpectrumBands;
+    mBandSlopeGain.assign(kSpectrumBands, 1.f);
+    for (int b = 0; b < kSpectrumBands; ++b) {
+      const double f = (double)kSpecFreqLo * std::exp2(logBand * (b + 0.5));
+      mBandSlopeGain[b] = std::exp2(k * std::log2(f / kSlopeRefHz));
+    }
+  }
+
   IRECT PlotRect() const {
     const IRECT &w = mWidgetBounds;
     const float top = w.T + kTopPad;
@@ -583,6 +679,11 @@ private:
   static constexpr int kSpectrumBands = 256;
   static constexpr float kSpecFreqLo = 20.f;
   static constexpr float kSpecFreqHi = 20000.f;
+  // 20Hz 下方虚拟锚点: 聚合 [10,20)Hz 的 bin 为一个位置 (显示轴外, 不单独画点),
+  // 给低频空桶提供带自然斜率的入场线。10Hz 以下 (含直流近旁) 不计。
+  static constexpr float kSpecAnchorLo = 10.f;
+  static constexpr float kSpecAnchorHz = 14.14214f; // sqrt(10·20), 锚点代表频率
+  static constexpr int kSubBand = -2;               // mBinToBand 哨兵: 归入锚点桶
 
   Hooks mHooks;
   WDL_String mSideLabel;
@@ -615,9 +716,13 @@ private:
   struct Pt {
     float x, y;
   };
-  std::vector<Pt> mSpecPts;    // 预分配: 频谱填充点
-  std::vector<float> mBandMax; // 预分配: 每 band 峰值
-  std::vector<char> mBandUsed; // 预分配: band 是否有数据
+  std::vector<Pt> mSpecPts;          // 预分配: 频谱填充点
+  std::vector<float> mBandMax[2];    // 预分配: 每 band 峰值 ([0]=输入 [1]=输出)
+  std::vector<char> mBandUsed[2];    // 预分配: band 是否有 bin
+  std::vector<float> mBandSlopeGain; // 预计算: 每 band 斜率增益 (固定 3 dB/oct)
+  std::vector<int> mBinToBand;       // 预计算: bin -> band 映射 (-1 = 频段外, kSubBand = 锚点桶)
+  float mAnchorMax[2] = {0.f, 0.f};  // [10,20)Hz 锚点桶峰值 (in/out)
+  char mAnchorUsed[2] = {0, 0};      // 锚点桶是否收到过 bin
 };
 
 END_IGRAPHICS_NAMESPACE
