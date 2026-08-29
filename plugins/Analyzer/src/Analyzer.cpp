@@ -124,7 +124,7 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
   }
   // 初始化参数（默认值、范围与步长）
   GetParam(kRelease)->InitDouble("Release", 0.2, 0.05, 0.5, 0.01, "s");
-  GetParam(kRange)->InitInt("Range", 1, 0, 2, ""); // 档位索引: 0=80, 1=100, 2=120 (刻度底部 dB), 默认 100
+  GetParam(kRange)->InitInt("Range", 0, 0, 2, ""); // 档位索引: 0=80, 1=100, 2=120 (刻度底部 dB), 默认 80
   GetParam(kAttack)->InitDouble("Attack", 0.05, 0.001, 0.1, 0.001, "s");
   GetParam(kRes)->InitInt("Res", 1, 0, kNumResOptions - 1, ""); // 默认 MID (4096)
   GetParam(kLfRes)->InitInt("LfRes", 2, 0, kNumPbtLfResOptions - 1, ""); // 默认 10Hz (索引 2)
@@ -136,7 +136,7 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
   if (s.holdOn >= 0)
     GetParam(kLevelHoldOn)->Set(s.holdOn > 0 ? 1.0 : 0.0); // 恢复用户上次的保持开关状态
   GetParam(kFreeze)->InitBool("Freeze", false); // 0=实时, 1=FREEZE 定格
-  GetParam(kVQTGamma)->InitInt("VQTGamma", 0, 0, kNumVQTGammaOptions - 1, ""); // VQT 低频带宽下限 γ (索引: 5/10/15/20 Hz)
+  GetParam(kVQTGamma)->InitInt("VQTGamma", 0, 0, kNumVQTGammaOptions - 1, ""); // VQT 低频带宽下限 γ (索引: 5/10/20 Hz)
   // 频谱斜率档位 (各引擎独立保存; 默认档 1: STFT = 3 dB/oct, 逐 band 引擎 = 0 dB/oct)
   GetParam(kSlopeFFT)->InitInt("SlopeFFT", 1, 0, kNumSlopeOptions - 1, "");
   GetParam(kSlopeVQT)->InitInt("SlopeVQT", 1, 0, kNumSlopeOptions - 1, "");
@@ -146,7 +146,7 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
   // 窗函数档位 STFT (默认 Hann/SHARP) 与 VQT (默认 BH4/CLEAN) 各自独立 (kFFTWindow / kWindowVQT)
   GetParam(kFFTWindow)->InitInt("WindowFFT", kFFTWindowHann, 0, kNumFFTWindows - 1, "");
   GetParam(kWindowVQT)->InitInt("WindowVQT", kFFTWindowBH4, 0, kNumFFTWindows - 1, "");
-  GetParam(kRtaOctave)->InitInt("RtaOctave", 0, 0, kNumRtaOctaveOptions - 1, ""); // 默认 1/3 Oct
+  GetParam(kRtaOctave)->InitInt("RtaOctave", 2, 0, kNumRtaOctaveOptions - 1, ""); // 默认 1/6 Oct (索引 2)
   GetParam(kLoudPreset)->InitInt("LoudPreset", 0, 0, kNumLoudPresets - 1, ""); // 响度目标预设, 默认 -14
   mDefaultSnapshot = Snapshot();
   mStableSnapshot = Snapshot();
@@ -270,9 +270,9 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     bindTip(mPbtLfResBtn, orm::kTxtTipLfRes);
     mPbtLfResBtn->Hide(true);
 
-    // VQT 低频带宽下限循环按钮 (γ: 5/10/15/20 Hz) — 与 STFT 分辨率/PBT 低频档同槽位, 按模式互斥可见
+    // VQT 低频带宽下限循环按钮 (γ: 5/10/20 Hz) — 与 STFT 分辨率/PBT 低频档同槽位, 按模式互斥可见
     mGammaBtn = new FlatCycleButton(IRECT(kResX, kTopBtnY, kResX + kTopBtnW, kTopBtnY + kTopBtnH),
-                                    kVQTGamma, {"5Hz", "10Hz", "15Hz", "20Hz"}, btnStyle);
+                                    kVQTGamma, {"5Hz", "10Hz", "20Hz"}, btnStyle);
     pGraphics->AttachControl(mGammaBtn);
     bindTip(mGammaBtn, orm::kTxtTipVQTGamma);
     mGammaBtn->Hide(true);
@@ -1030,6 +1030,14 @@ void ORMAnalyzer::OnIdle() {
     }
   }
 
+  // 窗/斜率按钮本地值与参数值同步 (每 tick; 改绑 SetParamIdx 与 UI 重开都不会更新本地值,
+  // 点击路径 SetValueFromUserInput 的本地值等值检查会把下一次切换吞掉 —— 必须保持两者一致;
+  // SetValueFromDelegate 带捕获锁, 点击/拖动期间不会覆写)
+  if (mWindowBtn && mWindowBtn->GetParam())
+    mWindowBtn->SetValueFromDelegate(mWindowBtn->GetParam()->GetNormalized(), 0);
+  if (mSlopeBtn && mSlopeBtn->GetParam())
+    mSlopeBtn->SetValueFromDelegate(mSlopeBtn->GetParam()->GetNormalized(), 0);
+
   // 声道显示模式
   const int chanTri = (int)GetParam(kChannelMode)->Value();
   mSpectrum.SetChannelMode(chanTri);
@@ -1462,15 +1470,14 @@ void ORMAnalyzer::ReadStateFileFrom(const std::string &path, std::string &err) {
   if (!ReadStateFile(path, data, err))
     return;
 
-  // 兼容旧文件: 参数数少于当前版本时, 缺失项用默认值 (新参数自动取默认档)
-  if ((int)data.values.size() > kNumParams) {
+  // 未发布版本: 状态文件参数数必须与当前枚举完全一致
+  if ((int)data.values.size() != kNumParams) {
     err = "Parameter count mismatch (expected " + std::to_string(kNumParams) + ")";
     return;
   }
 
-  ParamSnapshot s = mDefaultSnapshot;
-  for (int i = 0; i < (int)data.values.size(); ++i)
-    s[i] = data.values[i];
+  ParamSnapshot s{};
+  std::copy(data.values.begin(), data.values.end(), s.begin());
 
   PushUndo();
   ApplySnapshot(s);

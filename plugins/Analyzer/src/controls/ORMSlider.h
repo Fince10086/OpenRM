@@ -127,11 +127,6 @@ protected:
       ds.Set(buf);
       break;
     }
-    case kLfRes: {
-      const int idx = (int)std::clamp(p->Value(), 0.0, (double)kNumLfResOptions - 1);
-      ds.Set(orm::Tr(orm::kTxtLfLow + idx, orm::UILang()));
-      break;
-    }
     default:
       p->GetDisplay(ds, false);
       break;

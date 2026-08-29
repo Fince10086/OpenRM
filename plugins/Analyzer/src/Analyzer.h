@@ -108,7 +108,7 @@ private:
   FlatCycleButton *mResBtn = nullptr;      // STFT 分辨率循环按钮 (LOW/MID/HIGH)
   FlatCycleButton *mWindowBtn = nullptr;   // 窗函数循环按钮 (SHARP/CLEAN, STFT 与 VQT 各自独立档位, 按模式改绑参数)
   FlatCycleButton *mPbtLfResBtn = nullptr; // PBT 低频分辨率循环按钮 (40/20/10 Hz)
-  FlatCycleButton *mGammaBtn = nullptr;    // VQT 低频带宽下限循环按钮 (γ: 5/10/15/20 Hz)
+  FlatCycleButton *mGammaBtn = nullptr;    // VQT 低频带宽下限循环按钮 (γ: 5/10/20 Hz)
   FlatCycleButton *mRtaOctBtn = nullptr;   // RTA 分数倍频程循环按钮 (1/3 / 1/4 / 1/6 Oct)
   FlatCycleButton *mRangeBtn = nullptr;    // 动态范围循环按钮 (刻度底部 80/100/120)
   FlatCycleButton *mSlopeBtn = nullptr;    // 频谱斜率循环按钮 (刻度底部左缘, 档值随引擎)

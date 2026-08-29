@@ -33,6 +33,7 @@ public:
   static constexpr int kMaxBands = 64; // 与原版一致 (1/6 Oct 15.6Hz..29kHz ≈ 64 带)
   static constexpr double kPi = 3.14159265358979323846;
   static constexpr double kLn2 = 0.69314718055994530942;
+  static constexpr double kFreqHi = 20000.0; // 分析上限 (与 MR-FFT/VQT/PBT 一致; 高采样率下带表不再上扩)
 
   enum EOctaveMode {
     kOctave1_3 = 0, // 1/3 Octave (~31 bands)
@@ -201,12 +202,11 @@ private:
     const double ferr = (bpo == 3) ? 0.904 : (bpo == 4) ? 0.905 : 0.909;
 
     // 带中心/带缘网格 (原版 update()): 中心 15.625·2^(j/bpo) 自 22Hz 起, 带缘取
-    // 几何中点并加 Nyquist 扭曲项; 上缘超 fedg = 0.47·fs 或 29kHz 的带不收录
+    // 几何中点并加 Nyquist 扭曲项; 上缘超 fedg = 0.47·fs 或中心超 20kHz 的带不收录
     const double k = std::exp(kLn2 / bpo);
     double f = 15.625;
     while (f < 22.0)
       f *= k;
-    const double fHi = 29000.0;
     const double fedg = 0.94 * 0.5 * fs;
     const int wi = (int)(0.5 + std::log(fedg / (1000.0 * std::sqrt(k))) / std::log(k));
     const double fli = 1.0 / (1000.0 * std::pow(k, wi));
@@ -218,7 +218,7 @@ private:
     double ff = (f / std::sqrt(k)) * (1.0 - wr * f * f); // edges[0]: 首中心下缘
     for (;;) {
       const double top = f * std::sqrt(k) * (1.0 - wr * f * f);
-      if (nb >= kMaxBands || top > fedg + 1.0 || top > fHi)
+      if (nb >= kMaxBands || f > kFreqHi || top > fedg + 1.0)
         break;
       edges[nb] = ff;
       centers[nb] = f;
