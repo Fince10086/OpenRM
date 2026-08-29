@@ -34,7 +34,6 @@ openrm_add_plugin(${PROJECT_NAME}
     src/dsp/SpectrumSTFT.h
     src/dsp/VQTAnalyzer.h
     src/dsp/PBTAnalyzer.h
-    src/dsp/MultirateFFTAnalyzer.h
     src/dsp/RTAAnalyzer.h
     src/dsp/LevelMeter.h
     src/dsp/LoudnessMeter.h

@@ -141,12 +141,11 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
   GetParam(kSlopeFFT)->InitInt("SlopeFFT", 1, 0, kNumSlopeOptions - 1, "");
   GetParam(kSlopeVQT)->InitInt("SlopeVQT", 1, 0, kNumSlopeOptions - 1, "");
   GetParam(kSlopePBT)->InitInt("SlopePBT", 1, 0, kNumSlopeOptions - 1, "");
-  GetParam(kSlopeMRFFT)->InitInt("SlopeMRFFT", 1, 0, kNumSlopeOptions - 1, "");
   GetParam(kSlopeRTA)->InitInt("SlopeRTA", 1, 0, kNumSlopeOptions - 1, "");
   // 窗函数档位 STFT (默认 Hann/SHARP) 与 VQT (默认 BH4/CLEAN) 各自独立 (kFFTWindow / kWindowVQT)
   GetParam(kFFTWindow)->InitInt("WindowFFT", kFFTWindowHann, 0, kNumFFTWindows - 1, "");
   GetParam(kWindowVQT)->InitInt("WindowVQT", kFFTWindowBH4, 0, kNumFFTWindows - 1, "");
-  GetParam(kRtaOctave)->InitInt("RtaOctave", 1, 0, kNumRtaOctaveOptions - 1, ""); // 默认 1/6 Oct (索引 1; 档位: 1/3, 1/6, 1/12, 1/24)
+  GetParam(kRtaOctave)->InitInt("RtaOctave", 0, 0, kNumRtaOctaveOptions - 1, ""); // 默认 1/6 Oct (索引 0; 档位: 1/6, 1/12, 1/24)
   GetParam(kLoudPreset)->InitInt("LoudPreset", 0, 0, kNumLoudPresets - 1, ""); // 响度目标预设, 默认 -14
   mDefaultSnapshot = Snapshot();
   mStableSnapshot = Snapshot();
@@ -233,7 +232,7 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     constexpr float kCol2X = kCol1X + kBtnW + kBtnGap; // 右列按钮左缘
     constexpr float kPanelR = kCol2X + kBtnW;
 
-    // 顶部三按钮 (LR / FFT·VQT·PBT·MR-FFT·RTA / RES) 统一尺寸: 宽 62 高 26, 容纳 HIGH/PWR 文字 + 基础内边距
+    // 顶部三按钮 (LR / FFT·VQT·PBT·RTA / RES) 统一尺寸: 宽 62 高 26, 容纳 HIGH/PWR 文字 + 基础内边距
     constexpr float kTopBtnW = 62.f;
     constexpr float kTopBtnH = 26.f;
     constexpr float kTopBtnY = 22.f;
@@ -249,10 +248,10 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     pGraphics->AttachControl(mChanModeBtn);
     bindTip(mChanModeBtn, orm::kTxtTipChanMode);
 
-    // 分析引擎切换按钮 (STFT / VQT / PBT / MR-FFT / RTA) — LR 右侧, 留 kTopBtnGap 空隙
+    // 分析引擎切换按钮 (STFT / VQT / PBT / RTA) — LR 右侧, 留 kTopBtnGap 空隙
     constexpr float kModeX = 20.f + kTopBtnW + kTopBtnGap;
     mModeBtn = new FlatCycleButton(IRECT(kModeX, kTopBtnY, kModeX + kTopBtnW, kTopBtnY + kTopBtnH),
-                                   kMode, {"STFT", "VQT", "PBT", "MR-FFT", "RTA"}, btnStyle);
+                                   kMode, {"STFT", "VQT", "PBT", "RTA"}, btnStyle);
     pGraphics->AttachControl(mModeBtn);
     bindTip(mModeBtn, orm::kTxtTipMode);
 
@@ -277,9 +276,9 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     bindTip(mGammaBtn, orm::kTxtTipVQTGamma);
     mGammaBtn->Hide(true);
 
-    // RTA 分数倍频程循环按钮 (1/3 / 1/6 / 1/12 / 1/24) — 同槽位, 仅 RTA 模式可见
+    // RTA 分数倍频程循环按钮 (LOW=1/6 / MID=1/12 / HIGH=1/24, 标签同 STFT 分辨率档) — 同槽位, 仅 RTA 模式可见
     mRtaOctBtn = new FlatCycleButton(IRECT(kResX, kTopBtnY, kResX + kTopBtnW, kTopBtnY + kTopBtnH),
-                                     kRtaOctave, {"1/3", "1/6", "1/12", "1/24"}, btnStyle);
+                                     kRtaOctave, {"LOW", "MID", "HIGH"}, btnStyle);
     pGraphics->AttachControl(mRtaOctBtn);
     bindTip(mRtaOctBtn, orm::kTxtTipRtaOctave);
     mRtaOctBtn->Hide(true);
@@ -719,9 +718,6 @@ void ORMAnalyzer::ProcessBlock(sample **inputs, sample **outputs, int nFrames) {
     } else if (mode == kModePBT) {
       mPBT.ProcessBlock(spec, nFrames, kCtrlTagPad, 3);
       mEngineHopPhase[kModePBT].store(mPBT.HopPhase(), std::memory_order_relaxed);
-    } else if (mode == kModeMRFFT) {
-      mMRFFT.ProcessBlock(spec, nFrames, kCtrlTagPad, 3);
-      mEngineHopPhase[kModeMRFFT].store(mMRFFT.HopPhase(), std::memory_order_relaxed);
     } else if (mode == kModeRTA) {
       mRTA.ProcessBlock(spec, nFrames, kCtrlTagPad, 3);
       mEngineHopPhase[kModeRTA].store(mRTA.HopPhase(), std::memory_order_relaxed);
@@ -811,8 +807,6 @@ void ORMAnalyzer::OnReset() {
   mVQT.SetBpo(kVQTBpo);       // VQT 固定 BPO = 24
   mPBT.SetSampleRate(GetSampleRate());
   mPBT.SetLfWidth(CurrentPbtLfRes());
-  mMRFFT.SetSampleRate(GetSampleRate());
-  mMRFFT.SetBpo(kMRFFTBpo); // MR-FFT 固定 BPO = 24 (滑块已移除)
   mRTA.SetSampleRate(GetSampleRate());
   mRTA.SetOctaveMode(CurrentRtaOctave());
   mLevelSetSR.store(GetSampleRate(), std::memory_order_relaxed); // 音频线程下一 block 执行 SetSampleRate+Reset
@@ -850,8 +844,6 @@ void ORMAnalyzer::SendSpectrumConfig() {
     SendVQTBandFreqs();
   else if (mode == kModePBT)
     SendPBTBandFreqs();
-  else if (mode == kModeMRFFT)
-    SendMRFFTBandFreqs();
   else if (mode == kModeRTA)
     SendRTABandFreqs();
 }
@@ -871,15 +863,6 @@ void ORMAnalyzer::SendPBTBandFreqs() {
     return;
   std::vector<float> buf(freqs.begin(), freqs.end());
   SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagPBTBands,
-                             (int)(buf.size() * sizeof(float)), buf.data());
-}
-
-void ORMAnalyzer::SendMRFFTBandFreqs() {
-  const auto &freqs = mMRFFT.BandFreqs();
-  if (freqs.empty())
-    return;
-  std::vector<float> buf(freqs.begin(), freqs.end());
-  SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagMRFFTBands,
                              (int)(buf.size() * sizeof(float)), buf.data());
 }
 
@@ -921,7 +904,7 @@ void ORMAnalyzer::OnParamChange(int paramIdx, EParamSource source, int sampleOff
         SendResetToPad();
     }
   } else if (paramIdx == kRtaOctave) {
-    if (GetParam(kMode)->Value() > 3.5) { // RTA 模式
+    if (GetParam(kMode)->Value() > 2.5) { // RTA 模式
       if (mRTA.SetOctaveMode(CurrentRtaOctave()) && !frozen)
         SendResetToPad();
     }
@@ -968,7 +951,6 @@ void ORMAnalyzer::OnIdle() {
   // 按需重建频带配置
   mVQT.CheckRebuild();
   mPBT.CheckRebuild();
-  mMRFFT.CheckRebuild();
   mRTA.CheckRebuild();
 
   const bool frozen = GetParam(kFreeze)->Value() > 0.5; // Freeze 激活: 画面定格
@@ -1016,8 +998,6 @@ void ORMAnalyzer::OnIdle() {
       SendVQTBandFreqs();
     else if (mode == kModePBT)
       SendPBTBandFreqs();
-    else if (mode == kModeMRFFT)
-      SendMRFFTBandFreqs();
     else if (mode == kModeRTA)
       SendRTABandFreqs();
     if (frozen) {
@@ -1043,7 +1023,6 @@ void ORMAnalyzer::OnIdle() {
   mSpectrum.SetChannelMode(chanTri);
   mVQT.SetChannelMode(chanTri);
   mPBT.SetChannelMode(chanTri);
-  mMRFFT.SetChannelMode(chanTri);
   mRTA.SetChannelMode(chanTri);
   if (chanTri != mSentChanMode) {
     mSentChanMode = chanTri;
@@ -1139,8 +1118,6 @@ void ORMAnalyzer::OnIdle() {
       mVQT.TransmitData(*this);
     else if (mode == kModePBT)
       mPBT.TransmitData(*this);
-    else if (mode == kModeMRFFT)
-      mMRFFT.TransmitData(*this);
     else if (mode == kModeRTA)
       mRTA.TransmitData(*this);
     else
@@ -1294,7 +1271,6 @@ void ORMAnalyzer::StartFreezeReplay() {
   switch (mode) {
     case kModeVQT: mVQT.ResetRuntimeState(); break;
     case kModePBT: mPBT.ResetRuntimeState(); break;
-    case kModeMRFFT: mMRFFT.ResetRuntimeState(); break;
     case kModeRTA: mRTA.ResetRuntimeState(); break;
     default: mSpectrum.ResetRuntimeState(); break;
   }
@@ -1332,7 +1308,6 @@ void ORMAnalyzer::PumpFreezeReplay() {
     switch (mReplayMode) {
       case kModeVQT: mVQT.PrepareFrameUI(d); break;
       case kModePBT: mPBT.PrepareFrameUI(d); break;
-      case kModeMRFFT: mMRFFT.PrepareFrameUI(d); break;
       case kModeRTA: mRTA.PrepareFrameUI(d); break;
       default: mSpectrum.PrepareFrameUI(d); break;
     }
@@ -1492,6 +1467,11 @@ void ORMAnalyzer::ApplyLanguage() {
     mResBtn->SetLabels({orm::Tr(orm::kTxtLfLow, orm::UILang()),
                         orm::Tr(orm::kTxtLfMid, orm::UILang()),
                         orm::Tr(orm::kTxtLfHigh, orm::UILang())});
+  }
+  if (mRtaOctBtn) { // RTA 分辨率档 (LOW=1/6 / MID=1/12 / HIGH=1/24), 标签与 STFT 分辨率档一致
+    mRtaOctBtn->SetLabels({orm::Tr(orm::kTxtLfLow, orm::UILang()),
+                           orm::Tr(orm::kTxtLfMid, orm::UILang()),
+                           orm::Tr(orm::kTxtLfHigh, orm::UILang())});
   }
   if (mWindowBtn) {
     mWindowBtn->SetLabels({orm::Tr(orm::kTxtWinSharp, orm::UILang()),

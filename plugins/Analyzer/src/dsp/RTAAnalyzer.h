@@ -33,19 +33,18 @@ public:
   static constexpr int kMaxBands = 256; // 1/24 Oct 22Hz..20kHz ≈ 236 带 (上限留余量)
   static constexpr double kPi = 3.14159265358979323846;
   static constexpr double kLn2 = 0.69314718055994530942;
-  static constexpr double kFreqHi = 20000.0; // 分析上限 (与 MR-FFT/VQT/PBT 一致; 高采样率下带表不再上扩)
+  static constexpr double kFreqHi = 20000.0; // 分析上限 (与 VQT/PBT 一致; 高采样率下带表不再上扩)
 
   enum EOctaveMode {
-    kOctave1_3 = 0,  // 1/3 Octave
-    kOctave1_6 = 1,  // 1/6 Octave
-    kOctave1_12 = 2, // 1/12 Octave
-    kOctave1_24 = 3, // 1/24 Octave
-    kNumOctaveModes = 4
+    kOctave1_6 = 0,  // 1/6 Octave
+    kOctave1_12 = 1, // 1/12 Octave
+    kOctave1_24 = 2, // 1/24 Octave
+    kNumOctaveModes = 3
   };
 
   // 每倍频程带数与预畸变系数 (按档位; ferr 数值拟合见 RebuildBands 注)
-  static constexpr int kBpo[kNumOctaveModes] = {3, 6, 12, 24};
-  static constexpr double kFerr[kNumOctaveModes] = {0.66, 0.68, 0.71, 0.71};
+  static constexpr int kBpo[kNumOctaveModes] = {6, 12, 24};
+  static constexpr double kFerr[kNumOctaveModes] = {0.68, 0.71, 0.71};
 
   RTAAnalyzer() {
     for (int c = 0; c < MAXNC; ++c)
@@ -288,7 +287,7 @@ private:
   }
 
   double mSampleRate = 48000.0;
-  int mOctaveMode = kOctave1_6; // 0=1/3, 1=1/6, 2=1/12, 3=1/24 (与插件参数默认一致)
+  int mOctaveMode = kOctave1_6; // 0=1/6 (LOW), 1=1/12 (MID), 2=1/24 (HIGH) (与插件参数默认一致)
   int mChanTri = 0;             // 0=LR, 1=PWR, 2=SUM
   std::atomic<bool> mNeedRebuild{false};
   float mEnvAlpha = 0.f; // 功率积分系数/hop (τ = 50ms)

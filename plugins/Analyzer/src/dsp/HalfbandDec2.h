@@ -1,8 +1,8 @@
 #pragma once
 
-// HalfbandDec2 — 半带 ×2 抽取器 (PBT / MR-FFT 共用) 及其依赖的倒频谱最小相位谱分解。
-// 双系数形态 (SetMinPhase): 线性相位 (默认, 群延迟 = kQ) / 最小相位 (PBT 与 MR-FFT
-// 固定使用: 同幅谱分解, 每级群延迟 50→≈7.2 样本) —— 详见 struct 内注。
+// HalfbandDec2 — 半带 ×2 抽取器 (PBT 用) 及其依赖的倒频谱最小相位谱分解。
+// 双系数形态 (SetMinPhase): 线性相位 (默认, 群延迟 = kQ) / 最小相位 (PBT 固定使用:
+// 同幅谱分解, 每级群延迟 50→≈7.2 样本) —— 详见 struct 内注。
 
 #ifndef BEGIN_IPLUG_NAMESPACE
 #define BEGIN_IPLUG_NAMESPACE namespace iplug {
@@ -158,7 +158,7 @@ inline std::vector<double> MinPhaseFactorWithLen(const std::vector<double> &prot
 
 // 半带 ×2 抽取器 (跨帧保持滤波状态)。要求 nin 为偶数。系数形态与群延迟见 struct 内注。
 struct HalfbandDec2 {
-  // 系数两种形态 (SetMinPhase 选择; PBT 固定用最小相位, MR-FFT 共用本结构保持线性相位默认):
+  // 系数两种形态 (SetMinPhase 选择; PBT 固定用最小相位):
   static constexpr int kN = 101;
   static constexpr int kQ = (kN - 1) / 2;
   std::array<float, kN> mTap{};

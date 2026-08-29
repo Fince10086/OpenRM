@@ -35,7 +35,7 @@ public:
   static constexpr int kHop = 1024;
   static constexpr int kMaxLayers = 10;
   static constexpr double kGuard = 0.78;  // band 上边距该层新奈奎斯特的比例 (防抽取混叠, VQT 同款)
-  static constexpr double kFreqHi = 20000.0; // 分析上限 (与 MR-FFT/VQT 一致; 高采样率下带表不再上扩)
+  static constexpr double kFreqHi = 20000.0; // 分析上限 (与 VQT/RTA 一致; 高采样率下带表不再上扩)
 
   PBTAnalyzer() {
     for (int c = 0; c < MAXNC; ++c)

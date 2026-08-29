@@ -5,7 +5,6 @@
 #include "dsp/SpectrumSTFT.h"
 #include "dsp/VQTAnalyzer.h"
 #include "dsp/PBTAnalyzer.h"
-#include "dsp/MultirateFFTAnalyzer.h"
 #include "dsp/RTAAnalyzer.h"
 #include "dsp/LevelMeter.h"
 #include "dsp/LoudnessMeter.h"
@@ -63,7 +62,6 @@ private:
   SpectrumSTFT<3> mSpectrum;
   VQTAnalyzer<3> mVQT;
   PBTAnalyzer<3> mPBT;
-  MultirateFFTAnalyzer<3> mMRFFT;
   RTAAnalyzer<3> mRTA;
 
   static constexpr int kMaxBlock = 16384;
@@ -109,7 +107,7 @@ private:
   FlatCycleButton *mWindowBtn = nullptr;   // 窗函数循环按钮 (SHARP/CLEAN, STFT 与 VQT 各自独立档位, 按模式改绑参数)
   FlatCycleButton *mPbtLfResBtn = nullptr; // PBT 低频分辨率循环按钮 (40/20/10 Hz)
   FlatCycleButton *mGammaBtn = nullptr;    // VQT 低频带宽下限循环按钮 (γ: 5/10/20 Hz)
-  FlatCycleButton *mRtaOctBtn = nullptr;   // RTA 分数倍频程循环按钮 (1/3 / 1/6 / 1/12 / 1/24)
+  FlatCycleButton *mRtaOctBtn = nullptr;   // RTA 分数倍频程循环按钮 (LOW=1/6 / MID=1/12 / HIGH=1/24)
   FlatCycleButton *mRangeBtn = nullptr;    // 动态范围循环按钮 (刻度底部 80/100/120)
   FlatCycleButton *mSlopeBtn = nullptr;    // 频谱斜率循环按钮 (刻度底部左缘, 档值随引擎)
   ORMSlider *mAttackSlider = nullptr;
@@ -250,13 +248,12 @@ private:
       case kModeFFT: return kSlopeFFT;
       case kModeVQT: return kSlopeVQT;
       case kModePBT: return kSlopePBT;
-      case kModeMRFFT: return kSlopeMRFFT;
       case kModeRTA: return kSlopeRTA;
       default: return kSlopeFFT;
     }
   }
   // 当前模式生效的斜率值 (dB/oct): 各引擎档位独立保存;
-  // FFT 用 kSlopeDbFFT 档值, 逐 band 引擎 (VQT/PBT/MR-FFT/RTA) 用 kSlopeDbLog 档值。
+  // FFT 用 kSlopeDbFFT 档值, 逐 band 引擎 (VQT/PBT/RTA) 用 kSlopeDbLog 档值。
   // 两组相差 -3 dB/oct: 逐 band 能量积分显示白噪天生 +3 dB/oct (FFT 按 bin 显示天生平直),
   // 使同一信号的视觉斜率跨显示一致 (如粉噪在 FFT|3 与 VQT|0 下都平直)。
   double EffectiveSlopeDb() const {
@@ -267,7 +264,6 @@ private:
   }
   void SendVQTBandFreqs();
   void SendPBTBandFreqs();
-  void SendMRFFTBandFreqs();
   void SendRTABandFreqs();
 
   void SetParamFromEditor(int idx, double value);
