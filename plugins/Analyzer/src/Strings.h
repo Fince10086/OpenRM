@@ -69,6 +69,7 @@ enum EText {
   kTxtTipWindow,
   kTxtWinSharp,
   kTxtWinClean,
+  kTxtTipRtaOctave,
   kNumTexts
 };
 
@@ -101,7 +102,7 @@ inline const char *Tr(int id, int lang) {
           "Spectrum display attack time",
           "Spectrum analysis FFT size (LOW/MID/HIGH: 2048/4096/8192)",
           "PBT low-frequency resolution (40/20/10 Hz)",
-          "Switch analysis engine (STFT / VQT / PBT / MR-FFT)",
+          "Switch analysis engine (STFT / VQT / PBT / MR-FFT / RTA)",
           "AUDIO",
           "Input",
           "Output",
@@ -129,10 +130,11 @@ inline const char *Tr(int id, int lang) {
           "TO OUTPUT",
           "HOLD",
           "Peak hold duration: click to cycle 0.5s / 2s / ∞ (infinite hold)",
-          "Spectrum slope (dB/oct, pivot ~632 Hz): STFT 0/3/4.5, VQT/PBT/MR-FFT -3/0/1.5; each engine keeps its own value",
+          "Spectrum slope (dB/oct, pivot ~632 Hz): STFT 0/3/4.5, VQT/PBT/MR-FFT/RTA -3/0/1.5; each engine keeps its own value",
           "Window mode (STFT and VQT each keep their own value): SHARP (Hann: sharp mainlobe, classic response) / CLEAN (4-term Blackman-Harris: -92 dB ultra-low leakage)",
           "SHARP",
           "CLEAN",
+          "RTA fractional-octave resolution: 1/3 Oct (31 bands) / 1/4 Oct (41 bands) / 1/6 Oct (61 bands)",
       },
       {
           "释放",
@@ -161,7 +163,7 @@ inline const char *Tr(int id, int lang) {
           "频谱显示上升时间",
           "频谱分析 FFT 尺寸（低/中/高: 2048/4096/8192）",
           "PBT 低频分辨率（40/20/10 Hz）",
-          "切换分析引擎（STFT / VQT / PBT / MR-FFT）",
+          "切换分析引擎（STFT / VQT / PBT / MR-FFT / RTA）",
           "音频",
           "输入",
           "输出",
@@ -189,10 +191,11 @@ inline const char *Tr(int id, int lang) {
           "送到输出",
           "锁相位",
           "峰值保持时长：点击循环切换 0.5s / 2s / ∞（无限保持）",
-          "频谱斜率（dB/oct，支点约 632 Hz）：STFT 0/3/4.5，VQT/PBT/MR-FFT -3/0/1.5；各引擎独立保存",
+          "频谱斜率（dB/oct，支点约 632 Hz）：STFT 0/3/4.5，VQT/PBT/MR-FFT/RTA -3/0/1.5；各引擎独立保存",
           "窗函数模式（STFT 与 VQT 独立保存档位）：锐利（Hann: 锐利窄主瓣，经典响应）/ 纯净（4阶 Blackman-Harris: -92 dB 极低旁瓣泄露）",
           "锐利",
           "纯净",
+          "RTA 分数倍频程分辨率：1/3 Oct（31 带）/ 1/4 Oct（41 带）/ 1/6 Oct（61 带）",
       },
   };
   return kTable[lang][id];

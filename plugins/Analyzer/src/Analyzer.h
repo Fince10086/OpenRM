@@ -6,6 +6,7 @@
 #include "dsp/VQTAnalyzer.h"
 #include "dsp/PBTAnalyzer.h"
 #include "dsp/MultirateFFTAnalyzer.h"
+#include "dsp/RTAAnalyzer.h"
 #include "dsp/LevelMeter.h"
 #if ORM_ENABLE_TEST_GEN
 #include "dsp/TestSignalGenerator.h"
@@ -61,6 +62,7 @@ private:
   VQTAnalyzer<3> mVQT;
   PBTAnalyzer<3> mPBT;
   MultirateFFTAnalyzer<3> mMRFFT;
+  RTAAnalyzer<3> mRTA;
 
   static constexpr int kMaxBlock = 16384;
   std::array<sample, kMaxBlock> mSpecInL{};
@@ -98,6 +100,7 @@ private:
   FlatCycleButton *mWindowBtn = nullptr;   // 窗函数循环按钮 (SHARP/CLEAN, STFT 与 VQT 各自独立档位, 按模式改绑参数)
   FlatCycleButton *mPbtLfResBtn = nullptr; // PBT 低频分辨率循环按钮 (40/20/10 Hz)
   FlatCycleButton *mPyramidBtn = nullptr;  // VQT 金字塔算法循环按钮 (LIN / MIN)
+  FlatCycleButton *mRtaOctBtn = nullptr;   // RTA 分数倍频程循环按钮 (1/3 / 1/4 / 1/6 Oct)
   FlatCycleButton *mRangeBtn = nullptr;    // 动态范围循环按钮 (刻度底部 80/100/120)
   FlatCycleButton *mSlopeBtn = nullptr;    // 频谱斜率循环按钮 (刻度底部左缘, 档值随引擎)
   ORMSlider *mAttackSlider = nullptr;
@@ -114,6 +117,7 @@ private:
   int mSentMode = -1;
   int mSentWindowFFT = -1; // STFT 窗函数档位 (kFFTWindow), OnIdle 增量去重
   int mSentWindowVQT = -1; // VQT 窗函数档位 (kWindowVQT), OnIdle 增量去重
+  int mSentRtaOct = -1;    // RTA 分数倍频程档位 (kRtaOctave), OnIdle 增量去重
 
   // ── Freeze (冻结/保持), 确定性回放方案 ─────────────────────────────
   // 音频线程把最近输入滚环记录进 mFreezeRing (freeze 后停止写入, 即冻结时刻快照),
@@ -135,6 +139,7 @@ private:
   int mFreezeWindowVQT = -1; // VQT 窗函数档位快照 (冻结中重算去重)
   int mFreezeLf = -1;
   int mFreezePyramid = -1;
+  int mFreezeRtaOct = -1;
 
   // 冻结回放 (UI 线程, 定义见 Analyzer.cpp)。回放分 tick 泵送避免长 UI 卡顿;
   // 回放期间再次切换配置 → StartFreezeReplay 重启 (复位后重放, 确定性不变);
@@ -205,6 +210,10 @@ private:
     const int idx = (int)std::clamp(GetParam(kLfRes)->Value(), 0.0, (double)kNumPbtLfResOptions - 1);
     return kPbtLfResOptions[idx];
   }
+  int CurrentRtaOctave() const {
+    const int idx = (int)std::clamp(GetParam(kRtaOctave)->Value(), 0.0, (double)kNumRtaOctaveOptions - 1);
+    return idx;
+  }
   // 频谱显示范围 (刻度底部 dB): 离散三档 80/100/120, 由 Range 循环按钮切换。
   // 用 lround 取档位 (与按钮显示取整一致), 避免宿主旧状态恢复出档位间值 (如 0.5) 时
   // 截断到低档导致按钮与频谱不同步。
@@ -221,18 +230,30 @@ private:
     const int idx = (int)std::clamp(std::lround(GetParam(kLevelHold)->Value()), 0L, (long)kNumHoldTimeOptions - 1);
     return kHoldTimeSecs[idx];
   }
-  // 当前模式生效的斜率值 (dB/oct): 各引擎档位独立保存 (kSlopeFFT + 模式连续排列);
-  // FFT 用 kSlopeDbFFT 档值, 逐 band 引擎 (VQT/PBT/MR-FFT) 用 kSlopeDbLog 档值。
+  static int SlopeParamForMode(int mode) {
+    switch (mode) {
+      case kModeFFT: return kSlopeFFT;
+      case kModeVQT: return kSlopeVQT;
+      case kModePBT: return kSlopePBT;
+      case kModeMRFFT: return kSlopeMRFFT;
+      case kModeRTA: return kSlopeRTA;
+      default: return kSlopeFFT;
+    }
+  }
+  // 当前模式生效的斜率值 (dB/oct): 各引擎档位独立保存;
+  // FFT 用 kSlopeDbFFT 档值, 逐 band 引擎 (VQT/PBT/MR-FFT/RTA) 用 kSlopeDbLog 档值。
   // 两组相差 -3 dB/oct: 逐 band 能量积分显示白噪天生 +3 dB/oct (FFT 按 bin 显示天生平直),
   // 使同一信号的视觉斜率跨显示一致 (如粉噪在 FFT|3 与 VQT|0 下都平直)。
   double EffectiveSlopeDb() const {
     const int mode = (int)std::clamp(GetParam(kMode)->Value(), 0.0, (double)kNumModes - 1);
-    const int idx = (int)std::clamp(GetParam(kSlopeFFT + mode)->Value(), 0.0, (double)kNumSlopeOptions - 1);
+    const int paramIdx = SlopeParamForMode(mode);
+    const int idx = (int)std::clamp(GetParam(paramIdx)->Value(), 0.0, (double)kNumSlopeOptions - 1);
     return (mode == kModeFFT) ? kSlopeDbFFT[idx] : kSlopeDbLog[idx];
   }
   void SendVQTBandFreqs();
   void SendPBTBandFreqs();
   void SendMRFFTBandFreqs();
+  void SendRTABandFreqs();
 
   void SetParamFromEditor(int idx, double value);
   void RefreshAfterEdit();

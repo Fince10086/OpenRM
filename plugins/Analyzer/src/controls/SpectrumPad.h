@@ -39,6 +39,7 @@ public:
     kMsgTagLevelMeter,  // 电平表数据 (LevelMeterUiData)
     kMsgTagPBTBands,    // PBT 频带中心频率 (Hz)
     kMsgTagMRFFTBands,  // MR-FFT 频带中心频率 (Hz)
+    kMsgTagRTABands,    // RTA 频带中心频率 (Hz)
   };
 
   SpectrumPad(const IRECT &bounds) : IControl(bounds) {
@@ -74,11 +75,12 @@ public:
     if (msgTag == ISender<>::kUpdateMessage) {
       ISenderData<3, TDataPacket> d;
       stream.Get(&d, 0);
-      // FFT: 数据 = bins (nBins 个); VQT/PBT/MR-FFT: 数据 = band 幅度 (nBands 个)
+      // FFT: 数据 = bins (nBins 个); VQT/PBT/MR-FFT/RTA: 数据 = band 幅度 (nBands 个)
       const int nVals = (mMode == 0) ? std::max(mNumBins, 0)
                                      : (mMode == 1) ? (int)mVQTFreqs.size()
                                      : (mMode == 2) ? (int)mPBTFreqs.size()
-                                                    : (int)mMRFFTFreqs.size();
+                                     : (mMode == 3) ? (int)mMRFFTFreqs.size()
+                                                    : (int)mRTAFreqs.size();
       if (nVals <= 0)
         return;
 
@@ -151,7 +153,7 @@ public:
     } else if (msgTag == kMsgTagMode) {
       int mode;
       stream.Get(&mode, 0);
-      mMode = std::clamp(mode, 0, 3);
+      mMode = std::clamp(mode, 0, 4);
       RebuildSlopeGain(); // 斜率档值随模式变化 (FFT 0/3/4.5, 其余 -3/0/1.5)
       SetDirty(false);
     } else if (msgTag == kMsgTagChanMode) {
@@ -204,6 +206,20 @@ public:
       mMRFFTFreqNorm.resize(n);
       for (int i = 0; i < n; ++i)
         mMRFFTFreqNorm[i] = FreqNorm(mMRFFTFreqs[i]);
+      RebuildSlopeGain(); // 斜率增益依赖 band 中心频率, band 表更新后重建
+      SetDirty(false);
+    } else if (msgTag == kMsgTagRTABands) {
+      const int n = dataSize / (int)sizeof(float);
+      if (n != (int)mRTAFreqs.size()) {
+        for (int c = 0; c < 3; ++c)
+          mSpectrum[c].clear();
+      }
+      mRTAFreqs.resize(n);
+      if (n > 0)
+        std::memcpy(mRTAFreqs.data(), pData, (size_t)n * sizeof(float));
+      mRTAFreqNorm.resize(n);
+      for (int i = 0; i < n; ++i)
+        mRTAFreqNorm[i] = FreqNorm(mRTAFreqs[i]);
       RebuildSlopeGain(); // 斜率增益依赖 band 中心频率, band 表更新后重建
       SetDirty(false);
     } else if (msgTag == kMsgTagLevelMeter) {
@@ -835,6 +851,39 @@ private:
       return;
     }
 
+    // RTA 模式: 数据 = 1/3, 1/4, 1/6 八度 IIR 滤波器组各频带 RMS 幅度, 按对数中心频率平滑贝塞尔曲线绘制
+    if (mMode == 4) {
+      mSpecPtsL.clear();
+      mSpecPtsR.clear();
+      mSpecPtsM.clear();
+      const int nb = (int)mRTAFreqs.size();
+      const int have = std::min(nb, (int)mSpectrum[0].size());
+      for (int b = 0; b < have; ++b) {
+        const float x = plot.L + mRTAFreqNorm[b] * plot.W();
+        const float g = SlopeGain(b); // 斜率: 每 band 常数增益, 曲线与 hold 同步倾斜
+        const float aL = mSpectrum[0][b] * g;
+        const float aR = mSpectrum[1][b] * g;
+        const float aSum = (mSpectrum[2].size() > (size_t)b) ? mSpectrum[2][b] * g : 0.f;
+        const float yL = ampToY(aL);
+        const float yR = ampToY(aR);
+        mSpecPtsL.push_back({x, yL});
+        mSpecPtsR.push_back({x, yR});
+
+        const float aM = (mMergeAlgo == 0) ? std::sqrt(aL * aL + aR * aR) : aSum;
+        mSpecPtsM.push_back({x, ampToY(aM)});
+        mHoldPts.push_back({x, ampToY(HoldValAt(b) * g)});
+      }
+
+      if (mChanMode == 0) {
+        DrawFill(g, plot, mSpecPtsL, cL, kGradientMinAlpha, kLayerTopAlpha, true, false);
+        DrawFill(g, plot, mSpecPtsR, cR, kGradientMinAlpha, kLayerTopAlpha, true, true);
+      } else {
+        DrawFill(g, plot, mSpecPtsM, cO, kGradientMinAlpha, 255, true);
+      }
+      DrawHoldCurve(g, plot, true);
+      return;
+    }
+
     mSpecPtsL.clear();
     mSpecPtsR.clear();
     mSpecPtsM.clear();
@@ -1086,7 +1135,7 @@ private:
   int mMeterMode = 0;                       // 电平表模式: 0=dBTP, 1=dBFS+RMS, 2=VU
   bool mOverL = false, mOverR = false;      // 电平表: 过载锁存
   std::vector<int> mBinToBand;     // 预计算: bin -> band 映射 (-1 = 频段外)
-  int mMode = 0;                   // 分析模式: 0=FFT, 1=VQT, 2=PBT, 3=MR-FFT
+  int mMode = 0;                   // 分析模式: 0=FFT, 1=VQT, 2=PBT, 3=MR-FFT, 4=RTA
   int mChanMode = 0;               // 声道显示模式: 0=L/R, 1=MERGE
   int mMergeAlgo = 0;              // 合并算法: 0=PWR 功率和, 1=SUM 单声道和
   std::vector<float> mVQTFreqs;     // VQT band 中心频率 (Hz), 由插件下发
@@ -1095,11 +1144,13 @@ private:
   std::vector<float> mPBTFreqNorm;  // PBT band 频率归一化位置 (预计算, 与 mPBTFreqs 同步)
   std::vector<float> mMRFFTFreqs;   // MR-FFT band 中心频率 (Hz), 由插件下发
   std::vector<float> mMRFFTFreqNorm;// MR-FFT band 频率归一化位置 (预计算, 与 mMRFFTFreqs 同步)
+  std::vector<float> mRTAFreqs;     // RTA band 中心频率 (Hz), 由插件下发
+  std::vector<float> mRTAFreqNorm;  // RTA band 频率归一化位置 (预计算, 与 mRTAFreqs 同步)
   std::array<float, kSpectrumBands> mBandNormX{}; // FFT 256 band 频率归一化位置 (预计算)
 
   // ── 频谱斜率 (显示域变换) ────────────────────────────────────────────
   // 每显示值幅度乘常数增益 g(f) = 10^(S·log2(f/f_pivot)/20), S 为当前模式生效斜率
-  // (FFT: 0/3/4.5 dB/oct; VQT/PBT/MR-FFT: -3/0/1.5, 由插件按模式档值下发)。
+  // (FFT: 0/3/4.5 dB/oct; VQT/PBT/MR-FFT/RTA: -3/0/1.5, 由插件按模式档值下发)。
   // 增益为每 band 正常数, 与攻击/释放平滑及 hold 采集可交换, 故仅在绘制时施加;
   // 表在斜率/模式/band 表变化时重建 (与 RebuildBinToBand 同模式, 热路径只查表)。
   static constexpr float kSlopeRefHz = 632.45553f; // 支点 = 显示范围几何中心 sqrt(20·20000)
@@ -1112,7 +1163,7 @@ private:
     if (mMode == 0) {
       n = kSpectrumBands; // FFT: band 中心频率固定 (20..20k 对数均分, 见构造函数)
     } else {
-      freqs = (mMode == 1) ? &mVQTFreqs : (mMode == 2) ? &mPBTFreqs : &mMRFFTFreqs;
+      freqs = (mMode == 1) ? &mVQTFreqs : (mMode == 2) ? &mPBTFreqs : (mMode == 3) ? &mMRFFTFreqs : &mRTAFreqs;
       n = (int)freqs->size();
     }
     mSlopeGain.assign(n, 1.f);

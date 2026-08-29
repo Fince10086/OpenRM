@@ -23,6 +23,8 @@ enum EParams {
   kSlopeMRFFT,    // 频谱斜率档位索引, MR-FFT 引擎独立保存 (-3/0/1.5 dB/oct)
   kFFTWindow,     // STFT 窗函数档位 (0: Hann, 1: BH4 4阶Blackman-Harris)
   kWindowVQT,     // VQT 窗函数档位 (0: Hann, 1: BH4), 与 STFT 独立保存 (追加末尾, 保旧状态文件下标兼容)
+  kSlopeRTA,      // 频谱斜率档位索引, RTA 引擎独立保存 (-3/0/1.5 dB/oct; 追加末尾, 保旧状态文件下标兼容)
+  kRtaOctave,     // RTA 分数倍频程档位 (0: 1/3 Oct, 1: 1/4 Oct, 2: 1/6 Oct; 追加末尾, 保旧状态文件下标兼容)
   kNumParams
 };
 
@@ -37,15 +39,17 @@ constexpr int kLfResOptions[] = {20, 10, 5};
 constexpr int kNumLfResOptions = 3;
 constexpr int kPbtLfResOptions[] = {40, 20, 10};
 constexpr int kNumPbtLfResOptions = 3;
+constexpr int kRtaOctaveOptions[] = {3, 4, 6};
+constexpr int kNumRtaOctaveOptions = 3;
 
 // 峰值保持时长档位 (kLevelHold 存索引)。持久档用 1e9s 表示: LevelMeter 的超时逻辑
 // (holdT >= holdSec 才回落) 永不触发, 即无限保持, 且 holdSec > 0 的"画 hold 线"判定照常成立。
 constexpr double kHoldTimeSecs[] = {0.5, 2.0, 1e9};
 constexpr int kNumHoldTimeOptions = 3;
 
-// 频谱斜率档位 (kSlopeFFT/kSlopeVQT/kSlopePBT/kSlopeMRFFT 存索引, 各引擎独立):
+// 频谱斜率档位 (kSlopeFFT/kSlopeVQT/kSlopePBT/kSlopeMRFFT/kSlopeRTA 存索引, 各引擎独立):
 // 显示域每 band 施加 S·log2(f/f_pivot) dB 的倾斜。FFT 按 bin 显示白噪天生平直,
-// 逐 band 能量积分显示 (VQT/PBT/MR-FFT) 白噪天生 +3 dB/oct, 故两组档值相差 -3,
+// 逐 band 能量积分显示 (VQT/PBT/MR-FFT/RTA) 白噪天生 +3 dB/oct, 故两组档值相差 -3,
 // 使同一信号的视觉斜率在两种显示下一致 (如粉噪在 FFT|3 与 VQT|0 下都平直)。
 constexpr double kSlopeDbFFT[] = {0.0, 3.0, 4.5};
 constexpr double kSlopeDbLog[] = {-3.0, 0.0, 1.5};
@@ -56,8 +60,15 @@ constexpr int kVQTGammaHz = 5;
 constexpr int kVQTBpo = 24;
 constexpr int kMRFFTBpo = 24;
 
-// 分析引擎模式 (四态: STFT, VQT, PBT, MR-FFT)
-enum EAnalyzerMode { kModeFFT = 0, kModeVQT = 1, kModePBT = 2, kModeMRFFT = 3, kNumModes = 4 };
+// 分析引擎模式 (五态: STFT, VQT, PBT, MR-FFT, RTA)
+enum EAnalyzerMode {
+  kModeFFT = 0,
+  kModeVQT = 1,
+  kModePBT = 2,
+  kModeMRFFT = 3,
+  kModeRTA = 4,
+  kNumModes = 5
+};
 
 // 声道显示模式 (三态: PWR(Merge) / LR / SUM(Merge))
 enum EChannelMode { kChanModePWR = 0, kChanModeLR = 1, kChanModeSUM = 2, kNumChanModes = 3 };

@@ -141,9 +141,11 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
   GetParam(kSlopeVQT)->InitInt("SlopeVQT", 1, 0, kNumSlopeOptions - 1, "");
   GetParam(kSlopePBT)->InitInt("SlopePBT", 1, 0, kNumSlopeOptions - 1, "");
   GetParam(kSlopeMRFFT)->InitInt("SlopeMRFFT", 1, 0, kNumSlopeOptions - 1, "");
+  GetParam(kSlopeRTA)->InitInt("SlopeRTA", 1, 0, kNumSlopeOptions - 1, "");
   // 窗函数档位 STFT (默认 Hann/SHARP) 与 VQT (默认 BH4/CLEAN) 各自独立 (kFFTWindow / kWindowVQT)
   GetParam(kFFTWindow)->InitInt("WindowFFT", kFFTWindowHann, 0, kNumFFTWindows - 1, "");
   GetParam(kWindowVQT)->InitInt("WindowVQT", kFFTWindowBH4, 0, kNumFFTWindows - 1, "");
+  GetParam(kRtaOctave)->InitInt("RtaOctave", 0, 0, kNumRtaOctaveOptions - 1, ""); // 默认 1/3 Oct
   mDefaultSnapshot = Snapshot();
   mStableSnapshot = Snapshot();
 
@@ -229,7 +231,7 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     constexpr float kCol2X = kCol1X + kBtnW + kBtnGap; // 右列按钮左缘
     constexpr float kPanelR = kCol2X + kBtnW;
 
-    // 顶部三按钮 (LR / FFT·VQT·PBT / RES) 统一尺寸: 宽 62 高 26, 容纳 HIGH/PWR 文字 + 基础内边距
+    // 顶部三按钮 (LR / FFT·VQT·PBT·MR-FFT·RTA / RES) 统一尺寸: 宽 62 高 26, 容纳 HIGH/PWR 文字 + 基础内边距
     constexpr float kTopBtnW = 62.f;
     constexpr float kTopBtnH = 26.f;
     constexpr float kTopBtnY = 22.f;
@@ -245,10 +247,10 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     pGraphics->AttachControl(mChanModeBtn);
     bindTip(mChanModeBtn, orm::kTxtTipChanMode);
 
-    // 分析引擎切换按钮 (STFT / VQT / PBT / MR-FFT) — LR 右侧, 留 kTopBtnGap 空隙
+    // 分析引擎切换按钮 (STFT / VQT / PBT / MR-FFT / RTA) — LR 右侧, 留 kTopBtnGap 空隙
     constexpr float kModeX = 20.f + kTopBtnW + kTopBtnGap;
     mModeBtn = new FlatCycleButton(IRECT(kModeX, kTopBtnY, kModeX + kTopBtnW, kTopBtnY + kTopBtnH),
-                                   kMode, {"STFT", "VQT", "PBT", "MR-FFT"}, btnStyle);
+                                   kMode, {"STFT", "VQT", "PBT", "MR-FFT", "RTA"}, btnStyle);
     pGraphics->AttachControl(mModeBtn);
     bindTip(mModeBtn, orm::kTxtTipMode);
 
@@ -272,6 +274,13 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     pGraphics->AttachControl(mPyramidBtn);
     bindTip(mPyramidBtn, orm::kTxtTipPyramid);
     mPyramidBtn->Hide(true);
+
+    // RTA 分数倍频程循环按钮 (1/3 Oct / 1/4 Oct / 1/6 Oct) — 同槽位, 仅 RTA 模式可见
+    mRtaOctBtn = new FlatCycleButton(IRECT(kResX, kTopBtnY, kResX + kTopBtnW, kTopBtnY + kTopBtnH),
+                                     kRtaOctave, {"1/3 Oct", "1/4 Oct", "1/6 Oct"}, btnStyle);
+    pGraphics->AttachControl(mRtaOctBtn);
+    bindTip(mRtaOctBtn, orm::kTxtTipRtaOctave);
+    mRtaOctBtn->Hide(true);
 
     // 窗函数循环按钮 (SHARP/CLEAN) — RES 分辨率按钮右侧 (即原 VQT 金字塔按钮位 B1 的槽位,
     // 尺寸 62x26 同 PWR/STFT, 间距同 PWR→STFT 的 kTopBtnGap)。STFT 与 VQT 各自独立保存
@@ -325,10 +334,12 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     // 各引擎独立保存档位, 切引擎时改绑参数并换标签 (见 OnIdle 模式块)。
     // (BPO 滑块已删除, 下方整堆上移 51px 填补空位)
     constexpr float kSlopeBtnY = 183.f; // 与下方 UNDO 行 (y=222) 保持 39px 行距
-    mSlopeBtn = new FlatCycleButton(IRECT(kCol1X, kSlopeBtnY, kPanelR, kSlopeBtnY + kBtnH), kSlopeFFT,
-                                    {"0 dB/Oct", "3 dB/Oct", "4.5 dB/Oct"}, btnStyle);
+    mSlopeBtn = new FlatCycleButton(
+        IRECT(kCol1X, kSlopeBtnY, kPanelR, kSlopeBtnY + kBtnH), SlopeParamForMode(initMode),
+        initMode == kModeFFT ? std::initializer_list<const char *>{"0 dB/Oct", "3 dB/Oct", "4.5 dB/Oct"}
+                             : std::initializer_list<const char *>{"-3 dB/Oct", "0 dB/Oct", "1.5 dB/Oct"},
+        btnStyle);
     pGraphics->AttachControl(mSlopeBtn);
-    mSlopeBtn->SetParamIdx(kSlopeFFT + (int)GetParam(kMode)->Value());
     bindTip(mSlopeBtn, orm::kTxtTipSlope);
 
     IVButtonControl *undoBtn =
@@ -677,6 +688,9 @@ void ORMAnalyzer::ProcessBlock(sample **inputs, sample **outputs, int nFrames) {
     } else if (mode == kModeMRFFT) {
       mMRFFT.ProcessBlock(spec, nFrames, kCtrlTagPad, 3);
       mEngineHopPhase[kModeMRFFT].store(mMRFFT.HopPhase(), std::memory_order_relaxed);
+    } else if (mode == kModeRTA) {
+      mRTA.ProcessBlock(spec, nFrames, kCtrlTagPad, 3);
+      mEngineHopPhase[kModeRTA].store(mRTA.HopPhase(), std::memory_order_relaxed);
     } else {
       mSpectrum.ProcessBlock(spec, nFrames, kCtrlTagPad, 3);
       mEngineHopPhase[kModeFFT].store(mSpectrum.HopPhase(), std::memory_order_relaxed);
@@ -737,6 +751,8 @@ void ORMAnalyzer::OnReset() {
   mPBT.SetLfWidth(CurrentPbtLfRes());
   mMRFFT.SetSampleRate(GetSampleRate());
   mMRFFT.SetBpo(kMRFFTBpo); // MR-FFT 固定 BPO = 24 (滑块已移除)
+  mRTA.SetSampleRate(GetSampleRate());
+  mRTA.SetOctaveMode(CurrentRtaOctave());
   mLevelSetSR.store(GetSampleRate(), std::memory_order_relaxed); // 音频线程下一 block 执行 SetSampleRate+Reset
   mPeakL.store(0.f, std::memory_order_relaxed);
   mPeakR.store(0.f, std::memory_order_relaxed);
@@ -773,6 +789,8 @@ void ORMAnalyzer::SendSpectrumConfig() {
     SendPBTBandFreqs();
   else if (mode == kModeMRFFT)
     SendMRFFTBandFreqs();
+  else if (mode == kModeRTA)
+    SendRTABandFreqs();
 }
 
 void ORMAnalyzer::SendVQTBandFreqs() {
@@ -802,6 +820,15 @@ void ORMAnalyzer::SendMRFFTBandFreqs() {
                              (int)(buf.size() * sizeof(float)), buf.data());
 }
 
+void ORMAnalyzer::SendRTABandFreqs() {
+  const auto &freqs = mRTA.BandFreqs();
+  if (freqs.empty())
+    return;
+  std::vector<float> buf(freqs.begin(), freqs.end());
+  SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagRTABands,
+                             (int)(buf.size() * sizeof(float)), buf.data());
+}
+
 void ORMAnalyzer::SendResetToPad() {
   const int dummy = 0;
   SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagReset, sizeof(int), &dummy);
@@ -828,6 +855,11 @@ void ORMAnalyzer::OnParamChange(int paramIdx, EParamSource source, int sampleOff
   } else if (paramIdx == kPyramidDecim) {
     if (GetParam(kMode)->Value() < 1.5) { // VQT 模式
       if (mVQT.SetPyramidMode((int)std::lround(GetParam(kPyramidDecim)->Value())) && !frozen)
+        SendResetToPad();
+    }
+  } else if (paramIdx == kRtaOctave) {
+    if (GetParam(kMode)->Value() > 3.5) { // RTA 模式
+      if (mRTA.SetOctaveMode(CurrentRtaOctave()) && !frozen)
         SendResetToPad();
     }
   } else if (paramIdx == kLevelMode) {
@@ -874,6 +906,7 @@ void ORMAnalyzer::OnIdle() {
   mVQT.CheckRebuild();
   mPBT.CheckRebuild();
   mMRFFT.CheckRebuild();
+  mRTA.CheckRebuild();
 
   const bool frozen = GetParam(kFreeze)->Value() > 0.5; // Freeze 激活: 画面定格
 
@@ -884,6 +917,7 @@ void ORMAnalyzer::OnIdle() {
     mFreezeWindowVQT = CurrentVQTWindow();
     mFreezeLf = (int)std::lround(GetParam(kLfRes)->Value());
     mFreezePyramid = (int)std::lround(GetParam(kPyramidDecim)->Value());
+    mFreezeRtaOct = CurrentRtaOctave();
   };
 
   // 模式切换 (冻结中: 跳过 reset 不清屏, 改用冻结缓冲在新算法下重算后直显定格)
@@ -894,6 +928,8 @@ void ORMAnalyzer::OnIdle() {
       mResBtn->Hide(mode != kModeFFT);
       mPbtLfResBtn->Hide(mode != kModePBT);
       mPyramidBtn->Hide(mode != kModeVQT);
+      if (mRtaOctBtn)
+        mRtaOctBtn->Hide(mode != kModeRTA);
     }
     // 窗函数按钮: STFT 与 VQT 各自独立档位, 按模式改绑参数 (仅两引擎模式可见)
     if (mWindowBtn) {
@@ -903,7 +939,7 @@ void ORMAnalyzer::OnIdle() {
     // 斜率按钮: 档位随引擎不同 (FFT 0/3/4.5, 其余 -3/0/1.5, 单位 dB/Oct);
     // 改绑当前引擎参数并换标签
     if (mSlopeBtn) {
-      mSlopeBtn->SetParamIdx(kSlopeFFT + mode);
+      mSlopeBtn->SetParamIdx(SlopeParamForMode(mode));
       if (mode == kModeFFT)
         mSlopeBtn->SetLabels({"0 dB/Oct", "3 dB/Oct", "4.5 dB/Oct"});
       else
@@ -920,6 +956,8 @@ void ORMAnalyzer::OnIdle() {
       SendPBTBandFreqs();
     else if (mode == kModeMRFFT)
       SendMRFFTBandFreqs();
+    else if (mode == kModeRTA)
+      SendRTABandFreqs();
     if (frozen) {
       // 冻结中: 用冻结输入快照在 (新) 引擎与档位下确定性回放, 画面随分 tick 泵送
       // 收敛到 "冻结音频 × 当前配置" 并继续定格。同步档位快照, 避免同 tick 重复触发。
@@ -936,6 +974,7 @@ void ORMAnalyzer::OnIdle() {
   mVQT.SetChannelMode(chanTri);
   mPBT.SetChannelMode(chanTri);
   mMRFFT.SetChannelMode(chanTri);
+  mRTA.SetChannelMode(chanTri);
   if (chanTri != mSentChanMode) {
     mSentChanMode = chanTri;
     const int chanMode = (chanTri == kChanModeLR) ? 0 : 1;
@@ -961,9 +1000,10 @@ void ORMAnalyzer::OnIdle() {
     const double attack = GetParam(kAttack)->Value();
     const double lfRes = GetParam(kLfRes)->Value();
     const double slope = EffectiveSlopeDb(); // 斜率档位变化时重发 (冻结中照常: 纯显示参数)
+    const int rtaOct = CurrentRtaOctave();
     if (sr != mSentSampleRate || fftSize != mSentFFTSize || winFFT != mSentWindowFFT || winVQT != mSentWindowVQT ||
         release != mSentRelease || range != mSentRange || attack != mSentAttack || lfRes != mSentLfRes ||
-        slope != mSentSlope) {
+        slope != mSentSlope || rtaOct != mSentRtaOct) {
       mSpectrum.SetWindowType(winFFT);
       mVQT.SetWindowType(winVQT);
       // 冻结中 attack/release (回放弹道) 或采样率/窗函数变化需重启回放, 保证确定性;
@@ -980,13 +1020,14 @@ void ORMAnalyzer::OnIdle() {
       mSentAttack = attack;
       mSentLfRes = lfRes;
       mSentSlope = slope;
+      mSentRtaOct = rtaOct;
       SendSpectrumConfig();
       if (restartReplay)
         StartFreezeReplay();
     }
   }
 
-  // 冻结中: 同一算法内档位变化 (STFT 尺寸 / 窗函数 / VQT 金字塔 / PBT LF)
+  // 冻结中: 同一算法内档位变化 (STFT 尺寸 / 窗函数 / VQT 金字塔 / PBT LF / RTA 倍频程)
   // → 引擎配置已在音频线程更新 (OnParamChange), band 表已由上方防抖重发 (先于回放帧),
   // 这里用冻结缓冲确定性回放, 画面 = 冻结音频 × 当前档位。刚冻结 (mFreezeOn 边沿) 只同步
   // 快照不回放: 画面保持按下瞬间的实时定格, 避免不必要的跳变与回放开销。
@@ -1000,11 +1041,13 @@ void ORMAnalyzer::OnIdle() {
       const int winVQT = CurrentVQTWindow();
       const int lfIdx = (int)std::lround(GetParam(kLfRes)->Value());
       const int pyrIdx = (int)std::lround(GetParam(kPyramidDecim)->Value());
+      const int rtaOctIdx = CurrentRtaOctave();
       const bool cfgChanged =
           (mode == kModeFFT && (resIdx != mFreezeRes || winFFT != mFreezeWindowFFT)) ||
           (mode == kModeVQT &&
            (lfIdx != mFreezeLf || pyrIdx != mFreezePyramid || winVQT != mFreezeWindowVQT)) ||
-          (mode == kModePBT && lfIdx != mFreezeLf);
+          (mode == kModePBT && lfIdx != mFreezeLf) ||
+          (mode == kModeRTA && rtaOctIdx != mFreezeRtaOct);
       if (cfgChanged) {
         StartFreezeReplay();
       }
@@ -1013,6 +1056,7 @@ void ORMAnalyzer::OnIdle() {
       mFreezeWindowVQT = winVQT;
       mFreezeLf = lfIdx;
       mFreezePyramid = pyrIdx;
+      mFreezeRtaOct = rtaOctIdx;
     }
     // 冻结回放泵送: 每 tick 回放一批帧 (kUpdateMessage → pad 实时平滑), 收敛后定格
     PumpFreezeReplay();
@@ -1029,6 +1073,8 @@ void ORMAnalyzer::OnIdle() {
       mPBT.TransmitData(*this);
     else if (mode == kModeMRFFT)
       mMRFFT.TransmitData(*this);
+    else if (mode == kModeRTA)
+      mRTA.TransmitData(*this);
     else
       mSpectrum.TransmitData(*this);
   }
@@ -1100,6 +1146,8 @@ void ORMAnalyzer::OnUIClose() {
   mSpectrumPad = nullptr;
   mResBtn = nullptr;
   mPbtLfResBtn = nullptr;
+  mPyramidBtn = nullptr;
+  mRtaOctBtn = nullptr;
   mRangeBtn = nullptr;
   mAttackSlider = nullptr;
   mReleaseSlider = nullptr;
@@ -1128,9 +1176,10 @@ void ORMAnalyzer::OnUIClose() {
   mSentLfRes = -1.0;
   mSentSlope = -1e9;
   mSentChanMode = -1;
+  mSentRtaOct = -1;
   // 冻结档位快照复位: 重开 UI 后冻结画面与档位重算按新控件状态重新建立
   mFreezeOn = false;
-  mFreezeRes = mFreezeWindowFFT = mFreezeWindowVQT = mFreezeLf = mFreezePyramid = -1;
+  mFreezeRes = mFreezeWindowFFT = mFreezeWindowVQT = mFreezeLf = mFreezePyramid = mFreezeRtaOct = -1;
   mReplayMode = -1;
 }
 
@@ -1157,6 +1206,7 @@ void ORMAnalyzer::StartFreezeReplay() {
     case kModeVQT: mVQT.ResetRuntimeState(); break;
     case kModePBT: mPBT.ResetRuntimeState(); break;
     case kModeMRFFT: mMRFFT.ResetRuntimeState(); break;
+    case kModeRTA: mRTA.ResetRuntimeState(); break;
     default: mSpectrum.ResetRuntimeState(); break;
   }
   // pad 平滑缓冲确定性清零: 回放从零收敛, 显示与切换历史无关
@@ -1194,6 +1244,7 @@ void ORMAnalyzer::PumpFreezeReplay() {
       case kModeVQT: mVQT.PrepareFrameUI(d); break;
       case kModePBT: mPBT.PrepareFrameUI(d); break;
       case kModeMRFFT: mMRFFT.PrepareFrameUI(d); break;
+      case kModeRTA: mRTA.PrepareFrameUI(d); break;
       default: mSpectrum.PrepareFrameUI(d); break;
     }
     SendControlMsgFromDelegate(kCtrlTagPad, ISender<>::kUpdateMessage,
