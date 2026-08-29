@@ -4,7 +4,7 @@
 #include "Params.h"
 #include "dsp/SpectrumSTFT.h"
 #include "dsp/VQTAnalyzer.h"
-#include "dsp/PAZAnalyzer.h"
+#include "dsp/PBTAnalyzer.h"
 #include "dsp/MultirateFFTAnalyzer.h"
 #include "dsp/LevelMeter.h"
 #if ORM_ENABLE_TEST_GEN
@@ -59,7 +59,7 @@ private:
 
   SpectrumSTFT<3> mSpectrum;
   VQTAnalyzer<3> mVQT;
-  PAZAnalyzer<3> mPAZ;
+  PBTAnalyzer<3> mPBT;
   MultirateFFTAnalyzer<3> mMRFFT;
 
   static constexpr int kMaxBlock = 16384;
@@ -96,7 +96,7 @@ private:
   SpectrumPad *mSpectrumPad = nullptr;
   FlatCycleButton *mResBtn = nullptr;      // STFT 分辨率循环按钮 (LOW/MID/HIGH)
   FlatCycleButton *mWindowBtn = nullptr;   // 窗函数循环按钮 (SHARP/CLEAN, STFT 与 VQT 各自独立档位, 按模式改绑参数)
-  FlatCycleButton *mPazLfResBtn = nullptr; // PAZ 低频分辨率循环按钮 (40/20/10 Hz)
+  FlatCycleButton *mPbtLfResBtn = nullptr; // PBT 低频分辨率循环按钮 (40/20/10 Hz)
   FlatCycleButton *mPyramidBtn = nullptr;  // VQT 金字塔算法循环按钮 (LIN / MIN)
   FlatCycleButton *mRangeBtn = nullptr;    // 动态范围循环按钮 (刻度底部 80/100/120)
   FlatCycleButton *mSlopeBtn = nullptr;    // 频谱斜率循环按钮 (刻度底部左缘, 档值随引擎)
@@ -118,13 +118,12 @@ private:
   // ── Freeze (冻结/保持), 确定性回放方案 ─────────────────────────────
   // 音频线程把最近输入滚环记录进 mFreezeRing (freeze 后停止写入, 即冻结时刻快照),
   // 并逐块发布活跃引擎的输入侧 hop 相位 mEngineHopPhase (非活跃引擎保持停用前值)。
-  // UI 线程在冻结中跳过引擎消费 (画面定格); 切换引擎/PAZ 算法/同一算法内档位时
+  // UI 线程在冻结中跳过引擎消费 (画面定格); 切换引擎/同一算法内档位时
   // StartFreezeReplay: 复位引擎运行态 → pad 平滑缓冲清零 → 把冻结环按实时帧格
   // (hop 相位对齐, 最新回放帧 = 冻结瞬间实时显示的最后一帧) 逐帧回放, 每帧经
   // kUpdateMessage 走 pad 的攻击/释放平滑 (与实时同一弹道学)。
   // display(cfg) = replay(ring, cfg) 为纯函数: 冻结中切走再切回, 画面逐字节一致。
   static constexpr int kFreezeRingLen = 1 << 18;   // 262144 样本 ≈5.46s @48k:
-                                                   // 覆盖 PAZ-IIR 最低频带 5τ (10Hz 档 τ≈0.8s)
                                                    // 与最长释放 (1s) 弹道的收敛 (96k 下约 2.7s, 深带欠收敛)
   std::array<std::array<float, kFreezeRingLen>, 3> mFreezeRing{}; // [0]=L [1]=R [2]=M
   std::atomic<int> mFreezeRingPos{0};              // 下一个写入位置 (= 最旧样本)
@@ -202,9 +201,9 @@ private:
     const int idx = (int)std::clamp(std::lround(GetParam(kWindowVQT)->Value()), 0L, (long)kNumFFTWindows - 1);
     return idx;
   }
-  int CurrentPazLfRes() const {
-    const int idx = (int)std::clamp(GetParam(kLfRes)->Value(), 0.0, (double)kNumPazLfResOptions - 1);
-    return kPazLfResOptions[idx];
+  int CurrentPbtLfRes() const {
+    const int idx = (int)std::clamp(GetParam(kLfRes)->Value(), 0.0, (double)kNumPbtLfResOptions - 1);
+    return kPbtLfResOptions[idx];
   }
   // 频谱显示范围 (刻度底部 dB): 离散三档 80/100/120, 由 Range 循环按钮切换。
   // 用 lround 取档位 (与按钮显示取整一致), 避免宿主旧状态恢复出档位间值 (如 0.5) 时
@@ -223,7 +222,7 @@ private:
     return kHoldTimeSecs[idx];
   }
   // 当前模式生效的斜率值 (dB/oct): 各引擎档位独立保存 (kSlopeFFT + 模式连续排列);
-  // FFT 用 kSlopeDbFFT 档值, 逐 band 引擎 (VQT/PAZ/MR-FFT) 用 kSlopeDbLog 档值。
+  // FFT 用 kSlopeDbFFT 档值, 逐 band 引擎 (VQT/PBT/MR-FFT) 用 kSlopeDbLog 档值。
   // 两组相差 -3 dB/oct: 逐 band 能量积分显示白噪天生 +3 dB/oct (FFT 按 bin 显示天生平直),
   // 使同一信号的视觉斜率跨显示一致 (如粉噪在 FFT|3 与 VQT|0 下都平直)。
   double EffectiveSlopeDb() const {
@@ -232,7 +231,7 @@ private:
     return (mode == kModeFFT) ? kSlopeDbFFT[idx] : kSlopeDbLog[idx];
   }
   void SendVQTBandFreqs();
-  void SendPAZBandFreqs();
+  void SendPBTBandFreqs();
   void SendMRFFTBandFreqs();
 
   void SetParamFromEditor(int idx, double value);

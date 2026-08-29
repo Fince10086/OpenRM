@@ -2,7 +2,7 @@
 
 // MultirateFFTAnalyzer — 多速率八度子带 FFT 频谱分析引擎 (MR-FFT)
 //
-// 半波抽取链固定最小相位形态 (与 PAZ 共用 HalfbandDec2.h): 幅频逐点不变 (FFT 静态
+// 半波抽取链固定最小相位形态 (与 PBT 共用 HalfbandDec2.h): 幅频逐点不变 (FFT 静态
 // 读数/层边界折返不受影响), 深层链延迟 532→76ms @48kHz。
 
 #ifndef STANDALONE_TEST
