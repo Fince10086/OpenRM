@@ -1,6 +1,6 @@
 #pragma once
 
-// PAZAnalyzer — 心理声学临界频带频谱分析引擎 (多速率解调核算法)
+// PBTAnalyzer — 心理声学临界频带频谱分析引擎 (多速率解调核算法)
 //
 // 每个频带一个复数解调 FIR 核: kernel[n] = proto[n]·e^{-j2π·fc·n/fsL}。
 // 核形状: Kaiser 等波纹原型低通, 核长系数 K=4.6
@@ -26,7 +26,7 @@ BEGIN_IPLUG_NAMESPACE
 
 
 template <int MAXNC = 3, int QUEUE_SIZE = 64, int MAX_BANDS = 8192>
-class PAZAnalyzer : public ISender<MAXNC, QUEUE_SIZE, std::array<float, MAX_BANDS>> {
+class PBTAnalyzer : public ISender<MAXNC, QUEUE_SIZE, std::array<float, MAX_BANDS>> {
 public:
   using TDataPacket = std::array<float, MAX_BANDS>;
   using Data = ISenderData<MAXNC, TDataPacket>;
@@ -36,7 +36,7 @@ public:
   static constexpr int kMaxLayers = 10;
   static constexpr double kGuard = 0.78; // band 上边距该层新奈奎斯特的比例 (防抽取混叠, VQT 同款)
 
-  PAZAnalyzer() {
+  PBTAnalyzer() {
     for (int c = 0; c < MAXNC; ++c)
       mPending[c].assign(kHop, 0.f);
     RebuildBands();
@@ -203,7 +203,7 @@ private:
 
   static constexpr double kPi = 3.14159265358979323846;
 
-  static constexpr double kPazFreqs40[52] = {
+  static constexpr double kPbtFreqs40[52] = {
       23.0, 70.0, 117.0, 164.0, 211.0, 258.0, 305.0, 352.0, 422.0, 516.0,
       609.0, 703.0, 797.0, 891.0, 984.0, 1078.0, 1219.0, 1406.0, 1594.0, 1781.0,
       1969.0, 2156.0, 2344.0, 2531.0, 2719.0, 2906.0, 3188.0, 3563.0, 3937.0, 4312.0,
@@ -212,7 +212,7 @@ private:
       21750.0, 23250.0
   };
 
-  static constexpr double kPazFreqs20[60] = {
+  static constexpr double kPbtFreqs20[60] = {
       12.0, 35.0, 59.0, 82.0, 105.0, 129.0, 152.0, 176.0, 211.0, 258.0,
       305.0, 352.0, 398.0, 445.0, 492.0, 539.0, 609.0, 703.0, 797.0, 891.0,
       984.0, 1078.0, 1172.0, 1266.0, 1359.0, 1453.0, 1594.0, 1781.0, 1969.0, 2156.0,
@@ -221,7 +221,7 @@ private:
       10875.0, 11625.0, 12750.0, 14250.0, 15750.0, 17250.0, 18750.0, 20250.0, 21750.0, 23250.0
   };
 
-  static constexpr double kPazFreqs10[68] = {
+  static constexpr double kPbtFreqs10[68] = {
       6.0, 18.0, 29.0, 41.0, 53.0, 64.0, 76.0, 88.0, 105.0, 129.0,
       152.0, 176.0, 199.0, 223.0, 246.0, 270.0, 305.0, 352.0, 398.0, 445.0,
       492.0, 539.0, 586.0, 633.0, 680.0, 727.0, 797.0, 891.0, 984.0, 1078.0,
@@ -263,13 +263,13 @@ private:
     const double *srcFreqs = nullptr;
     int numSrc = 0;
     if (mLfMode == 2) {
-      srcFreqs = kPazFreqs10;
+      srcFreqs = kPbtFreqs10;
       numSrc = 68;
     } else if (mLfMode == 1) {
-      srcFreqs = kPazFreqs20;
+      srcFreqs = kPbtFreqs20;
       numSrc = 60;
     } else {
-      srcFreqs = kPazFreqs40;
+      srcFreqs = kPbtFreqs40;
       numSrc = 52;
     }
 
