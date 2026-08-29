@@ -26,6 +26,8 @@ enum EParams {
   kFFTWindow,     // STFT 窗函数档位 (0: Hann, 1: BH4 4阶Blackman-Harris)
   kWindowVQT,     // VQT 窗函数档位 (0: Hann, 1: BH4), 与 STFT 独立保存 (追加末尾, 保旧状态文件下标兼容)
   kPazKernel,     // PAZ 解调核墙位系数 (Kaiser 原型 Esb=0.13k·bw, 连续 4.5~6.0 步进 0.05; 追加末尾保兼容)
+  kPazMinPhase,   // PAZ 核最小相位化开关 (同幅频谱分解, 消起振群延迟; 追加末尾保兼容)
+  kPazFollow,     // PAZ 每带包络跟随器开关 (快攻击 + 慢释放 τ=C/bw; 追加末尾保兼容)
   kNumParams
 };
 

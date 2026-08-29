@@ -147,6 +147,8 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
   GetParam(kFFTWindow)->InitInt("WindowFFT", kFFTWindowHann, 0, kNumFFTWindows - 1, "");
   GetParam(kWindowVQT)->InitInt("WindowVQT", kFFTWindowHann, 0, kNumFFTWindows - 1, "");
   GetParam(kPazKernel)->InitDouble("PazKernel", 5.0, 2.0, 10.0, 0.05, ""); // Kaiser 墙位 Esb=0.13k·bw, 连续可调拟合原版
+  GetParam(kPazMinPhase)->InitBool("PazMinPhase", false); // PAZ 核最小相位化 (同幅频谱分解, 消起振群延迟)
+  GetParam(kPazFollow)->InitBool("PazFollow", false);     // PAZ 每带包络跟随器 (快攻击 + 慢释放 τ=C/bw)
 
   mDefaultSnapshot = Snapshot();
   mStableSnapshot = Snapshot();
@@ -432,6 +434,20 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
         new ORMSlider(IRECT(kCol1X, 380, kPanelR, 422), kPazKernel, "KERNEL", style, EDirection::Horizontal);
     pGraphics->AttachControl(mPazKernelSlider);
     mPazKernelSlider->Hide(initMode != kModePAZ);
+
+    // PAZ 开发对照开关 (KERNEL 滑块下方一行两个): MINPH = 核最小相位化 (幅频不变,
+    // 消起振群延迟 → 低频出得快); FOLL = 每带包络跟随器 (快攻击 + 慢释放 τ=C/bw →
+    // 低频断信号缓降数秒、起振杂波停留)。仅 PAZ 模式可见, 供与原版逐项对照。
+    mPazMinPhaseBtn = new FlatToggleControl(IRECT(kCol1X, 426, kCol1X + kBtnW, 456), kPazMinPhase, " ", toggleStyle,
+                                            "MINPH", "MINPH");
+    pGraphics->AttachControl(mPazMinPhaseBtn);
+    bindTip(mPazMinPhaseBtn, orm::kTxtTipPazMinPhase);
+    mPazMinPhaseBtn->Hide(initMode != kModePAZ);
+    mPazFollowBtn = new FlatToggleControl(IRECT(kCol2X, 426, kPanelR, 456), kPazFollow, " ", toggleStyle,
+                                          "FOLL", "FOLL");
+    pGraphics->AttachControl(mPazFollowBtn);
+    bindTip(mPazFollowBtn, orm::kTxtTipPazFollow);
+    mPazFollowBtn->Hide(initMode != kModePAZ);
 
     // 底部标题栏：ORM 标识、设置齿轮与版本号
     IText ormText(32, COL_900(), kFontBold, EAlign::Near, EVAlign::Bottom);
@@ -842,6 +858,17 @@ void ORMAnalyzer::OnParamChange(int paramIdx, EParamSource source, int sampleOff
       if (mPAZ.SetKernelLen(CurrentPazKernelLen()) && !frozen)
         SendResetToPad();
     }
+  } else if (paramIdx == kPazMinPhase) {
+    if (GetParam(kMode)->Value() > 1.5 && GetParam(kMode)->Value() < 2.5) { // PAZ 模式
+      if (mPAZ.SetMinPhase(GetParam(kPazMinPhase)->Value() > 0.5) && !frozen)
+        SendResetToPad(); // 触发重建, 显示重新收敛 (核长减半, 静态读数不变)
+    }
+  } else if (paramIdx == kPazFollow) {
+    if (GetParam(kMode)->Value() > 1.5 && GetParam(kMode)->Value() < 2.5) { // PAZ 模式
+      mPAZ.SetFollowOn(GetParam(kPazFollow)->Value() > 0.5);
+      if (!frozen)
+        SendResetToPad(); // 清显示平滑缓冲, 开/关差异立即直观
+    }
   } else if (paramIdx == kPyramidDecim) {
     if (GetParam(kMode)->Value() < 1.5) { // VQT 模式
       if (mVQT.SetPyramidMode((int)std::lround(GetParam(kPyramidDecim)->Value())) && !frozen)
@@ -902,6 +929,8 @@ void ORMAnalyzer::OnIdle() {
     mFreezeLf = (int)std::lround(GetParam(kLfRes)->Value());
     mFreezePyramid = (int)std::lround(GetParam(kPyramidDecim)->Value());
     mFreezeKernel = GetParam(kPazKernel)->Value();
+    mFreezeMinPhase = GetParam(kPazMinPhase)->Value() > 0.5;
+    mFreezeFollow = GetParam(kPazFollow)->Value() > 0.5;
   };
 
   // 模式切换 (冻结中: 跳过 reset 不清屏, 改用冻结缓冲在新算法下重算后直显定格)
@@ -915,6 +944,10 @@ void ORMAnalyzer::OnIdle() {
     }
     if (mPazKernelSlider)
       mPazKernelSlider->Hide(mode != kModePAZ);
+    if (mPazMinPhaseBtn)
+      mPazMinPhaseBtn->Hide(mode != kModePAZ);
+    if (mPazFollowBtn)
+      mPazFollowBtn->Hide(mode != kModePAZ);
     // 窗函数按钮: STFT 与 VQT 各自独立档位, 按模式改绑参数 (仅两引擎模式可见)
     if (mWindowBtn) {
       mWindowBtn->Hide(mode != kModeFFT && mode != kModeVQT);
@@ -1021,11 +1054,15 @@ void ORMAnalyzer::OnIdle() {
       const int lfIdx = (int)std::lround(GetParam(kLfRes)->Value());
       const int pyrIdx = (int)std::lround(GetParam(kPyramidDecim)->Value());
       const double kernVal = GetParam(kPazKernel)->Value();
+      const bool minPh = GetParam(kPazMinPhase)->Value() > 0.5;
+      const bool follOn = GetParam(kPazFollow)->Value() > 0.5;
       const bool cfgChanged =
           (mode == kModeFFT && (resIdx != mFreezeRes || winFFT != mFreezeWindowFFT)) ||
           (mode == kModeVQT &&
            (lfIdx != mFreezeLf || pyrIdx != mFreezePyramid || winVQT != mFreezeWindowVQT)) ||
-          (mode == kModePAZ && (lfIdx != mFreezeLf || std::abs(kernVal - mFreezeKernel) > 1e-9));
+          (mode == kModePAZ &&
+           (lfIdx != mFreezeLf || std::abs(kernVal - mFreezeKernel) > 1e-9 || minPh != mFreezeMinPhase ||
+            follOn != mFreezeFollow));
       if (cfgChanged) {
         StartFreezeReplay();
       }
@@ -1035,6 +1072,8 @@ void ORMAnalyzer::OnIdle() {
       mFreezeLf = lfIdx;
       mFreezePyramid = pyrIdx;
       mFreezeKernel = kernVal;
+      mFreezeMinPhase = minPh;
+      mFreezeFollow = follOn;
     }
     // 冻结回放泵送: 每 tick 回放一批帧 (kUpdateMessage → pad 实时平滑), 收敛后定格
     PumpFreezeReplay();
@@ -1123,6 +1162,8 @@ void ORMAnalyzer::OnUIClose() {
   mResBtn = nullptr;
   mPazLfResBtn = nullptr;
   mPazKernelSlider = nullptr;
+  mPazMinPhaseBtn = nullptr;
+  mPazFollowBtn = nullptr;
   mRangeBtn = nullptr;
   mAttackSlider = nullptr;
   mReleaseSlider = nullptr;
