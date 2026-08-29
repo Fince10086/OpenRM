@@ -30,6 +30,7 @@ public:
   using Base = ISender<MAXNC, QUEUE_SIZE, TDataPacket>;
 
   static constexpr int kHop = 1024;
+  static constexpr int kEnvBlock = 8; // 功率积分块更新长度 (样本; 帧长为其整数倍)
   static constexpr int kMaxBands = 256; // 1/24 Oct 22Hz..20kHz ≈ 236 带 (上限留余量)
   static constexpr double kPi = 3.14159265358979323846;
   static constexpr double kLn2 = 0.69314718055994530942;
@@ -110,6 +111,7 @@ public:
       std::fill(mZ0[c].begin(), mZ0[c].end(), 0.f);
       std::fill(mZ1[c].begin(), mZ1[c].end(), 0.f);
       std::fill(mEnv[c].begin(), mEnv[c].end(), 0.f);
+      std::fill(mAcc[c].begin(), mAcc[c].end(), 0.f);
       mPrevIn[c] = 0.f;
     }
   }
@@ -132,7 +134,8 @@ protected:
     const int nLp = nb + 1;
     const float *k0 = mK0.data(), *k1 = mK1.data(), *k2 = mK2.data();
     const float *invGain = mInvGain.data();
-    const float alpha = mEnvAlpha;
+    const float alphaBlk = mEnvAlphaBlk; // 块更新系数 (每 kEnvBlock 样本)
+    constexpr float kInvBlk = 1.f / kEnvBlock;
 
     for (int c = 0; c < nCh; ++c) {
       if ((c == 0 && !needL) || (c == 1 && !needR) || (c == 2 && !needSum)) {
@@ -147,6 +150,7 @@ protected:
       float *z0 = mZ0[c].data();
       float *z1 = mZ1[c].data();
       float *env = mEnv[c].data();
+      float *acc = mAcc[c].data(); // 块平方累加器 (逐带)
       float prevIn = mPrevIn[c];
 
       for (int n = 0; n < kHop; ++n) {
@@ -155,19 +159,26 @@ protected:
         const float x = xin + prevIn;
         prevIn = xin;
 
-        float yPrev = 0.f;
-        for (int j = 0; j < nLp; ++j) {
+        float yPrev = x * k0[0] + z0[0] * k1[0] + z1[0] * k2[0];
+        z1[0] = z0[0];
+        z0[0] = yPrev;
+
+        for (int j = 1; j < nLp; ++j) {
           const float out = x * k0[j] + z0[j] * k1[j] + z1[j] * k2[j];
           z1[j] = z0[j];
           z0[j] = out;
-          if (j > 0) {
-            // band j−1 = LP_j − LP_{j−1}: 互补差分 (相邻带共享低通输出)
-            const float bd = out - yPrev;
-            float &e = env[j - 1];
-            e += (bd * bd - e) * alpha;
-            d.vals[c][j - 1] = std::sqrt(2.f * e) * invGain[j - 1];
-          }
+          // band j−1 = LP_j − LP_{j−1}: 互补差分 (相邻带共享低通输出)
+          const float bd = out - yPrev;
+          acc[j - 1] += bd * bd;
           yPrev = out;
+        }
+
+        if ((n & (kEnvBlock - 1)) == (kEnvBlock - 1)) {
+          for (int b = 0; b < nb; ++b) {
+            float &e = env[b];
+            e += (acc[b] * kInvBlk - e) * alphaBlk;
+            acc[b] = 0.f;
+          }
         }
       }
       mPrevIn[c] = prevIn;
@@ -179,9 +190,16 @@ protected:
         if (std::abs(z1[j]) < 1e-20f)
           z1[j] = 0.f;
       }
-      for (int j = 0; j < nb; ++j)
+      // 帧末读数: 每带一次 sqrt (原逐样本计算仅末次有效, 全部被覆盖)
+      for (int b = 0; b < nb; ++b)
+        d.vals[c][b] = std::sqrt(2.f * env[b]) * invGain[b];
+
+      for (int j = 0; j < nb; ++j) {
         if (env[j] < 1e-20f)
           env[j] = 0.f;
+        if (acc[j] < 1e-20f)
+          acc[j] = 0.f;
+      }
 
       for (int b = nb; b < MAX_BANDS; ++b)
         d.vals[c][b] = 0.f;
@@ -275,12 +293,13 @@ private:
     }
 
     // 连续功率积分时间常数 (τ = 50ms): 消矩形窗闪动, 瞬态仍由 pad 弹道呈现
-    mEnvAlpha = (float)(1.0 - std::exp(-1.0 / (fs * 0.05))); // 每样本系数 (τ = 50ms)
+    mEnvAlphaBlk = (float)(1.0 - std::exp(-(double)kEnvBlock / (fs * 0.05))); // 块更新系数 (τ = 50ms)
 
     for (int c = 0; c < MAXNC; ++c) {
       mZ0[c].assign(nb + 1, 0.f);
       mZ1[c].assign(nb + 1, 0.f);
       mEnv[c].assign(nb, 0.f);
+      mAcc[c].assign(nb, 0.f);
     }
     mPrevIn.fill(0.f);
     ResetRuntimeState();
@@ -290,13 +309,14 @@ private:
   int mOctaveMode = kOctave1_6; // 0=1/6 (LOW), 1=1/12 (MID), 2=1/24 (HIGH) (与插件参数默认一致)
   int mChanTri = 0;             // 0=LR, 1=PWR, 2=SUM
   std::atomic<bool> mNeedRebuild{false};
-  float mEnvAlpha = 0.f; // 功率积分系数/hop (τ = 50ms)
+  float mEnvAlphaBlk = 0.f; // 功率积分块更新系数 (每 kEnvBlock 样本, τ = 50ms)
 
   std::vector<double> mFreqs;
   std::vector<float> mK0, mK1, mK2; // 边缘低通系数 (nb+1 组)
   std::vector<float> mInvGain;      // 带中心校准增益 (nb)
   std::array<std::vector<float>, MAXNC> mZ0, mZ1; // 低通状态 (nb+1)
   std::array<std::vector<float>, MAXNC> mEnv;     // 连续功率积分 (nb)
+  std::array<std::vector<float>, MAXNC> mAcc;     // 块平方累加器 (nb)
   std::array<float, MAXNC> mPrevIn{};             // 输入预处理一阶状态
   std::array<std::vector<float>, MAXNC> mPending;
   int mBufCount = 0;
