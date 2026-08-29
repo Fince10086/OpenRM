@@ -745,8 +745,8 @@ private:
       }
 
       if (mChanMode == 0) {
-        DrawFill(g, plot, mSpecPtsL, cL, kGradientMinAlpha, kLayerTopAlpha, true);
-        DrawFill(g, plot, mSpecPtsR, cR, kGradientMinAlpha, kLayerTopAlpha, true);
+        DrawFill(g, plot, mSpecPtsL, cL, kGradientMinAlpha, kLayerTopAlpha, true, false);
+        DrawFill(g, plot, mSpecPtsR, cR, kGradientMinAlpha, kLayerTopAlpha, true, true);
       } else {
         DrawFill(g, plot, mSpecPtsM, cO, kGradientMinAlpha, 255, true);
       }
@@ -778,8 +778,8 @@ private:
       }
 
       if (mChanMode == 0) {
-        DrawFill(g, plot, mSpecPtsL, cL, kGradientMinAlpha, kLayerTopAlpha, false);
-        DrawFill(g, plot, mSpecPtsR, cR, kGradientMinAlpha, kLayerTopAlpha, false);
+        DrawFill(g, plot, mSpecPtsL, cL, kGradientMinAlpha, kLayerTopAlpha, false, false);
+        DrawFill(g, plot, mSpecPtsR, cR, kGradientMinAlpha, kLayerTopAlpha, false, true);
       } else {
         DrawFill(g, plot, mSpecPtsM, cO, kGradientMinAlpha, 255, false);
       }
@@ -811,8 +811,8 @@ private:
       }
 
       if (mChanMode == 0) {
-        DrawFill(g, plot, mSpecPtsL, cL, kGradientMinAlpha, kLayerTopAlpha, true);
-        DrawFill(g, plot, mSpecPtsR, cR, kGradientMinAlpha, kLayerTopAlpha, true);
+        DrawFill(g, plot, mSpecPtsL, cL, kGradientMinAlpha, kLayerTopAlpha, true, false);
+        DrawFill(g, plot, mSpecPtsR, cR, kGradientMinAlpha, kLayerTopAlpha, true, true);
       } else {
         DrawFill(g, plot, mSpecPtsM, cO, kGradientMinAlpha, 255, true);
       }
@@ -891,8 +891,8 @@ private:
     }
 
     if (mChanMode == 0) {
-      DrawFill(g, plot, mSpecPtsL, cL, kGradientMinAlpha, kLayerTopAlpha, true);
-      DrawFill(g, plot, mSpecPtsR, cR, kGradientMinAlpha, kLayerTopAlpha, true);
+      DrawFill(g, plot, mSpecPtsL, cL, kGradientMinAlpha, kLayerTopAlpha, true, false);
+      DrawFill(g, plot, mSpecPtsR, cR, kGradientMinAlpha, kLayerTopAlpha, true, true);
     } else {
       DrawFill(g, plot, mSpecPtsM, cO, kGradientMinAlpha, 255, true);
     }
@@ -929,7 +929,8 @@ private:
   }
 
   void DrawFill(IGraphics &g, const IRECT &plot, std::vector<Pt> &pts, const IColor &color,
-                int minAlpha = kGradientMinAlpha, int topAlpha = 255, bool smooth = true) {
+                int minAlpha = kGradientMinAlpha, int topAlpha = 255, bool smooth = true,
+                bool complementary = false) {
     if (pts.size() < 2)
       return;
 
@@ -950,8 +951,9 @@ private:
     IPattern fill = IPattern::CreateLinearGradient(gradRect, EDirection::Vertical);
     for (int i = 0; i < kGradientStops; ++i) {
       const float t = (float)i / (float)(kGradientStops - 1);
-      const int alpha = (int)std::lround(
-          std::clamp((float)minAlpha + (float)(topAlpha - minAlpha) * gradW[i], 0.f, 255.f));
+      const float a1 = std::clamp((float)minAlpha + (float)(topAlpha - minAlpha) * gradW[i], 0.f, 255.f);
+      const float a = complementary ? ((255.f * a1) / (255.f + a1)) : a1;
+      const int alpha = (int)std::lround(a);
       fill.AddStop(IColor(alpha, color.R, color.G, color.B), t);
     }
     g.PathFill(fill);
@@ -967,8 +969,8 @@ private:
     g.PathStroke(IPattern(c), 1.f);
   }
 
-  static constexpr int kGradientMinAlpha = 10; // L/R 实体填充底部最小不透明度
-  static constexpr int kLayerTopAlpha = 160;   // L/R 顶部不透明度 (从 255 降低, 更透明)
+  static constexpr int kGradientMinAlpha = 15; // L/R 实体填充底部最小不透明度
+  static constexpr int kLayerTopAlpha = 200;   // L/R 底层(L)顶部不透明度; 顶层(R)动态映射为 112, 叠加总透明度为 224 / 88%
   static constexpr int kHoldLineAlpha = 75;    // 频谱峰值保持细线不透明度 (低 = 更浅更透)
   static constexpr int kGradientStops = 12;    // 渐变 stops 数 (指数近似精度)
   static constexpr float kGradientDecay = 3.5f;

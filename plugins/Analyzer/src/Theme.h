@@ -158,11 +158,11 @@ inline IVStyle MakeButtonStyle() {
   return IVStyle(true, true, colors, labelText, valueText, true, true, false, false, 0.f, 2.f, 0.f, 1.f, 0.f);
 }
 
-// 频谱三通道颜色: M 使用主题色相; L/R 采用"颜料混合"配对 —— 半透明叠加后还原主题色。
-// 色相偏移 (-92°/+22°) 补偿 R 上层的权重优势 (叠加权重 R 0.627 / L 0.234 / 背景 0.139),
-// 饱和 ×1.6、亮度 +0.10 补偿混合稀释。实测 hue 15°~330° × 深浅两模式下重叠色相误差 ≤2.4°。
-// 标定基于 L/R top α=160 (kLayerTopAlpha), 该值变动时需重新标定。
-// 与 SpectrumPad 的绘制取色完全一致, 供色块图例等 UI 复用。
+// 频谱三通道颜色: M 使用主题色相; L/R 采用"动态互补 Alpha 权重平衡"配对 ——
+// 左右声道采用完全对称的色相偏移 (ThemeHue ± 30°), 饱和度按 1/cos(30°) ≈ 1.155 补偿矢量混合微损。
+// 配合 SpectrumPad 在顶层 (R) 动态降阶映射 alpha2 = 255*alpha1 / (255+alpha1),
+// 实现两层在背景上的有效贡献权重 wL(t) = wR(t) 在全渐变高度上恒等, 彻底消除色相漂移。
+// 与 SpectrumPad 的绘制取色完全一致, 供色块图例、分半按钮等 UI 复用。
 inline void GetChannelColors(IColor &cL, IColor &cR, IColor &cM) {
   auto wrap = [](int h) {
     h %= 360;
@@ -179,10 +179,9 @@ inline void GetChannelColors(IColor &cL, IColor &cR, IColor &cM) {
     sM = std::max(ThemeSatMax(), 0) / 100.f;   // M 跟随主题档位
     sLR = std::max(ThemeSatMax(), 15) / 100.f; // L/R 保底 15
   }
-  const float sMix = std::min(sLR * 1.6f, 1.f);       // L/R: 混合稀释预增饱和
-  const float bMix = std::min(b + 0.10f, 1.f);        // L/R: 混合损失预增亮度
-  cL = HSBToIColor(wrap(ThemeHue() - 92), sMix, bMix);
-  cR = HSBToIColor(wrap(ThemeHue() + 22), sMix, bMix);
+  const float sMix = std::min(sLR * 1.155f, 1.f); // L/R: 补偿 ±30° 矢量混合色度微降
+  cL = HSBToIColor(wrap(ThemeHue() - 30), sMix, b);
+  cR = HSBToIColor(wrap(ThemeHue() + 30), sMix, b);
   cM = HSBToIColor(ThemeHue(), sM, b);
 }
 
