@@ -54,8 +54,6 @@ enum EText {
   kTxtLfHigh,
   kTxtFreeze,
   kTxtTipFreeze,
-  kTxtPyramid,
-  kTxtTipPyramid,
   kTxtDeveloper,
   kTxtTestSignal,
   kTxtGenFreq,
@@ -70,6 +68,7 @@ enum EText {
   kTxtWinSharp,
   kTxtWinClean,
   kTxtTipRtaOctave,
+  kTxtTipVQTGamma,
   kNumTexts
 };
 
@@ -119,8 +118,6 @@ inline const char *Tr(int id, int lang) {
           "HIGH",
           "FREEZE",
           "Freeze display: hold current picture; switching engine re-analyzes the same frozen audio with the new algorithm",
-          "PYR",
-          "VQT pyramid decimation: LIN (linear phase, 2x+4x mixed ratio, low CPU, largest deep-layer delay) / MIN (minimum phase, lowest delay, same magnitude response as LIN)",
           "DEVELOPER",
           "Signal",
           "Frequency",
@@ -135,6 +132,7 @@ inline const char *Tr(int id, int lang) {
           "SHARP",
           "CLEAN",
           "RTA fractional-octave resolution: 1/3 Oct (31 bands) / 1/4 Oct (41 bands) / 1/6 Oct (61 bands)",
+          "VQT low-frequency bandwidth floor gamma (Hz): band width = fc/Q + gamma — higher = wider low bands, faster response; lower = sharper",
       },
       {
           "释放",
@@ -180,8 +178,6 @@ inline const char *Tr(int id, int lang) {
           "高",
           "冻结",
           "冻结显示：定格当前画面；冻结中切换引擎时，用新算法重新分析同一段冻结音频",
-          "金字塔",
-          "VQT 金字塔抽取：LIN 线性相位（2x+4x 混合倍率，CPU 低，深层延迟最大）/ MIN 最小相位（延迟最低，幅频响应与 LIN 一致）",
           "开发者",
           "测试信号",
           "频率",
@@ -196,6 +192,7 @@ inline const char *Tr(int id, int lang) {
           "锐利",
           "纯净",
           "RTA 分数倍频程分辨率：1/3 Oct（31 带）/ 1/4 Oct（41 带）/ 1/6 Oct（61 带）",
+          "VQT 低频带宽下限 γ（Hz）：带宽 = fc/Q + γ —— 越大低频带越宽、响应越快；越小越锐利",
       },
   };
   return kTable[lang][id];

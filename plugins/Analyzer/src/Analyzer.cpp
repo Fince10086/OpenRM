@@ -135,7 +135,7 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
   if (s.holdOn >= 0)
     GetParam(kLevelHoldOn)->Set(s.holdOn > 0 ? 1.0 : 0.0); // 恢复用户上次的保持开关状态
   GetParam(kFreeze)->InitBool("Freeze", false); // 0=实时, 1=FREEZE 定格
-  GetParam(kPyramidDecim)->InitInt("Pyramid", 0, 0, 1, ""); // VQT 金字塔档位: 0=LIN 1=MIN
+  GetParam(kVQTGamma)->InitInt("VQTGamma", 0, 0, kNumVQTGammaOptions - 1, ""); // VQT 低频带宽下限 γ (索引: 5/10/15/20 Hz)
   // 频谱斜率档位 (各引擎独立保存; 默认档 1: STFT = 3 dB/oct, 逐 band 引擎 = 0 dB/oct)
   GetParam(kSlopeFFT)->InitInt("SlopeFFT", 1, 0, kNumSlopeOptions - 1, "");
   GetParam(kSlopeVQT)->InitInt("SlopeVQT", 1, 0, kNumSlopeOptions - 1, "");
@@ -268,12 +268,12 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     bindTip(mPbtLfResBtn, orm::kTxtTipLfRes);
     mPbtLfResBtn->Hide(true);
 
-    // VQT 金字塔算法循环按钮 (LIN / MIN) — 与 STFT 分辨率/PBT 低频档同槽位, 按模式互斥可见
-    mPyramidBtn = new FlatCycleButton(IRECT(kResX, kTopBtnY, kResX + kTopBtnW, kTopBtnY + kTopBtnH),
-                                      kPyramidDecim, {"LIN", "MIN"}, btnStyle);
-    pGraphics->AttachControl(mPyramidBtn);
-    bindTip(mPyramidBtn, orm::kTxtTipPyramid);
-    mPyramidBtn->Hide(true);
+    // VQT 低频带宽下限循环按钮 (γ: 5/10/15/20 Hz) — 与 STFT 分辨率/PBT 低频档同槽位, 按模式互斥可见
+    mGammaBtn = new FlatCycleButton(IRECT(kResX, kTopBtnY, kResX + kTopBtnW, kTopBtnY + kTopBtnH),
+                                    kVQTGamma, {"5Hz", "10Hz", "15Hz", "20Hz"}, btnStyle);
+    pGraphics->AttachControl(mGammaBtn);
+    bindTip(mGammaBtn, orm::kTxtTipVQTGamma);
+    mGammaBtn->Hide(true);
 
     // RTA 分数倍频程循环按钮 (1/3 Oct / 1/4 Oct / 1/6 Oct) — 同槽位, 仅 RTA 模式可见
     mRtaOctBtn = new FlatCycleButton(IRECT(kResX, kTopBtnY, kResX + kTopBtnW, kTopBtnY + kTopBtnH),
@@ -745,7 +745,7 @@ void ORMAnalyzer::OnReset() {
   mSpectrum.SetFFTSizeAndOverlap(CurrentFFTSize(), FFTOverlapForSize(CurrentFFTSize()), CurrentFFTWindow());
   mVQT.SetSampleRate(GetSampleRate());
   mVQT.SetWindowType(CurrentVQTWindow());
-  mVQT.SetGamma(kVQTGammaHz); // VQT 固定 γ = HIGH (5 Hz)
+  mVQT.SetGamma(CurrentVQTGamma()); // VQT 低频带宽下限 γ (GAMMA 按钮)
   mVQT.SetBpo(kVQTBpo);       // VQT 固定 BPO = 24
   mPBT.SetSampleRate(GetSampleRate());
   mPBT.SetLfWidth(CurrentPbtLfRes());
@@ -852,9 +852,9 @@ void ORMAnalyzer::OnParamChange(int paramIdx, EParamSource source, int sampleOff
       if (mPBT.SetLfWidth(CurrentPbtLfRes()) && !frozen)
         SendResetToPad();
     }
-  } else if (paramIdx == kPyramidDecim) {
+  } else if (paramIdx == kVQTGamma) {
     if (GetParam(kMode)->Value() < 1.5) { // VQT 模式
-      if (mVQT.SetPyramidMode((int)std::lround(GetParam(kPyramidDecim)->Value())) && !frozen)
+      if (mVQT.SetGamma(CurrentVQTGamma()) && !frozen)
         SendResetToPad();
     }
   } else if (paramIdx == kRtaOctave) {
@@ -916,7 +916,6 @@ void ORMAnalyzer::OnIdle() {
     mFreezeWindowFFT = CurrentFFTWindow();
     mFreezeWindowVQT = CurrentVQTWindow();
     mFreezeLf = (int)std::lround(GetParam(kLfRes)->Value());
-    mFreezePyramid = (int)std::lround(GetParam(kPyramidDecim)->Value());
     mFreezeRtaOct = CurrentRtaOctave();
   };
 
@@ -927,7 +926,7 @@ void ORMAnalyzer::OnIdle() {
     if (mResBtn && mPbtLfResBtn) {
       mResBtn->Hide(mode != kModeFFT);
       mPbtLfResBtn->Hide(mode != kModePBT);
-      mPyramidBtn->Hide(mode != kModeVQT);
+      mGammaBtn->Hide(mode != kModeVQT);
       if (mRtaOctBtn)
         mRtaOctBtn->Hide(mode != kModeRTA);
     }
@@ -1040,12 +1039,11 @@ void ORMAnalyzer::OnIdle() {
       const int winFFT = CurrentFFTWindow();
       const int winVQT = CurrentVQTWindow();
       const int lfIdx = (int)std::lround(GetParam(kLfRes)->Value());
-      const int pyrIdx = (int)std::lround(GetParam(kPyramidDecim)->Value());
       const int rtaOctIdx = CurrentRtaOctave();
       const bool cfgChanged =
           (mode == kModeFFT && (resIdx != mFreezeRes || winFFT != mFreezeWindowFFT)) ||
           (mode == kModeVQT &&
-           (lfIdx != mFreezeLf || pyrIdx != mFreezePyramid || winVQT != mFreezeWindowVQT)) ||
+           (lfIdx != mFreezeLf || winVQT != mFreezeWindowVQT)) ||
           (mode == kModePBT && lfIdx != mFreezeLf) ||
           (mode == kModeRTA && rtaOctIdx != mFreezeRtaOct);
       if (cfgChanged) {
@@ -1055,7 +1053,6 @@ void ORMAnalyzer::OnIdle() {
       mFreezeWindowFFT = winFFT;
       mFreezeWindowVQT = winVQT;
       mFreezeLf = lfIdx;
-      mFreezePyramid = pyrIdx;
       mFreezeRtaOct = rtaOctIdx;
     }
     // 冻结回放泵送: 每 tick 回放一批帧 (kUpdateMessage → pad 实时平滑), 收敛后定格
@@ -1146,7 +1143,7 @@ void ORMAnalyzer::OnUIClose() {
   mSpectrumPad = nullptr;
   mResBtn = nullptr;
   mPbtLfResBtn = nullptr;
-  mPyramidBtn = nullptr;
+  mGammaBtn = nullptr;
   mRtaOctBtn = nullptr;
   mRangeBtn = nullptr;
   mAttackSlider = nullptr;
@@ -1179,7 +1176,7 @@ void ORMAnalyzer::OnUIClose() {
   mSentRtaOct = -1;
   // 冻结档位快照复位: 重开 UI 后冻结画面与档位重算按新控件状态重新建立
   mFreezeOn = false;
-  mFreezeRes = mFreezeWindowFFT = mFreezeWindowVQT = mFreezeLf = mFreezePyramid = mFreezeRtaOct = -1;
+  mFreezeRes = mFreezeWindowFFT = mFreezeWindowVQT = mFreezeLf = mFreezeRtaOct = -1;
   mReplayMode = -1;
 }
 

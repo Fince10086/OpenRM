@@ -1,10 +1,8 @@
 #pragma once
 
 // VQTAnalyzer — 多速率变分辨率 Q 变换 (Multirate VQT) 频谱分析引擎
-// 金字塔降采样路径可在 2 种算法间切换 (SetPyramidMode, UI 按钮 PYR):
-//   LIN = 线性相位 (浅层逐级 2x 半带级联 + 深层 4x 低通; 混合倍率, CPU 低, 深层延迟最大)
-//   MIN = 最小相位 (逐级 2x 半带倒谱最小相位化; 延迟最低, 幅频响应与 LIN 一致)
-// 各档位共享同一 band 频率表 (显示/冻结路径无需改动), 切换仅触发 RebuildBands。
+// 金字塔降采样: 逐级 2x 最小相位半带 (倒谱谱因式分解, 延迟最低, 幅频响应与线性相位
+// 一致)。低频带宽下限 γ 由 UI 按钮 GAMMA 调节 (bw = fc/q + γ)。
 
 #include "ISender.h"
 
@@ -19,15 +17,14 @@ BEGIN_IPLUG_NAMESPACE
 
 namespace detail {
 
-// 通用抗混叠抽取器: 支持 2x 半带 (线性相位 / 最小相位) 与 4x 低通。
-// 跨帧保持滤波状态; 流式输出保持全局抽取相位与尾部状态。要求 nin 为 mD 的倍数。
+// 最小相位 2x 半带抗混叠抽取器 (BH4 窗 sinc 原型倒谱最小相位化)。
+// 跨帧保持滤波状态; 流式输出保持全局抽取相位与尾部状态。要求 nin 为偶数。
 struct AntiAliasDec {
-  static constexpr int kMaxTaps = 177;   // 2x 半带 101 / 4x 低通 161 上限
+  static constexpr int kMaxTaps = 101;   // 2x 最小相位半带
   static constexpr double kPi = 3.14159265358979323846;
 
   int mD = 2;                     // 抽取倍率
   int mNumTaps = 0;               // 实际抽头数
-  int mGd = 0;                    // 群延迟 (该级输入采样单位; 最小相位为通带平均)
   std::array<float, kMaxTaps> mTap{};
   std::array<float, kMaxTaps - 1> mState{};
   float mWork[kMaxTaps - 1 + 4096];
@@ -42,12 +39,7 @@ struct AntiAliasDec {
     return t0 + (x - k) * (t1 - t0);
   }
 
-  void BuildTauTab(bool minPhase) {
-    if (!minPhase) {
-      for (int i = 0; i < 65; ++i)
-        mTauTab[i] = (float)mGd;
-      return;
-    }
+    void BuildTauTab() {
     auto phaseAt = [&](double w) {
       double r = 0.0, iq = 0.0;
       for (int k = 0; k < mNumTaps; ++k) {
@@ -96,27 +88,12 @@ struct AntiAliasDec {
     }
   }
 
-  // kind: 0 = 2x 线性相位 BH 半带 (101t, 偶抽头为 0)
-  //       1 = 4x BH 低通 (57t, 截止 fs/8)
-  //       2 = 2x 最小相位半带 (101t, 对 kind0 做倒谱最小相位化)
-  void Build(int kind) {
-    if (kind == 0) {
-      BuildHalfband2x(false);
-      BuildTauTab(false);
-    } else if (kind == 1) {
-      BuildLowpass4x();
-      BuildTauTab(false);
-    } else {
-      BuildHalfband2x(true);
-      BuildTauTab(true);
-    }
-  }
+  void Build() { BuildHalfband2x(); BuildTauTab(); }
 
-  void BuildHalfband2x(bool minPhase) {
+  void BuildHalfband2x() {
     constexpr int kN = 101;
     mNumTaps = kN;
     mD = 2;
-    mGd = (kN - 1) / 2;
     double taps[kN];
     double sum = 0.0;
     for (int i = 0; i < kN; ++i) {
@@ -137,31 +114,7 @@ struct AntiAliasDec {
     }
     for (int i = 0; i < kN; ++i)
       mTap[i] = (float)(taps[i] / sum);
-    if (minPhase)
-      MinPhaseConvert(mTap, kN, mGd);
-  }
-
-  void BuildLowpass4x() {
-    constexpr int kN = 161;
-    constexpr double kCut = 0.112;                // 截止/fs_in (旧 57t@0.125 过渡带过宽导致泄漏)
-    mNumTaps = kN;
-    mD = 4;
-    mGd = (kN - 1) / 2;
-    double taps[kN];
-    double sum = 0.0;
-    for (int i = 0; i < kN; ++i) {
-      const int n = i - (kN - 1) / 2;
-      const double x = (n == 0) ? 1.0 : std::sin(2.0 * kPi * kCut * n) / (2.0 * kPi * kCut * n);
-      double v = 2.0 * kCut * x;
-      const double theta = 2.0 * kPi * i / (kN - 1);
-      v *= 0.35875 - 0.48829 * std::cos(theta)
-                   + 0.14128 * std::cos(2.0 * theta)
-                   - 0.01168 * std::cos(3.0 * theta);
-      taps[i] = v;
-      sum += v;
-    }
-    for (int i = 0; i < kN; ++i)
-      mTap[i] = (float)(taps[i] / sum);
+    MinPhaseConvert(mTap, kN);
   }
 
   void Reset() { mState.fill(0.f); }
@@ -228,7 +181,7 @@ struct AntiAliasDec {
 
   // 倒谱法最小相位化: 保持幅度谱 (阻带不变), 群延迟降至通带平均 (~N/4)。
   // 输出群延迟写入 gdOut (通带 0.05π..0.35π 相位差分平均)。
-  static void MinPhaseConvert(std::array<float, kMaxTaps>& taps, int n, int& gdOut) {
+  static void MinPhaseConvert(std::array<float, kMaxTaps>& taps, int n) {
     constexpr int M = 1024;
     double re[M], im[M];
     for (int i = 0; i < M; ++i) {
@@ -259,30 +212,6 @@ struct AntiAliasDec {
       dc += re[i];
     for (int i = 0; i < n; ++i)
       taps[i] = (float)(re[i] / dc);              // DC 增益归一
-    // 通带群延迟 (逐点相位差分 + 展开平均, 0.05π..0.35π; 每步 Δφ ≈ τ·Δw < π)
-    auto phaseAt = [&](double w) {
-      double r = 0.0, iq = 0.0;
-      for (int k = 0; k < n; ++k) {
-        const double ph = w * k;
-        r += taps[k] * std::cos(ph);
-        iq -= taps[k] * std::sin(ph);
-      }
-      return std::atan2(iq, r);
-    };
-    constexpr int kPts = 24;
-    double prev = phaseAt(kPi * 0.05);
-    double acc = 0.0;
-    for (int kp = 1; kp <= kPts; ++kp) {
-      const double w = kPi * (0.05 + 0.30 * kp / kPts);
-      const double cur = phaseAt(w);
-      double dp = cur - prev;
-      while (dp > kPi) dp -= 2.0 * kPi;
-      while (dp < -kPi) dp += 2.0 * kPi;
-      acc += dp;
-      prev = cur;
-    }
-    const double gd = -acc / (kPi * 0.30);
-    gdOut = std::max(1, (int)std::lround(gd));
   }
 };
 
@@ -305,29 +234,12 @@ public:
   static constexpr double kGuard = 0.78;     // band 上边距该层新奈奎斯特的比例 (防混叠)
   static constexpr double kCycleFloor = 4.0; // 深层窗长下限: 至少覆盖 ~4 个 fc 周期 (稳定)
 
-  // 金字塔算法档位 (UI 按钮 PYR 二选一)
-  static constexpr int kPyramidLin = 0; // 线性相位: 浅层 2x 半带 + 深层 4x 低通 (混合倍率)
-  static constexpr int kPyramidMin = 1; // 最小相位: 逐级 2x (倒谱谱因式分解, 延迟最低)
-
   VQTAnalyzer() {
     for (int c = 0; c < MAXNC; ++c) {
       mPending[c].assign(kHop, 0.f);
       mLayers[c].resize(kMaxLayers);
     }
     RebuildBands();
-  }
-
-  // 返回是否实际请求了重建 (参数与当前值相同则返回 false)。调用方据此决定
-  // 是否需要通知显示层重置。实际重建发生在 UI 线程 (CheckRebuild/PrepareDataForUI)。
-  // 旧状态文件存的 0/1/2 (A/B1/B2) 由 clamp 自然迁移: 2(MIN) → 1, 0/1 → LIN。
-  bool SetPyramidMode(int mode) {
-    const int v = std::clamp(mode, 0, 1);
-    if (v != mPyramid) {
-      mPyramid = v;
-      mNeedRebuild.store(true);
-      return true;
-    }
-    return false;
   }
 
   bool SetBpo(int bpo) {
@@ -439,7 +351,7 @@ protected:
 
       const float *raw = d.vals[c].data();
 
-      // 金字塔降采样 (按当前档位的路径抽取)
+      // 金字塔降采样 (逐级 2x 最小相位)
       AppendLayer(c, 0, raw, kHop, mMaxWinPerLayer[0]);
       const float *cur = raw;
       int nin = kHop;
@@ -543,49 +455,23 @@ private:
     return L;
   }
 
-  // B1: 目标层无流时向上回退到最近的带流层
-  int EffectiveLayer(double bandHi, double fs) const {
-    int L = AssignLayer(bandHi, fs);
-    while (L > 0 && !mLayerValid[L])
-      --L;
-    return L;
-  }
-
   void RebuildBands() {
     mBands.clear();
     mFreqs.clear();
     mMaxWinPerLayer.fill(0);
     const double fs = std::max(mSampleRate, 1.0);
     const double q = 1.0 / (std::pow(2.0, 1.0 / mBpo) - 1.0);
-    const int mode = mPyramid;
 
     // ── 1. 金字塔路径 / 有效层 ──
-    mLayerValid.fill(1);
     int nSteps = 0;
-    if (mode == kPyramidLin) {
-      // 浅层逐级 2x (L0→L5), 深层 4x 一次合并两级 (L5→L7, L7→L9)
-      for (int l = 0; l <= 4; ++l)
-        mPath[nSteps++] = {l + 1, l};
-      mPath[nSteps++] = {7, 5};
-      mPath[nSteps++] = {9, 6};
-      mLayerValid[6] = 0;
-      mLayerValid[8] = 0;
-    } else {
-      for (int l = 0; l < kMaxLayers - 1; ++l)
-        mPath[nSteps++] = {l + 1, l};
-    }
+    for (int l = 0; l < kMaxLayers - 1; ++l)
+      mPath[nSteps++] = {l + 1, l};
     mNumPathSteps = nSteps;
 
-    // 抽取器 (LIN: 前 5 级 2x + 2 个 4x; MIN: 全 2x 最小相位)
-    for (int l = 0; l < kMaxLayers; ++l) {
-      int kind = 0;
-      if (mode == kPyramidMin)
-        kind = 2;
-      else if (mode == kPyramidLin && (l == 5 || l == 6))
-        kind = 1;
+    // 抽取器: 全 2x 最小相位半带 (|G|=|A|, 延迟最低)
+    for (int l = 0; l < kMaxLayers; ++l)
       for (int c = 0; c < MAXNC; ++c)
-        mDecim[c][l].Build(kind);
-    }
+        mDecim[c][l].Build();
 
     // ── 2. band 表 (频率序; 层内连续段 + B1 上移段自然并入) ──
     struct Spec { double fc, bw; int layer; };
@@ -596,7 +482,7 @@ private:
       if (fc > kFreqHi)
         break;
       const double bw = fc / q + mGamma;
-      const int L = EffectiveLayer(fc + bw / 2.0, fs);
+      const int L = AssignLayer(fc + bw / 2.0, fs);
       spec.push_back({fc, bw, L});
       layerCount[L]++;
     }
@@ -625,8 +511,7 @@ private:
   }
 
   // 频率相关总群延迟 (输入采样单位): 沿路径累计各级滤波器在 fc 处的 τ。
-  // 线性相位模式下各级 τ 恒定 → 退化为 mGd·(2^L−1); 最小相位 (B2) 下按
-  // band 中心频率精确对齐, 消除层边界群的时序错位 (割裂感)。
+  // 最小相位各级 τ 随频率变, 按 band 中心频率精确对齐, 消除层边界群的时序错位。
   double GdTotalSamples(double fc, double fs, int L) const {
     double g = 0.0;
     int src = 0;
@@ -682,7 +567,6 @@ private:
     mMaxWinPerLayer[L] = std::max(mMaxWinPerLayer[L], wl + bd.readOff);
   }
 
-  int mPyramid = 0;                       // 金字塔档位 (kPyramidLin/kPyramidMin)
   int mWindowType = 0;                    // 窗函数档位 (0=SHARP/Hann, 1=CLEAN/BH4)
   int mBpo = 24;                          // bins per octave (插件层固定 24)
   int mGamma = 5;                         // 低频带宽下限 Hz (插件层固定 HIGH 档)
@@ -692,7 +576,6 @@ private:
   std::vector<Band> mBands;
   std::vector<double> mFreqs;
   std::array<int, kMaxLayers> mMaxWinPerLayer{};
-  std::array<int, kMaxLayers> mLayerValid{};   // 该层是否有流 (B1 跳过 L6/L8)
   std::array<DecimStep, kMaxLayers> mPath{};
   int mNumPathSteps = 0;
   std::array<std::vector<std::vector<float>>, MAXNC> mLayers;

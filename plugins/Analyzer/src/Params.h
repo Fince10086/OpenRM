@@ -15,7 +15,6 @@ enum EParams {
   kLevelMode,     // 电平表模式 (0: dBTP, 1: dBFS+RMS, 2: VU)
   kLevelHold,     // 峰值保持时长档位 (0: 0.5s, 1: 2s, 2: ∞ 无限保持)
   kFreeze,        // 冻结开关 (0: 实时, 1: FREEZE 定格; 冻结中切换引擎用新算法重算冻结音频)
-  kPyramidDecim,  // VQT 金字塔降采样档位 (0: LIN 线性相位, 1: MIN 最小相位)
   kLevelHoldOn,   // 峰值保持开关 (频谱 hold 曲线与电平表 hold 亮线共用; 默认关闭, 用户状态持久化于全局设置文件; 追加末尾, 保旧状态文件下标兼容)
   kSlopeFFT,      // 频谱斜率档位索引, FFT 引擎独立保存 (0/3/4.5 dB/oct)
   kSlopeVQT,      // 频谱斜率档位索引, VQT 引擎独立保存 (-3/0/1.5 dB/oct)
@@ -25,6 +24,7 @@ enum EParams {
   kWindowVQT,     // VQT 窗函数档位 (0: Hann, 1: BH4), 与 STFT 独立保存 (追加末尾, 保旧状态文件下标兼容)
   kSlopeRTA,      // 频谱斜率档位索引, RTA 引擎独立保存 (-3/0/1.5 dB/oct; 追加末尾, 保旧状态文件下标兼容)
   kRtaOctave,     // RTA 分数倍频程档位 (0: 1/3 Oct, 1: 1/4 Oct, 2: 1/6 Oct; 追加末尾, 保旧状态文件下标兼容)
+  kVQTGamma,      // VQT 低频带宽下限 γ (Hz): bw = fc/q + γ (5/10/15/20; 追加末尾)
   kNumParams
 };
 
@@ -41,6 +41,8 @@ constexpr int kPbtLfResOptions[] = {40, 20, 10};
 constexpr int kNumPbtLfResOptions = 3;
 constexpr int kRtaOctaveOptions[] = {3, 4, 6};
 constexpr int kNumRtaOctaveOptions = 3;
+constexpr int kVQTGammaOptions[] = {5, 10, 15, 20};
+constexpr int kNumVQTGammaOptions = 4;
 
 // 峰值保持时长档位 (kLevelHold 存索引)。持久档用 1e9s 表示: LevelMeter 的超时逻辑
 // (holdT >= holdSec 才回落) 永不触发, 即无限保持, 且 holdSec > 0 的"画 hold 线"判定照常成立。
@@ -55,8 +57,7 @@ constexpr double kSlopeDbFFT[] = {0.0, 3.0, 4.5};
 constexpr double kSlopeDbLog[] = {-3.0, 0.0, 1.5};
 constexpr int kNumSlopeOptions = 3;
 
-// VQT / MR-FFT 固定档位 (不再暴露 UI): γ 取原 HIGH 档, BPO 均固定 24
-constexpr int kVQTGammaHz = 5;
+// MR-FFT / VQT 固定档位: BPO 均固定 24 (VQT γ 由 GAMMA 按钮调节)
 constexpr int kVQTBpo = 24;
 constexpr int kMRFFTBpo = 24;
 

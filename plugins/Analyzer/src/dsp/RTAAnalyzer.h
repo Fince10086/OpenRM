@@ -99,8 +99,10 @@ public:
   void ResetRuntimeState() {
     for (int c = 0; c < MAXNC; ++c) {
       for (auto &st : mStates[c]) {
-        st.z1_1 = st.z2_1 = 0.f;
-        st.z1_2 = st.z2_2 = 0.f;
+        for (int k = 0; k < 4; ++k) {
+          st.z1[k] = 0.f;
+          st.z2[k] = 0.f;
+        }
       }
     }
   }
@@ -142,38 +144,54 @@ protected:
         const float ca1 = filter.a1;
         const float ca2 = filter.a2;
 
-        float z1_1 = st.z1_1, z2_1 = st.z2_1;
-        float z1_2 = st.z1_2, z2_2 = st.z2_2;
+        float z1_0 = st.z1[0], z2_0 = st.z2[0];
+        float z1_1 = st.z1[1], z2_1 = st.z2[1];
+        float z1_2 = st.z1[2], z2_2 = st.z2[2];
+        float z1_3 = st.z1[3], z2_3 = st.z2[3];
 
         float sumSq = 0.f;
 
-        // 4阶双二阶级联 (2级级联以获得 24 dB/oct 锐利衰减与标准 ANSI 临带隔离度)
+        // 8阶双二阶级联 (4级级联, 48 dB/oct 陡峭滚降, 极高频带选择性与 Class 1 隔离度)
         for (int n = 0; n < kHop; ++n) {
           const float x = raw[n];
 
           // 级联 1
-          const float y1 = cb0 * x + z1_1;
-          z1_1 = -ca1 * y1 + z2_1;
-          z2_1 = -cb0 * x - ca2 * y1;
+          const float y1 = cb0 * x + z1_0;
+          z1_0 = -ca1 * y1 + z2_0;
+          z2_0 = -cb0 * x - ca2 * y1;
 
           // 级联 2
-          const float y2 = cb0 * y1 + z1_2;
-          z1_2 = -ca1 * y2 + z2_2;
-          z2_2 = -cb0 * y1 - ca2 * y2;
+          const float y2 = cb0 * y1 + z1_1;
+          z1_1 = -ca1 * y2 + z2_1;
+          z2_1 = -cb0 * y1 - ca2 * y2;
 
-          sumSq += y2 * y2;
+          // 级联 3
+          const float y3 = cb0 * y2 + z1_2;
+          z1_2 = -ca1 * y3 + z2_2;
+          z2_2 = -cb0 * y2 - ca2 * y3;
+
+          // 级联 4
+          const float y4 = cb0 * y3 + z1_3;
+          z1_3 = -ca1 * y4 + z2_3;
+          z2_3 = -cb0 * y3 - ca2 * y4;
+
+          sumSq += y4 * y4;
         }
 
         // 抗 Denormal 保护
+        if (std::abs(z1_0) < 1e-25f) z1_0 = 0.f;
+        if (std::abs(z2_0) < 1e-25f) z2_0 = 0.f;
         if (std::abs(z1_1) < 1e-25f) z1_1 = 0.f;
         if (std::abs(z2_1) < 1e-25f) z2_1 = 0.f;
         if (std::abs(z1_2) < 1e-25f) z1_2 = 0.f;
         if (std::abs(z2_2) < 1e-25f) z2_2 = 0.f;
+        if (std::abs(z1_3) < 1e-25f) z1_3 = 0.f;
+        if (std::abs(z2_3) < 1e-25f) z2_3 = 0.f;
 
-        st.z1_1 = z1_1;
-        st.z2_1 = z2_1;
-        st.z1_2 = z1_2;
-        st.z2_2 = z2_2;
+        st.z1[0] = z1_0; st.z2[0] = z2_0;
+        st.z1[1] = z1_1; st.z2[1] = z2_1;
+        st.z1[2] = z1_2; st.z2[2] = z2_2;
+        st.z1[3] = z1_3; st.z2[3] = z2_3;
 
         // 幅度检波: 真 RMS 能量开方
         d.vals[c][b] = std::sqrt(sumSq * rmsNorm);
@@ -192,8 +210,8 @@ private:
   };
 
   struct BandState {
-    float z1_1 = 0.f, z2_1 = 0.f; // 级联 1 状态
-    float z1_2 = 0.f, z2_2 = 0.f; // 级联 2 状态
+    float z1[4] = {0.f, 0.f, 0.f, 0.f}; // 4级双二阶状态 (8阶滤波)
+    float z2[4] = {0.f, 0.f, 0.f, 0.f};
   };
 
   void RebuildBands() {
@@ -209,11 +227,11 @@ private:
     else if (mOctaveMode == kOctave1_6)
       bpo = 6;
 
-    // 单级 Q 值调整: 使两级级联后的总 -3dB 带宽与标准分数倍频程 Q 匹配
-    // Q_stage = Q_total * sqrt(sqrt(2) - 1) ≈ 0.6435942529 * Q_total
+    // 单级 Q 值调整: 使 4 级级联 (8阶) 后的总 -3dB 带宽与标准分数倍频程 Q 匹配
+    // Q_stage = Q_total * sqrt(2^(1/4) - 1) ≈ 0.43497944 * Q_total
     const double qTotal = 1.0 / (std::pow(2.0, 1.0 / (2.0 * (double)bpo)) -
                                 std::pow(2.0, -1.0 / (2.0 * (double)bpo)));
-    const double qStage = qTotal * 0.6435942529055826;
+    const double qStage = qTotal * 0.4349794425316;
 
     // 基准 1000 Hz 几何中心网格
     // 覆盖范围: ~16 Hz .. 22 kHz (并在 nyqLimit 处截断)

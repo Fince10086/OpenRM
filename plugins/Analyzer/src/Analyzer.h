@@ -99,7 +99,7 @@ private:
   FlatCycleButton *mResBtn = nullptr;      // STFT 分辨率循环按钮 (LOW/MID/HIGH)
   FlatCycleButton *mWindowBtn = nullptr;   // 窗函数循环按钮 (SHARP/CLEAN, STFT 与 VQT 各自独立档位, 按模式改绑参数)
   FlatCycleButton *mPbtLfResBtn = nullptr; // PBT 低频分辨率循环按钮 (40/20/10 Hz)
-  FlatCycleButton *mPyramidBtn = nullptr;  // VQT 金字塔算法循环按钮 (LIN / MIN)
+  FlatCycleButton *mGammaBtn = nullptr;    // VQT 低频带宽下限循环按钮 (γ: 5/10/15/20 Hz)
   FlatCycleButton *mRtaOctBtn = nullptr;   // RTA 分数倍频程循环按钮 (1/3 / 1/4 / 1/6 Oct)
   FlatCycleButton *mRangeBtn = nullptr;    // 动态范围循环按钮 (刻度底部 80/100/120)
   FlatCycleButton *mSlopeBtn = nullptr;    // 频谱斜率循环按钮 (刻度底部左缘, 档值随引擎)
@@ -138,7 +138,6 @@ private:
   int mFreezeWindowFFT = -1; // STFT 窗函数档位快照 (冻结中重算去重)
   int mFreezeWindowVQT = -1; // VQT 窗函数档位快照 (冻结中重算去重)
   int mFreezeLf = -1;
-  int mFreezePyramid = -1;
   int mFreezeRtaOct = -1;
 
   // 冻结回放 (UI 线程, 定义见 Analyzer.cpp)。回放分 tick 泵送避免长 UI 卡顿;
@@ -210,6 +209,10 @@ private:
     const int idx = (int)std::clamp(GetParam(kLfRes)->Value(), 0.0, (double)kNumPbtLfResOptions - 1);
     return kPbtLfResOptions[idx];
   }
+    int CurrentVQTGamma() const {
+      const int idx = (int)std::clamp(GetParam(kVQTGamma)->Value(), 0.0, (double)kNumVQTGammaOptions - 1);
+      return kVQTGammaOptions[idx];
+    }
   int CurrentRtaOctave() const {
     const int idx = (int)std::clamp(GetParam(kRtaOctave)->Value(), 0.0, (double)kNumRtaOctaveOptions - 1);
     return idx;
