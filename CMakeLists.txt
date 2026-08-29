@@ -20,6 +20,12 @@ endif()
 # 右键留给插件自己的菜单（映射色块换色等），不弹宿主参数菜单
 add_compile_definitions(IGRAPHICS_NO_CONTEXT_MENU)
 
+# 部署统一由 cmake/OpenRMPlugin.cmake 负责 (AU/VST3 -> ~/Library/Audio/Plug-Ins,
+# App -> ~/Applications, 且先拷字体再签名/复制)。显式关闭 iPlug2 自带的自动部署
+# (IPLUG_DEPLOY_PLUGINS), 否则同一产物会被复制两份, 且 iPlug2 的拷贝先于字体
+# 处理执行, 会往目标目录写缺字体的副本。
+set(IPLUG_DEPLOY_PLUGINS OFF CACHE BOOL "Deploy handled by OpenRMPlugin.cmake" FORCE)
+
 add_subdirectory(plugins/BandPass)
 add_subdirectory(plugins/Analyzer)
 
@@ -36,3 +42,7 @@ enable_testing()
 add_executable(dsp_test tests/dsp_test.cpp)
 target_compile_features(dsp_test PRIVATE cxx_std_17)
 add_test(NAME dsp_test COMMAND dsp_test)
+
+add_executable(loudness_test tests/loudness_test.cpp)
+target_compile_features(loudness_test PRIVATE cxx_std_17)
+add_test(NAME loudness_test COMMAND loudness_test)

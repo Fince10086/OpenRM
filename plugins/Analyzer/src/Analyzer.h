@@ -8,6 +8,7 @@
 #include "dsp/MultirateFFTAnalyzer.h"
 #include "dsp/RTAAnalyzer.h"
 #include "dsp/LevelMeter.h"
+#include "dsp/LoudnessMeter.h"
 #if ORM_ENABLE_TEST_GEN
 #include "dsp/TestSignalGenerator.h"
 #endif
@@ -34,6 +35,7 @@ class SpectrumPad;
 class ORMSlider;
 class SettingsPanelControl;
 class CpuMeterControl;
+class LoudnessMeterControl;
 class FlatToggleControl;
 class FlatCycleButton;
 } // namespace igraphics
@@ -85,6 +87,13 @@ private:
   std::atomic<bool> mLevelResetHoldFlag{false}; // UI 线程置位, 音频线程下一 block 清除峰值保持 (模式切换)
   std::atomic<double> mLevelSetSR{-1.0};        // UI 线程置位, 音频线程下一 block 执行 SetSampleRate+Reset (-1=无请求)
 
+  // 响度计输出快照 (音频线程写入, UI 线程 OnIdle 读取; 与电平表同模式)
+  LoudnessMeter mLoudness;
+  std::atomic<float> mLoudM{0.f}, mLoudS{0.f}, mLoudI{0.f}, mLoudLra{0.f}, mLoudTp{0.f};
+  std::atomic<bool> mLoudIValid{false}, mLoudLraValid{false};
+  std::atomic<bool> mLoudResetFlag{false};  // UI 线程置位, 音频线程下一 block Reset (+清 TP 锁存)
+  std::atomic<double> mLoudSetSR{-1.0};     // UI 线程置位, 音频线程下一 block 执行 SetSampleRate+Reset
+
   // 频谱配置缓存（用于在 OnIdle 中防抖去重）
   double mSentSampleRate = 0.0;
   int mSentFFTSize = 0;
@@ -113,6 +122,9 @@ private:
   FlatToggleControl *mLevelHoldBtn = nullptr;   // 峰值保持开关 (HOLD, 反色开关样式)
   FlatCycleButton *mLevelHoldTimeBtn = nullptr; // 峰值保持时长循环按钮 (0.5s / 2s / ∞)
   FlatToggleControl *mFreezeBtn = nullptr; // 冻结开关 (FREEZE, 反色开关样式, 同 HOLD)
+  LoudnessMeterControl *mLoudCtrl = nullptr;    // 响度计读数横条 (底部)
+  FlatCycleButton *mLoudPresetBtn = nullptr;    // 响度目标预设循环按钮 (-14 / -16 / -23 LUFS)
+  IVButtonControl *mLoudResetBtn = nullptr;     // 响度计 RESET (清 I/LRA/TP 锁存)
 
   int mSentMode = -1;
   int mSentWindowFFT = -1; // STFT 窗函数档位 (kFFTWindow), OnIdle 增量去重

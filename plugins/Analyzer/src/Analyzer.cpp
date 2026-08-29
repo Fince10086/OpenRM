@@ -12,6 +12,7 @@
 #include "controls/SpectrumPad.h"
 #include "controls/ChannelLegendControl.h"
 #include "controls/CpuMeterControl.h"
+#include "controls/LoudnessMeterControl.h"
 #include "StateFileIO.h"
 #include "SettingsFileIO.h"
 
@@ -146,6 +147,7 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
   GetParam(kFFTWindow)->InitInt("WindowFFT", kFFTWindowHann, 0, kNumFFTWindows - 1, "");
   GetParam(kWindowVQT)->InitInt("WindowVQT", kFFTWindowBH4, 0, kNumFFTWindows - 1, "");
   GetParam(kRtaOctave)->InitInt("RtaOctave", 0, 0, kNumRtaOctaveOptions - 1, ""); // 默认 1/3 Oct
+  GetParam(kLoudPreset)->InitInt("LoudPreset", 0, 0, kNumLoudPresets - 1, ""); // 响度目标预设, 默认 -14
   mDefaultSnapshot = Snapshot();
   mStableSnapshot = Snapshot();
 
@@ -296,6 +298,38 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     // 主频谱绘制区域
     mSpectrumPad = new SpectrumPad(IRECT(20, 58, 668, 328));
     pGraphics->AttachControl(mSpectrumPad, kCtrlTagPad);
+
+    // ── 响度计 (底部横条, 方案 A 核心读数版) ──────────────────────────────
+    // 读数区: I 大字号 + 目标差 + M/S 迷你竖条 + LRA + TP; 右缘两个按钮
+    // (预设循环 / RESET) 为独立控件, 与左栏按钮同款 Flat 样式。
+    // 数据: 音频线程 LoudnessMeter 快照 → OnIdle 打包 LoudnessUiData 下发。
+    mLoudCtrl = new LoudnessMeterControl(IRECT(20.f, 336.f, 668.f, 424.f));
+    pGraphics->AttachControl(mLoudCtrl, kCtrlTagLoudness);
+    bindText(orm::kTxtLoudMomentary, [this](const char *s) { if (mLoudCtrl) mLoudCtrl->SetMomentaryText(s); });
+    bindText(orm::kTxtLoudShort, [this](const char *s) { if (mLoudCtrl) mLoudCtrl->SetShortText(s); });
+    bindText(orm::kTxtLoudInt, [this](const char *s) { if (mLoudCtrl) mLoudCtrl->SetIntText(s); });
+    bindText(orm::kTxtLoudLra, [this](const char *s) { if (mLoudCtrl) mLoudCtrl->SetLraText(s); });
+    bindText(orm::kTxtLoudTp, [this](const char *s) { if (mLoudCtrl) mLoudCtrl->SetTpText(s); });
+    bindText(orm::kTxtLoudTarget, [this](const char *s) { if (mLoudCtrl) mLoudCtrl->SetTargetText(s); });
+
+    // 响度目标预设循环按钮 (-14 流媒体 / -16 Apple Music / -23 EBU R128)
+    mLoudPresetBtn = new FlatCycleButton(IRECT(492.f, 380.f, 568.f, 410.f), kLoudPreset,
+                                         {"-14 LUFS", "-16 LUFS", "-23 LUFS"}, btnStyle);
+    mLoudPresetBtn->SetTextSize(11.f);
+    pGraphics->AttachControl(mLoudPresetBtn);
+    bindTip(mLoudPresetBtn, orm::kTxtTipLoudPreset);
+
+    // 响度计 RESET: 清综合响度 / LRA / 真峰值锁存 (与电平表 RESET 独立)
+    mLoudResetBtn = MakeMomentary(IRECT(576.f, 380.f, 652.f, 410.f),
+                                  [this](IControl *) { mLoudResetFlag.store(true); }, "RESET", btnStyle);
+    pGraphics->AttachControl(mLoudResetBtn);
+    bindText(orm::kTxtReset, [this](const char *s) {
+      if (mLoudResetBtn) {
+        mLoudResetBtn->SetLabelStr(s);
+        mLoudResetBtn->SetDirty(false);
+      }
+    });
+    bindTip(mLoudResetBtn, orm::kTxtTipLoudReset);
 
     // 动态范围循环按钮: 位于频谱图底部右缘 (电平表竖条左侧), 顶替最底部刻度标签
     // (DrawDbGrid 跳过底部一条的文字)。右下角与频谱图右下对齐不留缝, 文字样式/位置
@@ -698,11 +732,26 @@ void ORMAnalyzer::ProcessBlock(sample **inputs, sample **outputs, int nFrames) {
   }
 
   // 电平表测量 (冻结中挂起: 保持最后快照, 画面随频谱一起定格; 重置请求仍被消费, 避免解冻后误触发)
+  auto publishLoudness = [this](const LoudnessMeter::Snapshot &ls) {
+    mLoudM.store(ls.momentary, std::memory_order_relaxed);
+    mLoudS.store(ls.shortTerm, std::memory_order_relaxed);
+    mLoudI.store(ls.integrated, std::memory_order_relaxed);
+    mLoudLra.store(ls.range, std::memory_order_relaxed);
+    mLoudTp.store(ls.tpMax, std::memory_order_relaxed);
+    mLoudIValid.store(ls.iValid, std::memory_order_relaxed);
+    mLoudLraValid.store(ls.lraValid, std::memory_order_relaxed);
+  };
   if (frozen) {
     if (mLevelResetHoldFlag.exchange(false, std::memory_order_relaxed))
       mLevelMeter.ResetHold();
     if (mLevelResetFlag.exchange(false))
       mLevelMeter.ResetHoldOver();
+    if (mLoudResetFlag.exchange(false, std::memory_order_relaxed)) {
+      mLoudness.Reset();
+      LoudnessMeter::Snapshot ls;
+      mLoudness.Store(ls);
+      publishLoudness(ls);
+    }
   } else {
     const double newSR = mLevelSetSR.exchange(-1.0, std::memory_order_relaxed);
     if (newSR > 0.0)
@@ -729,6 +778,19 @@ void ORMAnalyzer::ProcessBlock(sample **inputs, sample **outputs, int nFrames) {
       mHoldSec.store(s.holdSec, std::memory_order_relaxed);
       mOverL.store(s.overL, std::memory_order_relaxed);
       mOverR.store(s.overR, std::memory_order_relaxed);
+
+      // 响度计测量 (冻结中挂起同上): K 加权 M/S/I/LRA + 真峰值锁存。
+      // 真峰值复用同块 LevelMeter 快照的 4x 过采样结果 (不重复计算 FIR)。
+      const double loudSR = mLoudSetSR.exchange(-1.0, std::memory_order_relaxed);
+      if (loudSR > 0.0)
+        mLoudness.SetSampleRate(loudSR);
+      if (mLoudResetFlag.exchange(false, std::memory_order_relaxed))
+        mLoudness.Reset();
+      mLoudness.Process(mSpecInL.data(), mSpecInR.data(), nFrames);
+      mLoudness.SetTruePeaks(s.trueDbL, s.trueDbR);
+      LoudnessMeter::Snapshot ls;
+      mLoudness.Store(ls);
+      publishLoudness(ls);
     }
   }
 
@@ -754,6 +816,7 @@ void ORMAnalyzer::OnReset() {
   mRTA.SetSampleRate(GetSampleRate());
   mRTA.SetOctaveMode(CurrentRtaOctave());
   mLevelSetSR.store(GetSampleRate(), std::memory_order_relaxed); // 音频线程下一 block 执行 SetSampleRate+Reset
+  mLoudSetSR.store(GetSampleRate(), std::memory_order_relaxed); // 响度计同机制 (含滤波器系数重算)
   mPeakL.store(0.f, std::memory_order_relaxed);
   mPeakR.store(0.f, std::memory_order_relaxed);
 #if ORM_ENABLE_TEST_GEN
@@ -1097,6 +1160,24 @@ void ORMAnalyzer::OnIdle() {
     SendControlMsgFromDelegate(kCtrlTagLegend, ChannelLegendControl::kMsgTagLevelReadout, sizeof(d), &d);
   }
 
+  // 转发响度计数据 (底部横条; 预设档位与目标值由插件侧算出随帧下发)
+  {
+    LoudnessUiData d;
+    d.momentary = mLoudM.load(std::memory_order_relaxed);
+    d.shortTerm = mLoudS.load(std::memory_order_relaxed);
+    d.integrated = mLoudI.load(std::memory_order_relaxed);
+    d.range = mLoudLra.load(std::memory_order_relaxed);
+    d.tpMax = mLoudTp.load(std::memory_order_relaxed);
+    const int preset = (int)std::clamp(std::lround(GetParam(kLoudPreset)->Value()), 0L,
+                                       (long)kNumLoudPresets - 1);
+    d.preset = preset;
+    d.target = (float)kLoudTargets[preset];
+    d.iValid = mLoudIValid.load(std::memory_order_relaxed) ? 1 : 0;
+    d.lraValid = mLoudLraValid.load(std::memory_order_relaxed) ? 1 : 0;
+    SendControlMsgFromDelegate(kCtrlTagLoudness, LoudnessMeterControl::kMsgTagLoudnessData,
+                               sizeof(d), &d);
+  }
+
   // 统计 UI 线程耗时并计算综合 CPU 占用率: 工作量为线程 CPU 时间差值 (抢占不计), 分母为墙钟窗口
   {
     const double uiMs = (double)(ThreadCpuNs() - workT0) / 1e6;
@@ -1158,6 +1239,9 @@ void ORMAnalyzer::OnUIClose() {
   mWindowBtn = nullptr;
   mFreezeBtn = nullptr;
   mSlopeBtn = nullptr;
+  mLoudCtrl = nullptr;
+  mLoudPresetBtn = nullptr;
+  mLoudResetBtn = nullptr;
   mSettingsPanel = nullptr;
   mTextBindings.clear();
   mTooltipBindings.clear();

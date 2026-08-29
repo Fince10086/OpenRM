@@ -22,7 +22,10 @@ public:
   void OnMouseDblClick(float x, float y, const IMouseMod &mod) override { OnMouseDown(x, y, mod); }
 
   void Draw(IGraphics &g) override {
-    const IRECT b = GetWidgetBounds();
+    // 全幅绘制, 与 FlatToggleControl/FlatCycleButton (mRECT) 保持一致统一尺寸;
+    // GetWidgetBounds 会因 btnStyle.drawFrame 在 MakeRects 里被 GetAdjustedHandleBounds
+    // 内缩 0.5*frameThickness (每边 1px), 使动作按钮比开关/循环按钮小一圈。
+    const IRECT b = mRECT;
     const bool pressed = GetValue() > 0.5;
     g.FillRect(pressed ? COL_900() : COL_300(), b);
     // hover: 半透明叠层 (替代原换色), pressed 时不叠加

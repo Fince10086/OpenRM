@@ -37,6 +37,7 @@ openrm_add_plugin(${PROJECT_NAME}
     src/dsp/MultirateFFTAnalyzer.h
     src/dsp/RTAAnalyzer.h
     src/dsp/LevelMeter.h
+    src/dsp/LoudnessMeter.h
     src/dsp/TestSignalGenerator.h
     src/controls/UiUtils.h
     src/controls/ThemeCornerResizer.h
@@ -45,6 +46,7 @@ openrm_add_plugin(${PROJECT_NAME}
     src/controls/SectionTitleControl.h
     src/controls/SettingsPanelControl.h
     src/controls/SpectrumPad.h
+    src/controls/LoudnessMeterControl.h
     src/StateFileIO.h
     src/SettingsFileIO.h
     ${IPLUG2_DIR}/WDL/fft.c

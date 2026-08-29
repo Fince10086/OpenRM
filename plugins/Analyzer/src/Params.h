@@ -25,6 +25,7 @@ enum EParams {
   kSlopeRTA,      // 频谱斜率档位索引, RTA 引擎独立保存 (-3/0/1.5 dB/oct; 追加末尾, 保旧状态文件下标兼容)
   kRtaOctave,     // RTA 分数倍频程档位 (0: 1/3 Oct, 1: 1/4 Oct, 2: 1/6 Oct; 追加末尾, 保旧状态文件下标兼容)
   kVQTGamma,      // VQT 低频带宽下限 γ (Hz): bw = fc/q + γ (5/10/15/20; 追加末尾)
+  kLoudPreset,    // 响度目标预设档位 (0: -14 流媒体, 1: -16 Apple, 2: -23 R128; 追加末尾, 保旧状态文件下标兼容)
   kNumParams
 };
 
@@ -48,6 +49,10 @@ constexpr int kNumVQTGammaOptions = 4;
 // (holdT >= holdSec 才回落) 永不触发, 即无限保持, 且 holdSec > 0 的"画 hold 线"判定照常成立。
 constexpr double kHoldTimeSecs[] = {0.5, 2.0, 1e9};
 constexpr int kNumHoldTimeOptions = 3;
+
+// 响度目标预设 (LUFS): 流媒体音乐 -14 / Apple Music -16 / EBU R128 广播 -23
+constexpr double kLoudTargets[] = {-14.0, -16.0, -23.0};
+constexpr int kNumLoudPresets = 3;
 
 // 频谱斜率档位 (kSlopeFFT/kSlopeVQT/kSlopePBT/kSlopeMRFFT/kSlopeRTA 存索引, 各引擎独立):
 // 显示域每 band 施加 S·log2(f/f_pivot) dB 的倾斜。FFT 按 bin 显示白噪天生平直,
@@ -78,4 +83,4 @@ enum EChannelMode { kChanModePWR = 0, kChanModeLR = 1, kChanModeSUM = 2, kNumCha
 enum ELevelMode { kLevelModeDBTP = 0, kLevelModeDBFS = 1, kLevelModeVU = 2, kNumLevelModes = 3 };
 
 // UI 控件消息标签
-enum EControlTags { kCtrlTagPad = 100, kCtrlTagCpu = 101, kCtrlTagLegend = 102 };
+enum EControlTags { kCtrlTagPad = 100, kCtrlTagCpu = 101, kCtrlTagLegend = 102, kCtrlTagLoudness = 103 };

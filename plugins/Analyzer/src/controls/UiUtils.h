@@ -30,6 +30,17 @@ struct LevelMeterUiData {
   int overL, overR;   // 过载锁存
 };
 
+// 响度计 UI 数据 (插件 OnIdle 每帧下发; 全 4 字节字段, 打包/解析安全)
+struct LoudnessUiData {
+  float momentary, shortTerm; // M / S, LUFS
+  float integrated;           // I, LUFS
+  float range;                // LRA, LU
+  float tpMax;                // dBTP 锁存
+  float target;               // 预设目标 LUFS
+  int preset;                 // 预设档位索引
+  int iValid, lraValid;       // I / LRA 有效性
+};
+
 // 标准旋钮手柄: 白环 + 深色核心
 inline void DrawKnob(IGraphics &g, float cx, float cy) {
   g.FillCircle(COL_100(), cx, cy, HANDLE_R + HANDLE_RING);

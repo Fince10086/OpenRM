@@ -69,6 +69,14 @@ enum EText {
   kTxtWinClean,
   kTxtTipRtaOctave,
   kTxtTipVQTGamma,
+  kTxtLoudMomentary,  // 响度计: 瞬时响度 (M, 400ms)
+  kTxtLoudShort,      // 响度计: 短时响度 (S, 3s)
+  kTxtLoudInt,        // 响度计: 综合响度 (I, 双门限累计)
+  kTxtLoudLra,        // 响度计: 响度范围 (LRA)
+  kTxtLoudTp,         // 响度计: 真峰值
+  kTxtLoudTarget,     // 响度计: 目标
+  kTxtTipLoudPreset,  // 响度计: 目标预设 tooltip
+  kTxtTipLoudReset,   // 响度计: RESET tooltip
   kNumTexts
 };
 
@@ -133,6 +141,14 @@ inline const char *Tr(int id, int lang) {
           "CLEAN",
           "RTA fractional-octave resolution: 1/3 Oct (31 bands) / 1/4 Oct (41 bands) / 1/6 Oct (61 bands)",
           "VQT low-frequency bandwidth floor gamma (Hz): band width = fc/Q + gamma — higher = wider low bands, faster response; lower = sharper",
+          "MOMENTARY",
+          "SHORT-TERM",
+          "INTEGRATED",
+          "LRA",
+          "TRUE PEAK",
+          "TARGET",
+          "Loudness target preset: -14 (streaming music) / -16 (Apple Music) / -23 (EBU R128 broadcast)",
+          "Reset integrated loudness, LRA and true peak hold",
       },
       {
           "释放",
@@ -193,6 +209,14 @@ inline const char *Tr(int id, int lang) {
           "纯净",
           "RTA 分数倍频程分辨率：1/3 Oct（31 带）/ 1/4 Oct（41 带）/ 1/6 Oct（61 带）",
           "VQT 低频带宽下限 γ（Hz）：带宽 = fc/Q + γ —— 越大低频带越宽、响应越快；越小越锐利",
+          "瞬时",
+          "短时",
+          "总响度",
+          "LRA",
+          "真峰值",
+          "目标",
+          "响度目标预设：-14（流媒体音乐）/ -16（Apple Music）/ -23（EBU R128 广播）",
+          "重置综合响度、LRA 与真峰值锁存",
       },
   };
   return kTable[lang][id];

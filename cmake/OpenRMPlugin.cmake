@@ -20,7 +20,8 @@
 #   1. iplug_add_plugin 目标创建; FONTS 展开为完整路径走 RESOURCES 参数:
 #      - Windows: 字体嵌入 dll (IGraphics Win 端 LocateResource 优先读嵌入 TTF 资源)
 #      - macOS:   字体进 bundle Contents/Resources (与下方 POST_BUILD 签名/部署互补)
-#   2. APPLE: ad-hoc 签名 -> 部署到 ~/Library/Audio/Plug-Ins/... (POST_BUILD)
+#   2. APPLE: ad-hoc 签名 -> 部署到 ~/Library/Audio/Plug-Ins/... (POST_BUILD);
+#      独立 App 拷字体后部署到 ~/Applications (POST_BUILD, 不加签名)
 #   3. Extras include 目录 (nlohmann/json 等)
 #
 # 注意: iPlug2.cmake 的 include 与 find_package 必须留在插件 CMakeLists 目录作用域,
@@ -113,10 +114,36 @@ function(openrm_add_plugin NAME)
   # Standalone app
   if(TARGET ${NAME}-app)
     set(_sig_app "${CMAKE_BINARY_DIR}/out/${NAME}.app")
+    set(_app_dst "$ENV{HOME}/Applications/${NAME}.app")
     set(_copy_cmds)
     foreach(_font IN LISTS _p_FONTS)
       list(APPEND _copy_cmds COMMAND ${CMAKE_COMMAND} -E copy "${_p_FONT_DIR}/${_font}" "${_sig_app}/Contents/Resources/")
     endforeach()
+    # iPlug2 的 bundle 资源 (主菜单 nib / 图标 icns) 走 MACOSX_PACKAGE_LOCATION
+    # 复制, 在 Makefile 生成器上这些复制发生在 POST_BUILD 之后, 且本步骤会
+    # rm -rf 整个 Resources 目录, 因此必须在部署前从源文件补拷 nib/icns,
+    # 否则落到 ~/Applications 的副本会缺主菜单和图标。
+    set(_app_extra_res_cmds)
+    set(_app_nib "${CMAKE_CURRENT_BINARY_DIR}/${NAME}-macOS-MainMenu.nib")
+    if(EXISTS "${_app_nib}")
+      list(APPEND _app_extra_res_cmds COMMAND ${CMAKE_COMMAND} -E copy "${_app_nib}" "${_sig_app}/Contents/Resources/")
+    endif()
+    set(_app_icns "${CMAKE_CURRENT_SOURCE_DIR}/resources/${NAME}.icns")
+    if(EXISTS "${_app_icns}")
+      list(APPEND _app_extra_res_cmds COMMAND ${CMAKE_COMMAND} -E copy "${_app_icns}" "${_sig_app}/Contents/Resources/")
+    endif()
+    # 拷字体 -> 部署到用户 Applications。挂 POST_BUILD 保证 `--target ...-app`
+    # 单目标构建时也生效 (与上方 AU / VST3 一致)。不做 ad-hoc 签名,
+    # 与文件头部 "独立 App 链接时不加 ad-hoc 签名" 的约定保持一致。
+    add_custom_command(TARGET ${NAME}-app POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E rm -rf "${_sig_app}/Contents/Resources"
+      COMMAND ${CMAKE_COMMAND} -E make_directory "${_sig_app}/Contents/Resources"
+      ${_copy_cmds}
+      ${_app_extra_res_cmds}
+      COMMAND ${CMAKE_COMMAND} -E rm -rf "${_app_dst}"
+      COMMAND ${CMAKE_COMMAND} -E copy_directory "${_sig_app}" "${_app_dst}"
+      COMMENT "Copy fonts + deploy ${_sig_app} -> ${_app_dst}"
+    )
     add_custom_target(${NAME}-app-sign ALL
       COMMAND ${CMAKE_COMMAND} -E make_directory "${_sig_app}/Contents/Resources"
       ${_copy_cmds}

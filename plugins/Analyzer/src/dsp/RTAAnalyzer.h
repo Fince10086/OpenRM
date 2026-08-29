@@ -1,11 +1,13 @@
 #pragma once
 
-// RTAAnalyzer — 模拟硬件风格 IIR 带通滤波器组实时频谱分析引擎 (Filter-Bank RTA)
+// RTAAnalyzer — 模拟硬件风格滤波器组实时频谱分析引擎 (Filter-Bank RTA)
 //
-// 核心原理:
-// 1. 遵循 ANSI S1.11 / IEC 61260 标准分数倍频程划分 (1/3 Oct, 1/4 Oct, 1/6 Oct)
-// 2. 逐频带配置级联二阶/四阶带通 IIR 滤波器 (Direct Form II Transposed, 0 dB 峰值归一)
-// 3. 逐采样点流式滤波 + 真 RMS 能量检波 (无 FFT 块时延与窗函数涂抹, 呈现经典硬件 RTA 物理响应)
+// 架构对照 seven-phases/spectrum-analyzer: 级联低通差分互补滤波器组。
+// N+1 个 2 阶谐振低通, 截止放在带缘 (q = 2·bpo, prewrap 预畸变), 每带 =
+// 相邻两个低通输出之差 → 各带构成信号的互补分割 (Σ band = 最高低通),
+// 无独立带通滤波器组的响应重叠与重复计数; 检测为逐样本连续功率积分
+// (无矩形窗, 低频带无逐 hop 闪动)。带中心增益经重建期离线仿真校准
+// (中心正弦 → 0 dB, 与其他引擎同一标准)。
 
 #ifndef STANDALONE_TEST
 #include "ISender.h"
@@ -28,12 +30,14 @@ public:
   using Base = ISender<MAXNC, QUEUE_SIZE, TDataPacket>;
 
   static constexpr int kHop = 1024;
+  static constexpr int kMaxBands = 64; // 与原版一致 (1/6 Oct 15.6Hz..29kHz ≈ 64 带)
   static constexpr double kPi = 3.14159265358979323846;
+  static constexpr double kLn2 = 0.69314718055994530942;
 
   enum EOctaveMode {
-    kOctave1_3 = 0, // 1/3 Octave (~31 bands, Q ≈ 4.32)
-    kOctave1_4 = 1, // 1/4 Octave (~41 bands, Q ≈ 5.77)
-    kOctave1_6 = 2, // 1/6 Octave (~61 bands, Q ≈ 8.65)
+    kOctave1_3 = 0, // 1/3 Octave (~31 bands)
+    kOctave1_4 = 1, // 1/4 Octave (~41 bands)
+    kOctave1_6 = 2, // 1/6 Octave (~61 bands)
     kNumOctaveModes = 3
   };
 
@@ -95,15 +99,13 @@ public:
   // Freeze (冻结) 支持: UI 线程离线分析一帧原始样本 (与实时路径共用实现)
   void PrepareFrameUI(Data &d) { PrepareDataForUI(d); }
 
-  // Freeze (冻结) 支持: 复位分析侧运行态 (所有频带滤波器历史状态清零)
+  // Freeze (冻结) 支持: 复位分析侧运行态 (低通状态/功率积分/输入预处理)
   void ResetRuntimeState() {
     for (int c = 0; c < MAXNC; ++c) {
-      for (auto &st : mStates[c]) {
-        for (int k = 0; k < 4; ++k) {
-          st.z1[k] = 0.f;
-          st.z2[k] = 0.f;
-        }
-      }
+      std::fill(mZ0[c].begin(), mZ0[c].end(), 0.f);
+      std::fill(mZ1[c].begin(), mZ1[c].end(), 0.f);
+      std::fill(mEnv[c].begin(), mEnv[c].end(), 0.f);
+      mPrevIn[c] = 0.f;
     }
   }
 
@@ -122,9 +124,10 @@ protected:
     const bool needR = (mChanTri != 2);
     const bool needSum = (mChanTri == 2);
 
-    constexpr float invHop = 1.0f / (float)kHop;
-    // 归一化系数: 正弦波幅度为 1 时，均方值为 0.5，乘 2 开方后得峰值幅度 1.0 (0 dBFS)
-    constexpr float rmsNorm = 2.0f * invHop;
+    const int nLp = nb + 1;
+    const float *k0 = mK0.data(), *k1 = mK1.data(), *k2 = mK2.data();
+    const float *invGain = mInvGain.data();
+    const float alpha = mEnvAlpha;
 
     for (int c = 0; c < nCh; ++c) {
       if ((c == 0 && !needL) || (c == 1 && !needR) || (c == 2 && !needSum)) {
@@ -136,66 +139,44 @@ protected:
       alignas(16) float raw[kHop];
       std::memcpy(raw, d.vals[c].data(), kHop * sizeof(float));
 
-      for (int b = 0; b < nb; ++b) {
-        const BandFilter &filter = mBands[b];
-        BandState &st = mStates[c][b];
+      float *z0 = mZ0[c].data();
+      float *z1 = mZ1[c].data();
+      float *env = mEnv[c].data();
+      float prevIn = mPrevIn[c];
 
-        const float cb0 = filter.b0;
-        const float ca1 = filter.a1;
-        const float ca2 = filter.a2;
+      for (int n = 0; n < kHop; ++n) {
+        // 输入预处理 (原版 ZeroLP): x[n] + x[n−1], Nyquist 陷波
+        const float xin = raw[n];
+        const float x = xin + prevIn;
+        prevIn = xin;
 
-        float z1_0 = st.z1[0], z2_0 = st.z2[0];
-        float z1_1 = st.z1[1], z2_1 = st.z2[1];
-        float z1_2 = st.z1[2], z2_2 = st.z2[2];
-        float z1_3 = st.z1[3], z2_3 = st.z2[3];
-
-        float sumSq = 0.f;
-
-        // 8阶双二阶级联 (4级级联, 48 dB/oct 陡峭滚降, 极高频带选择性与 Class 1 隔离度)
-        for (int n = 0; n < kHop; ++n) {
-          const float x = raw[n];
-
-          // 级联 1
-          const float y1 = cb0 * x + z1_0;
-          z1_0 = -ca1 * y1 + z2_0;
-          z2_0 = -cb0 * x - ca2 * y1;
-
-          // 级联 2
-          const float y2 = cb0 * y1 + z1_1;
-          z1_1 = -ca1 * y2 + z2_1;
-          z2_1 = -cb0 * y1 - ca2 * y2;
-
-          // 级联 3
-          const float y3 = cb0 * y2 + z1_2;
-          z1_2 = -ca1 * y3 + z2_2;
-          z2_2 = -cb0 * y2 - ca2 * y3;
-
-          // 级联 4
-          const float y4 = cb0 * y3 + z1_3;
-          z1_3 = -ca1 * y4 + z2_3;
-          z2_3 = -cb0 * y3 - ca2 * y4;
-
-          sumSq += y4 * y4;
+        float yPrev = 0.f;
+        for (int j = 0; j < nLp; ++j) {
+          const float out = x * k0[j] + z0[j] * k1[j] + z1[j] * k2[j];
+          z1[j] = z0[j];
+          z0[j] = out;
+          if (j > 0) {
+            // band j−1 = LP_j − LP_{j−1}: 互补差分 (相邻带共享低通输出)
+            const float bd = out - yPrev;
+            float &e = env[j - 1];
+            e += (bd * bd - e) * alpha;
+            d.vals[c][j - 1] = std::sqrt(2.f * e) * invGain[j - 1];
+          }
+          yPrev = out;
         }
-
-        // 抗 Denormal 保护
-        if (std::abs(z1_0) < 1e-25f) z1_0 = 0.f;
-        if (std::abs(z2_0) < 1e-25f) z2_0 = 0.f;
-        if (std::abs(z1_1) < 1e-25f) z1_1 = 0.f;
-        if (std::abs(z2_1) < 1e-25f) z2_1 = 0.f;
-        if (std::abs(z1_2) < 1e-25f) z1_2 = 0.f;
-        if (std::abs(z2_2) < 1e-25f) z2_2 = 0.f;
-        if (std::abs(z1_3) < 1e-25f) z1_3 = 0.f;
-        if (std::abs(z2_3) < 1e-25f) z2_3 = 0.f;
-
-        st.z1[0] = z1_0; st.z2[0] = z2_0;
-        st.z1[1] = z1_1; st.z2[1] = z2_1;
-        st.z1[2] = z1_2; st.z2[2] = z2_2;
-        st.z1[3] = z1_3; st.z2[3] = z2_3;
-
-        // 幅度检波: 真 RMS 能量开方
-        d.vals[c][b] = std::sqrt(sumSq * rmsNorm);
       }
+      mPrevIn[c] = prevIn;
+
+      // 抗 Denormal
+      for (int j = 0; j < nLp; ++j) {
+        if (std::abs(z0[j]) < 1e-20f)
+          z0[j] = 0.f;
+        if (std::abs(z1[j]) < 1e-20f)
+          z1[j] = 0.f;
+      }
+      for (int j = 0; j < nb; ++j)
+        if (env[j] < 1e-20f)
+          env[j] = 0.f;
 
       for (int b = nb; b < MAX_BANDS; ++b)
         d.vals[c][b] = 0.f;
@@ -203,66 +184,104 @@ protected:
   }
 
 private:
-  struct BandFilter {
-    float b0 = 0.f;
-    float a1 = 0.f;
-    float a2 = 0.f;
-  };
-
-  struct BandState {
-    float z1[4] = {0.f, 0.f, 0.f, 0.f}; // 4级双二阶状态 (8阶滤波)
-    float z2[4] = {0.f, 0.f, 0.f, 0.f};
-  };
-
   void RebuildBands() {
-    mBands.clear();
     mFreqs.clear();
+    mK0.clear();
+    mK1.clear();
+    mK2.clear();
+    mInvGain.clear();
 
     const double fs = std::max(mSampleRate, 1.0);
-    const double nyqLimit = 0.485 * fs;
-
     int bpo = 3;
     if (mOctaveMode == kOctave1_4)
       bpo = 4;
     else if (mOctaveMode == kOctave1_6)
       bpo = 6;
+    // prewrap 预畸变系数 (原版 ferr, 按 bpo)
+    const double ferr = (bpo == 3) ? 0.904 : (bpo == 4) ? 0.905 : 0.909;
 
-    // 单级 Q 值调整: 使 4 级级联 (8阶) 后的总 -3dB 带宽与标准分数倍频程 Q 匹配
-    // Q_stage = Q_total * sqrt(2^(1/4) - 1) ≈ 0.43497944 * Q_total
-    const double qTotal = 1.0 / (std::pow(2.0, 1.0 / (2.0 * (double)bpo)) -
-                                std::pow(2.0, -1.0 / (2.0 * (double)bpo)));
-    const double qStage = qTotal * 0.4349794425316;
+    // 带中心/带缘网格 (原版 update()): 中心 15.625·2^(j/bpo) 自 22Hz 起, 带缘取
+    // 几何中点并加 Nyquist 扭曲项; 上缘超 fedg = 0.47·fs 或 29kHz 的带不收录
+    const double k = std::exp(kLn2 / bpo);
+    double f = 15.625;
+    while (f < 22.0)
+      f *= k;
+    const double fHi = 29000.0;
+    const double fedg = 0.94 * 0.5 * fs;
+    const int wi = (int)(0.5 + std::log(fedg / (1000.0 * std::sqrt(k))) / std::log(k));
+    const double fli = 1.0 / (1000.0 * std::pow(k, wi));
+    const double wr = (1.0 - (fedg / std::sqrt(k)) * fli) * fli * fli;
 
-    // 基准 1000 Hz 几何中心网格
-    // 覆盖范围: ~16 Hz .. 22 kHz (并在 nyqLimit 处截断)
-    int kMin = -6 * bpo; // 1000 * 2^-6 ≈ 15.6 Hz
-    int kMax = 5 * bpo;  // 1000 * 2^5 = 32000 Hz
-
-    for (int k = kMin; k <= kMax; ++k) {
-      const double fc = 1000.0 * std::pow(2.0, (double)k / (double)bpo);
-      if (fc < 16.0 || fc >= nyqLimit)
-        continue;
-
-      // 双二阶带通滤波器系数计算 (Audio EQ Cookbook: 0 dB 峰值增益带通)
-      const double w0 = 2.0 * kPi * fc / fs;
-      const double sinW = std::sin(w0);
-      const double cosW = std::cos(w0);
-      const double alpha = sinW / (2.0 * qStage);
-
-      const double a0 = 1.0 + alpha;
-      BandFilter filter;
-      filter.b0 = (float)(alpha / a0);
-      filter.a1 = (float)(-2.0 * cosW / a0);
-      filter.a2 = (float)((1.0 - alpha) / a0);
-
-      mBands.push_back(filter);
-      mFreqs.push_back(fc);
+    double edges[kMaxBands + 1];
+    double centers[kMaxBands];
+    int nb = 0;
+    double ff = (f / std::sqrt(k)) * (1.0 - wr * f * f); // edges[0]: 首中心下缘
+    for (;;) {
+      const double top = f * std::sqrt(k) * (1.0 - wr * f * f);
+      if (nb >= kMaxBands || top > fedg + 1.0 || top > fHi)
+        break;
+      edges[nb] = ff;
+      centers[nb] = f;
+      ++nb;
+      ff = top;
+      f *= k;
     }
+    edges[nb] = ff; // 顶缘 (最后计入带的上缘; break 路径不写会导致校准读未初始化栈)
+
+    // 边缘低通系数 (原版 twoPoleLPCoeffs): q = 2·bpo, prewrap = ferr
+    mK0.resize(nb + 1);
+    mK1.resize(nb + 1);
+    mK2.resize(nb + 1);
+    for (int j = 0; j <= nb; ++j) {
+      const double w = 2.0 * kPi * edges[j] / fs;
+      const double y = std::sin(w) / ((2.0 * bpo) * (1.0 + std::cos(w * ferr)));
+      const double a = 1.0 / (1.0 + y);
+      mK2[j] = (float)(a * (y - 1.0));
+      mK1[j] = (float)(a * 2.0 * std::cos(w));
+      mK0[j] = (float)((0.5 / (2.0 * bpo)) * (1.0 - mK1[j] - mK2[j]));
+    }
+
+    // 带中心增益离线仿真校准: 中心正弦 (幅度 1) 稳态后测差分通路 rms → 归一 0dB
+    mInvGain.resize(nb);
+    for (int j = 0; j < nb; ++j) {
+      const double f0 = centers[j];
+      int settle = (int)(fs * 30.0 / std::max(f0, 1.0)); // 谐振余振 (Q≈6) 衰减到 −120dB
+      settle = std::clamp(settle, 8192, 96000);
+      const int meas = std::max(2048, (int)(fs * 4.0 / f0));
+      double s1 = 0.0, s2 = 0.0, t1 = 0.0, t2 = 0.0;
+      double ph = 0.0, prevIn = 0.0, sumSq = 0.0;
+      const double w = 2.0 * kPi * f0 / fs;
+      const int total = settle + meas;
+      for (int n = 0; n < total; ++n) {
+        const double s = std::sin(ph);
+        ph += w;
+        const double x = s + prevIn;
+        prevIn = s;
+        const double o1 = x * mK0[j] + s1 * mK1[j] + s2 * mK2[j];
+        s2 = s1;
+        s1 = o1;
+        const double o2 = x * mK0[j + 1] + t1 * mK1[j + 1] + t2 * mK2[j + 1];
+        t2 = t1;
+        t1 = o2;
+        if (n >= settle) {
+          const double bd = o2 - o1;
+          sumSq += bd * bd;
+        }
+      }
+      const double g = std::sqrt(2.0 * sumSq / meas);
+      mInvGain[j] = (float)(1.0 / std::max(g, 1e-9));
+      mFreqs.push_back(centers[j]);
+    }
+
+    // 连续功率积分时间常数 (τ = 50ms): 消矩形窗闪动, 瞬态仍由 pad 弹道呈现
+    mEnvAlpha = (float)(1.0 - std::exp(-1.0 / (fs * 0.05))); // 每样本系数 (τ = 50ms)
 
     for (int c = 0; c < MAXNC; ++c) {
-      mStates[c].assign(mBands.size(), BandState{});
+      mZ0[c].assign(nb + 1, 0.f);
+      mZ1[c].assign(nb + 1, 0.f);
+      mEnv[c].assign(nb, 0.f);
     }
-
+    mPrevIn.fill(0.f);
     ResetRuntimeState();
   }
 
@@ -270,11 +289,14 @@ private:
   int mOctaveMode = kOctave1_3; // 0=1/3, 1=1/4, 2=1/6
   int mChanTri = 0;             // 0=LR, 1=PWR, 2=SUM
   std::atomic<bool> mNeedRebuild{false};
+  float mEnvAlpha = 0.f; // 功率积分系数/hop (τ = 50ms)
 
-  std::vector<BandFilter> mBands;
   std::vector<double> mFreqs;
-  std::array<std::vector<BandState>, MAXNC> mStates;
-
+  std::vector<float> mK0, mK1, mK2; // 边缘低通系数 (nb+1 组)
+  std::vector<float> mInvGain;      // 带中心校准增益 (nb)
+  std::array<std::vector<float>, MAXNC> mZ0, mZ1; // 低通状态 (nb+1)
+  std::array<std::vector<float>, MAXNC> mEnv;     // 连续功率积分 (nb)
+  std::array<float, MAXNC> mPrevIn{};             // 输入预处理一阶状态
   std::array<std::vector<float>, MAXNC> mPending;
   int mBufCount = 0;
 };
