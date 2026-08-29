@@ -482,7 +482,7 @@ private:
       if (fc > kFreqHi)
         break;
       const double bw = fc / q + mGamma;
-      const int L = AssignLayer(fc + bw / 2.0, fs);
+      const int L = AssignLayer(fc + 2.0 * bw, fs);
       spec.push_back({fc, bw, L});
       layerCount[L]++;
     }
