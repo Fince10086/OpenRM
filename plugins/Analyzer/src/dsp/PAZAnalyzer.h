@@ -3,32 +3,11 @@
 // PAZAnalyzer — 心理声学临界频带频谱分析引擎 (多速率解调核算法)
 //
 // 每个频带一个复数解调 FIR 核: kernel[n] = proto[n]·e^{-j2π·fc·n/fsL}。
-// 核形状三档 (SetWindowType), 默认 Kaiser 等波纹原型: 平顶到 0.37·bw, 阻带墙
-// 0.585·bw 起 −68dB —— 由原版 PAZ 导出反推 (G4=392/G#4=415.3Hz 正弦均在 398 带
-// 精确读 0dB, 邻带 ≤−68dB)。窗函数核 (BH4/Flat-Top) 的主瓣是光滑凸形, 带内偏移
-// 必然塌读数, 无法同时满足平顶与陡墙, 故默认档用原型低通。
-// 旧实现 (2×2 阶 TPT SVF 级联带通 + hop 内峰值) 受 4 阶滚降限制, 9.5% 邻距下邻带
-// 读数 −12~−32dB, 正弦输入必然点亮数个邻带; 核算法达成与原版 PAZ 一致的隔离形态。
+// 核形状: Kaiser 等波纹原型低通, 核长系数 K=4.6
 //
-// 注: 原版导出中 G4 在 352 带的 −48dB 泄漏为其分频器阻带泄漏跨层折返所致
-// (392Hz 恰在 ~375Hz 层边界上方, 折回到 358Hz 落入 352 带平顶), 属瑕疵, 不克隆;
-// 本实现对同类泄漏的抑制深得多 (G4@352 ≤ −77dB)。
+// 多速率: 核跑在 2x 半带抽取金字塔上 (层 L 速率 fs/2^L, 跨帧保持滤波状态)
 //
-// 多速率: 核跑在 2x 半带抽取金字塔上 (层 L 速率 fs/2^L, 跨帧保持滤波状态), 层分配
-// 与 VQT 同款 (band 顶 ≤ 0.78·新奈奎斯特); 跨层 readOff 对齐消除层边界群延迟错位。
-// 低频核长可达 ~0.7s (6Hz 带), 由深层抽取摊薄计算量; 冷启动/重建后低频带约需
-// 核长时间收敛到稳态 (与 VQT 同性质)。
-//
-// 开发对照开关 (默认关, 拟合原版 PAZ 时间行为用):
-//  MINPH — 核最小相位化: 对实对称原型做同幅频谱分解 (倒频谱法), |G|=|A| 逐点成立,
-//          静态曲线与 KERNEL 拟合完全不变; 但能量前置, 群延迟从线性相位的 wl/2
-//          (低频 ~0.7s) 塌缩到能量重心 (几十 ms) —— 起振延迟大幅下降。半波抽取链
-//          同样最小相位化: 每级群延迟 50→≈7.2 样本, L9 链 532→76ms @48kHz,
-//          起振总延迟实测 661→~190ms (41Hz 带)。
-//  FOLL  — 每带包络跟随器: 幅度域一阶递推, 快攻击 (~15ms) + 慢释放 (τ = C/bw,
-//          C≈5 → 12Hz 带 τ≈0.42s, 375Hz 带 τ≈13ms)。幅度每 τ 降 8.69dB, 71dB 全程
-//          ≈8.2τ —— 拟合原版 "低频断信号缓降 3-5s、高频 <1s、起振杂波停留数秒" 的
-//          显示弹道 (释放时间随带宽缩放是频率依赖下落的来源)。
+// 最小相位化: 带核原型与半波抽取链都做同幅频谱分解 (倒频谱法)
 
 #ifndef STANDALONE_TEST
 #include "ISender.h"
@@ -90,15 +69,6 @@ inline void Fft(double *re, double *im, int n, bool inverse) {
   }
 
   // 实对称 FIR 原型 → 同幅频最小相位谱因子 (自相关 + 倒频谱分解), 返回长度 N 不变。
-  // 原型零相位频响 A(ω) 为实值 (阻带内正负振荡), 对 R(ω)=A(ω)² (非负 2M 阶余弦多项式
-  // = 原型自相关的 DTFT) 做谱分解: 因果化精确时 |G(ω)|=|A(ω)| 全频带逐点成立 (含零陷)。
-  // 关键坑 1: 阻带零陷 = 单位圆上的零点, 复倒频谱按 1/n 代数衰减, 栅格化截断/混叠
-  // 会彻底破坏因子 (N=9 即失败, 加大 FFT 无济于事)。经典 remedy: r[0] 乘 (1+ε) 抬
-  // 底座, 把圆上双零点抬进圆内 → 倒频谱变几何衰减; 零陷被填到 sqrt(ε·Σp²)。
-  // 关键坑 2: ε 与收敛速度强耦合 (衰减常数 Δ = sqrt(ε·Σp²)/斜率, Lfft 需 ≳ 7/Δ),
-  // 固定小 ε 会让部分原型把重试阶梯跑满 → 重建卡 ~9s (实测)。故按原型自适应:
-  // ε = (Δt·δ·N/π)²/Σp² (δ = 该窗阻带电平, N/π ≈ 半纹波间距), 使所有带 Δ ≈ Δt
-  // → Lfft 固定 16k 一步收敛; 填充深度 = Δt·δ·N/π ≈ −84~−114dB, 全在显示底之下。
 inline constexpr double kMinPhaseDecayTarget = 5e-4;
 inline std::vector<double> MinPhaseFactorWithLen(const std::vector<double> &proto, int Lfft, double lift);
 inline std::vector<double> MinPhaseFactor(const std::vector<double> &proto,
@@ -196,17 +166,7 @@ inline std::vector<double> MinPhaseFactorWithLen(const std::vector<double> &prot
 
 // 半带 ×2 抽取器 (跨帧保持滤波状态)。要求 nin 为偶数。系数形态与群延迟见 struct 内注。
 struct HalfbandDec2 {
-  // 系数两种形态 (MINPH 开关):
-  //  线性相位 (默认): 101 抽头 4 项 Blackman-Harris 窗半带 (截止 π/2, DC 增益 1),
-  //    阻带跌落 >90 dB, 杜绝层边界强单音穿透抽取器折返到下层的"假频谱峰"。
-  //    偶数序 (除中心) 抽头严格为零; 群延迟 = kQ 输入样本。
-  //  最小相位 (MINPH 开): 同幅谱分解 (detail::MinPhaseFactor, 抬底取 BH4 阻带电平
-  //    −92dB), |G(ω)|=|A(ω)| 逐点成立 → 防混叠/通带形状/DC 增益全不变; 能量前置,
-  //    每级群延迟 50 → ≈7.2 样本 (冲激能量重心), 半波链延迟 L9 532→76ms @48kHz。
-  //    深阻带 (原型 ≤−110dB, 半带镜像通带平坦度的固有深谷) 被因子钳到 ≈−110dB,
-  //    在显示底之下; 过渡带尾部 (防混叠最坏段) 与原型逐点一致 (实测 Δ≈0.02dB)。
-  //    取向无需反转: 本抽取器是标准流式卷积 (tap[0] 配最新样本), 能量前置的抽头
-  //    天然配新样本 (与带核的点积取向相反, 那边才需要 std::reverse)。
+  // 系数两种形态 (SetMinPhase 选择; PAZ 固定用最小相位, MR-FFT 共用本结构保持线性相位默认):
   static constexpr int kN = 101;
   static constexpr int kQ = (kN - 1) / 2;
   std::array<float, kN> mTap{};
@@ -251,11 +211,10 @@ struct HalfbandDec2 {
     return kTaps;
   }
 
-  // 每级有效群延迟 (本级样本): 线性相位 = kQ; 最小相位 = 分解后冲激的能量重心
-  // (τ(ω) 随频率 3.9@DC → 15.6@0.45π, 取整体重心做链对齐常数, 端到端验证无对齐回归)
-  static double GdPerStage(bool minPhase) {
-    if (!minPhase)
-      return (double)kQ;
+  // 每级有效群延迟 (本级样本, 最小相位形态): 分解后冲激的能量重心
+  // (τ(ω) 随频率 3.9@DC → 15.6@0.45π, 取整体重心做链对齐常数, 端到端验证无对齐回归;
+  //  线性相位形态每级 = kQ)
+  static double GdPerStage() {
     static const double kCent = [] {
       const std::array<float, kN> &t = MinPhaseTaps();
       double e = 0.0, c = 0.0;
@@ -270,7 +229,7 @@ struct HalfbandDec2 {
 
   HalfbandDec2() { RebuildTaps(); }
 
-  // MINPH 开关换形态 (RebuildBands 头部同步; 滤波状态由其尾部 ResetRuntimeState 清零)
+  // 换系数形态 (PAZ 的 RebuildBands 固定切到最小相位; 滤波状态由其尾部 ResetRuntimeState 清零)
   void SetMinPhase(bool mp) {
     if (mp == mMinPhase)
       return;
@@ -357,50 +316,6 @@ public:
     return false;
   }
 
-  // 核窗函数档位 (0: BH4, 1: Flat-Top 5 项, 2: Kaiser 等波纹原型低通)
-  bool SetWindowType(int windowType) {
-    const int v = std::clamp(windowType, 0, 2);
-    if (v != mWindowType) {
-      mWindowType = v;
-      mNeedRebuild.store(true, std::memory_order_release);
-      return true;
-    }
-    return false;
-  }
-  int GetWindowType() const { return mWindowType; }
-
-  // 核长系数 k。窗核 (档位 0/1): T = k/bw。Kaiser 原型 (档位 2, 默认): 阻带墙位置
-  // Esb = 0.13·k·bw —— k 越小墙越近/核越长/隔离越深 (与窗核方向相反!)。
-  // 实测 (48k, G4/G#4/20Hz 探针): k=4.5 与原版 PAZ 导出逐点吻合 (G#4@+0.37bw 读
-  // 0.00dB、@+0.63bw −71dB、20Hz 邻带 ≤−92dB); k=6 起最坏邻带泄漏开始冒头
-  // (−12dB@k=6, −3dB@k=8)。改动触发重建 (冷启动重新收敛)。
-  bool SetKernelLen(double k) {
-    const double v = std::clamp(k, 2.0, 10.0);
-    if (std::abs(v - mKernelLen) > 1e-6) {
-      mKernelLen = v;
-      mNeedRebuild.store(true, std::memory_order_release);
-      return true;
-    }
-    return false;
-  }
-  double KernelLen() const { return mKernelLen; }
-
-  // 核最小相位化开关 (开发对照, 见文件头注释): 改动触发重建 (冷启动重新收敛)。
-  bool SetMinPhase(bool on) {
-    if (on != mMinPhase) {
-      mMinPhase = on;
-      mNeedRebuild.store(true, std::memory_order_release);
-      return true;
-    }
-    return false;
-  }
-  bool MinPhase() const { return mMinPhase; }
-
-  // 每带包络跟随器开关 (开发对照): 只切换递推门控, 无需重建。
-  // 关闭期间状态随每帧直通同步, 再开启无跳变。
-  void SetFollowOn(bool on) { mFollowOn = on; }
-  bool FollowOn() const { return mFollowOn; }
-
   // 设置声道模式 (0: LR, 1: PWR, 2: SUM)
   void SetChannelMode(int chanTri) {
     mChanTri = std::clamp(chanTri, 0, 2);
@@ -443,7 +358,6 @@ public:
         mLayers[c][l].clear();
       for (int l = 0; l < kMaxLayers - 1; ++l)
         mDecim[c][l].Reset();
-      mFollowY[c].assign(mBands.size(), 0.f); // 跟随器状态归零 (冻结回放确定性起点)
     }
   }
 
@@ -520,18 +434,7 @@ protected:
           re += x[j] * kr[j];
           im += x[j] * ki[j];
         }
-        float mag = std::sqrt(re * re + im * im) * bd.wsumInv;
-        // 每带包络跟随器 (FOLL 开): 幅度域一阶递推, 快攻击/慢释放 (系数于重建时按
-        // hop 周期与带宽算好)。关闭时状态直通同步, 开关切换无跳变。
-        if (mFollowOn) {
-          float y = mFollowY[c][b];
-          y += ((mag > y) ? mFollowAtk : bd.aRel) * (mag - y);
-          mFollowY[c][b] = y;
-          mag = y;
-        } else {
-          mFollowY[c][b] = mag;
-        }
-        d.vals[c][b] = mag;
+        d.vals[c][b] = std::sqrt(re * re + im * im) * bd.wsumInv;
       }
 
       for (int b = nb; b < MAX_BANDS; ++b)
@@ -545,7 +448,6 @@ private:
     int winLen;                           // 本层速率核长
     int readOff;                          // 跨层延迟对齐: 取窗终点距缓冲末端的本层样本数
     float wsumInv;                        // 2/Σw (带中心正弦幅度归一)
-    float aRel = 0.f;                     // 跟随器本带释放系数/hop: 1−exp(−hopDt·bw/C)
     std::vector<float> kernelRe, kernelIm; // 本层速率的 w·cos/w·sin
   };
 
@@ -591,23 +493,20 @@ private:
     return L;
   }
 
-  // 半带链总群延迟 (输入样本): 每级 GdPerStage (线性相位 kQ / MINPH 后能量重心 ≈7.2),
-  // 到层 L 共 Σ gd·2^k
+  // 半带链总群延迟 (输入样本): 每级 GdPerStage() (最小相位能量重心 ≈7.2), 到层 L 共 Σ gd·2^k
   double ChainGd(int L) const {
-    return detail::HalfbandDec2::GdPerStage(mMinPhase) * (double)((1 << L) - 1);
+    return detail::HalfbandDec2::GdPerStage() * (double)((1 << L) - 1);
   }
 
   void RebuildBands() {
-    // MINPH 开关同步到半波抽取链 (换系数形态; 分解因子全局共享只算一次)
+    // 半波抽取链固定最小相位形态 (分解因子全局共享只算一次)
     for (int c = 0; c < MAXNC; ++c)
       for (int l = 0; l < kMaxLayers - 1; ++l)
-        mDecim[c][l].SetMinPhase(mMinPhase);
+        mDecim[c][l].SetMinPhase(true);
     mBands.clear();
     mFreqs.clear();
     mMaxWinPerLayer.fill(0);
     const double fs = std::max(mSampleRate, 1.0);
-    // 跟随器攻击系数/hop (快攻击, 近即时抓住起振) 与各带释放系数 (AddBand 内按带宽算)
-    mFollowAtk = (float)(1.0 - std::exp(-(kHop / fs) / kFollowAttackSec));
     const double scale = fs / 48000.0;
     const double nyqLimit = 0.485 * fs;
 
@@ -676,33 +575,22 @@ private:
 
   void AddBand(double fc, double bw, double fs, int L, int nextDeep, double fSeg) {
     const double fsL = fs / (double)(1 << L);
-    // 核长/形状按窗档位:
-    //   0/1: 窗函数核 T = k/bw (k=SetKernelLen);
-    //   2: Kaiser 等波纹原型低通 —— 平顶到 0.37bw, 阻带墙 Esb=0.13·k·bw 起 −68dB,
-    //      k=5 时 Esb=0.65bw 与原版 PAZ 实测形状一致 (G#4@+0.37bw 读 0dB, @+0.63bw −68dB);
-    //      过渡带越窄核越长: T = (A−8)/(2.285·2π·(Esb−Epb)) ≈ 15/bw (k=5)。
-    // 最小相位谱分解要求奇长实对称原型, 窗档偶长时 +1。
+    // Kaiser 等波纹原型低通 —— 平顶到 0.37bw, 阻带墙 Esb=0.13·K·bw 起 −68dB
+    // (K=4.6 → Esb≈0.60bw, 原版拟合定值); 过渡带越窄核越长: T = (A−8)/(2.285·2π·(Esb−Epb))。
+    // 最小相位谱分解要求奇长实对称原型, 偶长 +1。
     int wl;
-    double epb = 0.0, esb = 0.0;
-    if (mWindowType == 2) {
-      epb = 0.37 * bw;
-      esb = std::max(0.13 * mKernelLen * bw, epb + 0.10 * bw); // k=5 → 0.65bw; 过渡带不退化
-      const double dF = esb - epb;
-      constexpr double kAttenDb = 68.0; // 阻带深度 (= 原版实测远端底 ≈ −70dB)
-      wl = std::max(9, (int)std::ceil((kAttenDb - 8.0) / (2.285 * 2.0 * kPi * dF / fsL)));
-      if ((wl & 1) == 0)
-        ++wl; // 奇长 → 线性相位对称
-    } else {
-      wl = std::max(8, (int)std::lround(mKernelLen * fsL / bw));
-      if (mMinPhase && (wl & 1) == 0)
-        ++wl;
-    }
+    const double epb = 0.37 * bw;
+    const double esb = std::max(0.13 * kKernelLen * bw, epb + 0.10 * bw); // 过渡带不退化
+    const double dF = esb - epb;
+    constexpr double kAttenDb = 68.0; // 阻带深度 (= 原版实测远端底 ≈ −70dB)
+    wl = std::max(9, (int)std::ceil((kAttenDb - 8.0) / (2.285 * 2.0 * kPi * dF / fsL)));
+    if ((wl & 1) == 0)
+      ++wl; // 奇长 → 实对称
 
-    // 1) 实对称原型 (中心 mid): Kaiser 档 = 窗化 sinc 低通 (DC 增益 1); 窗档 = 窗系数本身
+    // 1) 实对称原型 (中心 mid): Kaiser 窗化 sinc 低通 (DC 增益 1)
     const int mid = (wl - 1) / 2;
     std::vector<double> proto(wl);
-    double sum = 0.0;
-    if (mWindowType == 2) {
+    {
       const double beta = 0.1102 * (68.0 - 8.7);
       const double fcLp = 0.5 * (epb + esb);
       const double wC = 2.0 * kPi * fcLp / fsL; // 原型截止 (rad/样本)
@@ -713,40 +601,16 @@ private:
         const double arg = beta * std::sqrt(std::max(0.0, 1.0 - t * t));
         const double wk = BesselI0(arg) / BesselI0(beta);
         proto[n] = h * wk;
-        sum += proto[n];
-      }
-    } else {
-      for (int n = 0; n < wl; ++n) {
-        const double theta = 2.0 * kPi * n / (wl - 1);
-        double w;
-        if (mWindowType == 1) {
-          // Flat-Top 窗 (SRS 5 项): 主瓣近平顶 (带内偏移读数损失 <0.1dB), 零点距 10/T,
-          // 旁瓣 ~-93dB —— 与原版 PAZ "带内平、带外陡" 的实测形态吻合
-          w = 0.21557895 - 0.41663158 * std::cos(theta) + 0.277263158 * std::cos(2.0 * theta)
-                           - 0.083578947 * std::cos(3.0 * theta) + 0.006947368 * std::cos(4.0 * theta);
-        } else {
-          w = 0.35875 - 0.48829 * std::cos(theta)
-                      + 0.14128 * std::cos(2.0 * theta)
-                      - 0.01168 * std::cos(3.0 * theta);
-        }
-        proto[n] = w;
-        sum += w;
       }
     }
 
-    // 2) 最小相位谱分解 (MINPH 开): |G(ω)|=|A(ω)| 全频带逐点成立 (静态响应/零陷不变),
-    //    能量前置 —— 起振群延迟塌缩; 核长不变 (自相关法, 见 MinPhaseFactor 注)
-    if (mMinPhase) {
-      // 该窗的阻带电平 (自适应抬底用): Kaiser −68dB, Flat-Top −93dB, BH4 −92dB
-      const double stopRipple = (mWindowType == 2)   ? std::pow(10.0, -68.0 / 20.0)
-                                : (mWindowType == 1) ? std::pow(10.0, -93.0 / 20.0)
-                                                     : std::pow(10.0, -92.0 / 20.0);
-      proto = detail::MinPhaseFactor(proto, stopRipple);
-      // 时间反转: 点积按 "kernel[0] 配最旧样本" 取向, 卷积等效于时间翻转核 —— 不反转
-      // 的话最小相位核等效成最大相位 (能量落在旧样本侧, 起振反而最慢)。反转后能量
-      // 前置的抽头配最新样本, 新信号一到立即响应; 幅度响应不受翻转影响 (静态等价)。
-      std::reverse(proto.begin(), proto.end());
-    }
+    // 2) 最小相位谱分解 (固有): |G(ω)|=|A(ω)| 全频带逐点成立 (静态响应/零陷不变),
+    //    能量前置 —— 起振群延迟塌缩; 核长不变 (自相关法, 见 detail::MinPhaseFactor 注)
+    proto = detail::MinPhaseFactor(proto);
+    // 时间反转: 点积按 "kernel[0] 配最旧样本" 取向, 卷积等效于时间翻转核 —— 不反转
+    // 的话最小相位核等效成最大相位 (能量落在旧样本侧, 起振反而最慢)。反转后能量
+    // 前置的抽头配最新样本, 新信号一到立即响应; 幅度响应不受翻转影响 (静态等价)。
+    std::reverse(proto.begin(), proto.end());
 
     Band bd;
     bd.layer = L;
@@ -769,10 +633,6 @@ private:
       ksum += proto[n];
     }
     bd.wsumInv = (ksum > 1e-12) ? (float)(2.0 / ksum) : 0.0f;
-
-    // 4) 跟随器本带释放系数: τ = C/bw (s·Hz/bw), 每 hop 一阶递推 (幅度域)
-    const double tauRel = kFollowRelC / std::max(bw, 1.0);
-    bd.aRel = (float)(1.0 - std::exp(-(kHop / fs) / tauRel));
 
     mBands.push_back(std::move(bd));
     mFreqs.push_back(fc);
@@ -805,16 +665,8 @@ private:
     return sum;
   }
 
+  static constexpr double kKernelLen = 4.6; // 核长系数 k (Kaiser 墙位 Esb=0.13·k·bw), 原版拟合定值
   double mSampleRate = 48000.0;
-  double mKernelLen = 4.5; // 核长系数 k: 窗核 T = k/bw; Kaiser 原型墙位 Esb = 0.13·k·bw
-  int mWindowType = 2;     // 核形状: 0=BH4 窗, 1=Flat-Top 窗, 2=Kaiser 等波纹原型 (默认, 拟合原版)
-  bool mMinPhase = false;  // MINPH: 核最小相位化 (同幅频谱分解, 起振群延迟塌缩)
-  bool mFollowOn = false;  // FOLL: 每带包络跟随器 (快攻击 + 慢释放 τ=C/bw)
-  // 跟随器弹道常数: 攻击 τ 15ms (近即时); 释放 τ = C/bw, C=5 → 12Hz 带 0.42s
-  // (71dB 全程 ≈8.2τ ≈ 3.5s, 落在原版实测 3-5s 区间), 375Hz 带 13ms (<0.15s)
-  static constexpr double kFollowAttackSec = 0.015;
-  static constexpr double kFollowRelC = 5.0;
-  float mFollowAtk = 0.f; // 攻击系数/hop (RebuildBands 按 fs 算)
   int mLfMode = 0; // 0=40Hz, 1=20Hz, 2=10Hz
   int mChanTri = 0; // 0=LR, 1=PWR, 2=SUM
   std::atomic<bool> mNeedRebuild{false};
@@ -822,7 +674,6 @@ private:
   std::vector<Band> mBands;
   std::vector<double> mFreqs;
   std::array<int, kMaxLayers> mMaxWinPerLayer{}; // 该层需保留的本层样本数 (核长 + readOff)
-  std::array<std::vector<float>, MAXNC> mFollowY; // 跟随器状态 [声道][band] (幅度域)
 
   std::array<std::array<detail::HalfbandDec2, kMaxLayers - 1>, MAXNC> mDecim;
   std::array<std::array<std::vector<float>, kMaxLayers>, MAXNC> mLayers;

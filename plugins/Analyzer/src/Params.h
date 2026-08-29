@@ -10,12 +10,10 @@ enum EParams {
   kAttack,        // 频谱上升响应时间 (s)
   kRes,           // FFT 分辨率档位 (2048/4096/8192)
   kLfRes,         // 低频分辨率档位 (PAZ: 40/20/10 Hz; VQT 不再使用)
-  kBpo,           // 已废弃: MR-FFT 每八度频带数, 固定 24 不再暴露 UI (下标保留保旧状态文件兼容, 勿复用)
   kMode,          // 分析引擎模式 (0: STFT, 1: VQT, 2: PAZ, 3: MR-FFT)
   kChannelMode,   // 声道显示模式 (0: LR, 1: PWR, 2: SUM)
   kLevelMode,     // 电平表模式 (0: dBTP, 1: dBFS+RMS, 2: VU)
   kLevelHold,     // 峰值保持时长档位 (0: 0.5s, 1: 2s, 2: KEEP 持久)
-  kPazAlgo,       // 已废弃: PAZ 固定滤波器组算法, 切换按钮已移除 (下标保留保旧状态文件兼容, 勿复用)
   kFreeze,        // 冻结开关 (0: 实时, 1: FREEZE 定格; 冻结中切换引擎用新算法重算冻结音频)
   kPyramidDecim,  // VQT 金字塔降采样档位 (0: LIN 线性相位, 1: MIN 最小相位)
   kLevelHoldOn,   // 峰值保持开关 (频谱 hold 曲线与电平表 hold 亮线共用; 默认关闭, 用户状态持久化于全局设置文件; 追加末尾, 保旧状态文件下标兼容)
@@ -25,9 +23,6 @@ enum EParams {
   kSlopeMRFFT,    // 频谱斜率档位索引, MR-FFT 引擎独立保存 (-3/0/1.5 dB/oct)
   kFFTWindow,     // STFT 窗函数档位 (0: Hann, 1: BH4 4阶Blackman-Harris)
   kWindowVQT,     // VQT 窗函数档位 (0: Hann, 1: BH4), 与 STFT 独立保存 (追加末尾, 保旧状态文件下标兼容)
-  kPazKernel,     // PAZ 解调核墙位系数 (Kaiser 原型 Esb=0.13k·bw, 连续 4.5~6.0 步进 0.05; 追加末尾保兼容)
-  kPazMinPhase,   // PAZ 核最小相位化开关 (同幅频谱分解, 消起振群延迟; 追加末尾保兼容)
-  kPazFollow,     // PAZ 每带包络跟随器开关 (快攻击 + 慢释放 τ=C/bw; 追加末尾保兼容)
   kNumParams
 };
 

@@ -97,9 +97,6 @@ private:
   FlatCycleButton *mResBtn = nullptr;      // STFT 分辨率循环按钮 (LOW/MID/HIGH)
   FlatCycleButton *mWindowBtn = nullptr;   // 窗函数循环按钮 (SHARP/CLEAN, STFT 与 VQT 各自独立档位, 按模式改绑参数)
   FlatCycleButton *mPazLfResBtn = nullptr; // PAZ 低频分辨率循环按钮 (40/20/10 Hz)
-  ORMSlider *mPazKernelSlider = nullptr;   // PAZ 解调核墙位滑块 (Kaiser Esb=0.13k·bw, 4.5~6.0, 仅 PAZ 可见)
-  FlatToggleControl *mPazMinPhaseBtn = nullptr; // PAZ 核最小相位化开关 (MINPH, 开发对照, 仅 PAZ 可见)
-  FlatToggleControl *mPazFollowBtn = nullptr;   // PAZ 每带包络跟随器开关 (FOLL, 开发对照, 仅 PAZ 可见)
   FlatCycleButton *mPyramidBtn = nullptr;  // VQT 金字塔算法循环按钮 (LIN / MIN)
   FlatCycleButton *mRangeBtn = nullptr;    // 动态范围循环按钮 (刻度底部 80/100/120)
   FlatCycleButton *mSlopeBtn = nullptr;    // 频谱斜率循环按钮 (刻度底部左缘, 档值随引擎)
@@ -139,9 +136,6 @@ private:
   int mFreezeWindowVQT = -1; // VQT 窗函数档位快照 (冻结中重算去重)
   int mFreezeLf = -1;
   int mFreezePyramid = -1;
-  double mFreezeKernel = -1.0;
-  bool mFreezeMinPhase = false; // PAZ 核最小相位化快照 (冻结中重算去重)
-  bool mFreezeFollow = false;   // PAZ 包络跟随器快照 (冻结中重算去重)
 
   // 冻结回放 (UI 线程, 定义见 Analyzer.cpp)。回放分 tick 泵送避免长 UI 卡顿;
   // 回放期间再次切换配置 → StartFreezeReplay 重启 (复位后重放, 确定性不变);
@@ -211,9 +205,6 @@ private:
   int CurrentPazLfRes() const {
     const int idx = (int)std::clamp(GetParam(kLfRes)->Value(), 0.0, (double)kNumPazLfResOptions - 1);
     return kPazLfResOptions[idx];
-  }
-  double CurrentPazKernelLen() const {
-    return std::clamp(GetParam(kPazKernel)->Value(), 2.0, 10.0);
   }
   // 频谱显示范围 (刻度底部 dB): 离散三档 80/100/120, 由 Range 循环按钮切换。
   // 用 lround 取档位 (与按钮显示取整一致), 避免宿主旧状态恢复出档位间值 (如 0.5) 时

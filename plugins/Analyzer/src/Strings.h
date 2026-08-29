@@ -67,8 +67,6 @@ enum EText {
   kTxtTipLevelHoldTime,
   kTxtTipSlope,
   kTxtTipWindow,
-  kTxtTipPazMinPhase,
-  kTxtTipPazFollow,
   kNumTexts
 };
 
@@ -131,8 +129,6 @@ inline const char *Tr(int id, int lang) {
           "Peak hold duration: click to cycle 0.5s / 2s / KEEP (hold forever)",
           "Spectrum slope (dB/oct, pivot ~632 Hz): STFT 0/3/4.5, VQT/PAZ/MR-FFT -3/0/1.5; each engine keeps its own value",
           "Window mode (STFT and VQT each keep their own value): SHARP (Hann: sharp mainlobe, classic response) / CLEAN (4-term Blackman-Harris: -92 dB ultra-low leakage)",
-          "PAZ dev: minimum-phase kernels (same magnitude response, collapse onset group delay)",
-          "PAZ dev: per-band envelope follower (fast attack, slow release scaled with bandwidth)",
       },
       {
           "释放",
@@ -191,8 +187,6 @@ inline const char *Tr(int id, int lang) {
           "峰值保持时长：点击循环切换 0.5s / 2s / KEEP（一直保持）",
           "频谱斜率（dB/oct，支点约 632 Hz）：STFT 0/3/4.5，VQT/PAZ/MR-FFT -3/0/1.5；各引擎独立保存",
           "窗函数模式（STFT 与 VQT 独立保存档位）：SHARP（Hann: 锐利窄主瓣，经典响应）/ CLEAN（4阶 Blackman-Harris: -92 dB 极低旁瓣泄露）",
-          "PAZ 开发对照：核最小相位化（幅频响应不变，消起振群延迟）",
-          "PAZ 开发对照：每带包络跟随器（快攻击，慢释放随带宽缩放）",
       },
   };
   return kTable[lang][id];
