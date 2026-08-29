@@ -525,50 +525,65 @@ private:
       hold = ch ? mHoldR : mHoldL;
       over = ch ? mOverR : mOverL;
     }
-    val = std::clamp(val, mBottomDb, top);
+    g.FillRect(COL_300(), bar);
 
-    g.FillRect(COL_300(), bar); // 轨道底色 (与滑块条一致)
+    auto fillGrad = [&](float yTop, int alpha) {
+      if (yTop >= bar.B)
+        return;
+      const IRECT active(bar.L, yTop, bar.R, bar.B);
+      IPattern grad = IPattern::CreateLinearGradient(bar.L, plot.T, bar.L, plot.B);
 
-    // 分段填充: 绿区通道色 / 黄区固定黄 / 红区固定红, 统一 alpha (深浅由层决定)
-    auto fillSeg = [&](float yTop, const IColor &base, int alpha) {
-      const float yM18 = YOf(plot, -18.f);
-      const float yM6 = YOf(plot, -6.f);
-      const IColor cRed(alpha, MeterRed().R, MeterRed().G, MeterRed().B);
-      const IColor cYellow(alpha, MeterYellow().R, MeterYellow().G, MeterYellow().B);
-      const IColor cGreen(alpha, base.R, base.G, base.B);
-      if (yTop < yM6)
-        g.FillRect(cRed, IRECT(bar.L, yTop, bar.R, yM6));
-      if (yTop < yM18)
-        g.FillRect(cYellow, IRECT(bar.L, std::max(yTop, yM6), bar.R, yM18));
-      if (yTop < bar.B)
-        g.FillRect(cGreen, IRECT(bar.L, std::max(yTop, yM18), bar.R, bar.B));
+      auto tOf = [&](float db) {
+        return std::clamp((kTopDb - db) / (kTopDb - mBottomDb), 0.f, 1.f);
+      };
+
+      const float satScale = (ThemeSatMax() <= 30)
+                                 ? ((float)ThemeSatMax() / 30.f)
+                                 : (1.f + (float)(ThemeSatMax() - 30) / 55.f);
+
+      auto meterColor = [&](int h, float baseS, float b) {
+        const float s = std::clamp(baseS * satScale, 0.f, 1.f);
+        const IColor c = HSBToIColor(h, s, b);
+        return IColor(alpha, c.R, c.G, c.B);
+      };
+
+      grad.AddStop(meterColor(0, 0.80f, 0.90f), 0.f);          // +9 dB
+      grad.AddStop(meterColor(4, 0.78f, 0.95f), tOf(0.f));     // 0 dB
+      grad.AddStop(meterColor(32, 0.85f, 0.97f), tOf(-6.f));   // -6 dB
+      grad.AddStop(meterColor(50, 0.80f, 0.89f), tOf(-14.f));  // -14 dB
+      grad.AddStop(meterColor(140, 0.65f, 0.75f), tOf(-24.f)); // -24 dB
+      grad.AddStop(meterColor(150, 0.75f, 0.66f), tOf(-48.f)); // -48 dB
+      grad.AddStop(meterColor(156, 0.77f, 0.54f), 1.f);        // 底部
+
+      g.PathClear();
+      g.PathRect(active);
+      g.PathFill(grad);
     };
 
     if (mMeterMode == 1) {
-      // dBFS+RMS: 下层 dBFS 全宽浅色, 上层 RMS 全宽深色, 粗细一致
       const float yPeak = YOf(plot, val);
       const float yRms = YOf(plot, std::clamp(rmsVal, mBottomDb, kTopDb));
-      fillSeg(yPeak, chan, 90);
-      fillSeg(yRms, chan, 235);
+      fillGrad(yPeak, 90);
+      fillGrad(yRms, 245);
     } else {
-      fillSeg(YOf(plot, val), chan, 255); // dBTP / VU 单层实色
+      fillGrad(YOf(plot, val), 255);
     }
 
-    // 峰值保持亮线
+    // 峰值保持线
     if (mHoldSec > 0.f && hold > mBottomDb) {
       const float yH = YOf(plot, std::clamp(hold, mBottomDb, top));
       g.FillRect(COL_900(), IRECT(bar.L, yH - 1.f, bar.R, yH + 1.f));
     }
 
-    // over 指示 (仅 dBFS): 0 dB 以上完全留空 (盖掉背景/灰色), over 时方形块顶对齐频谱表顶部
+    // over 指示 (仅 dBFS)
     if (mMeterMode == 1) {
       const float y0 = YOf(plot, 0.f);
+      constexpr float kGap = 3.f;
+      const IRECT ledR(bar.L, plot.T, bar.R, y0 - kGap);
       g.FillRect(COL_100(), IRECT(bar.L, plot.T, bar.R, y0));
-      if (over) {
-        constexpr float kGap = 3.f;
-        if (y0 - kGap > plot.T + 1.f)
-          g.FillRect(MeterOverLed(), IRECT(bar.L, plot.T, bar.R, y0 - kGap));
-      }
+      g.FillRect(COL_300(), ledR);
+      if (over && y0 - kGap > plot.T + 1.f)
+        g.FillRect(MeterOverLed(), ledR);
     }
   }
 
@@ -825,6 +840,7 @@ private:
     mSpecPtsM.clear();
     for (auto &acc : mBandAcc)
       acc = BandAcc{};
+    mSubAnchor = BandAcc{};
 
     // bin -> band 映射查表 (预计算, 见 RebuildBinToBand), 避免每帧 2048*2 次 log2
     if ((int)mBinToBand.size() != mNumBins)
@@ -832,6 +848,22 @@ private:
     const int nb = std::min(mNumBins, (int)mSpectrum[0].size());
     for (int i = 0; i < nb; ++i) {
       const int b = mBinToBand[i];
+      if (b == kSubBand) { // 20Hz 下方锚点 (轴外位置, 只用于入场线斜率)
+        for (int c = 0; c < 3; ++c) {
+          if (i < (int)mSpectrum[c].size()) {
+            const float amp = mSpectrum[c][i];
+            if (amp > mSubAnchor.max[c])
+              mSubAnchor.max[c] = amp;
+            mSubAnchor.used[c] = 1;
+          }
+          if (i < (int)mHoldSpec[c].size()) {
+            const float h = mHoldSpec[c][i];
+            if (h > mSubAnchor.holdMax[c])
+              mSubAnchor.holdMax[c] = h;
+          }
+        }
+        continue;
+      }
       if (b < 0)
         continue;
       for (int c = 0; c < 3; ++c) {
@@ -850,16 +882,36 @@ private:
       }
     }
 
-    // 低频空桶外推: 低于首个有 bin 的频带没有分析结果 (bin 间距 > band 宽度),
-    // 用首个覆盖频带的值常值延伸到 20Hz —— 曲线自左缘满宽起笔, 左下角不再出现斜楔。
+    // 低频空桶外推: 低于首个有 bin 的频带没有分析结果 (bin 间距 > band 宽度)。
+    // 有 20Hz 下方锚点 (10-20Hz 桶) 时, 锚点与首个实测带之间按 dB-对数频率线性
+    // 内插 —— 入场线带自然斜率 (锚点在显示轴外, 不画点); 无锚点 (如 LOW 档 bin
+    // 间距 23Hz, 20Hz 下无 bin) 或锚点静音时退回首带常值延伸。
     // max/holdMax 同步外推, hold 曲线在外推段与主曲线保持一致
+    const double logBand = (std::log2((double)kSpecFreqHi) - std::log2((double)kSpecFreqLo)) /
+                           kSpectrumBands;
     for (int c = 0; c < 3; ++c) {
       int first = 0;
       while (first < kSpectrumBands && !mBandAcc[first].used[c])
         ++first;
+      if (first >= kSpectrumBands)
+        continue;
+      const double fFirst = kSpecFreqLo * std::exp2(logBand * (first + 0.5));
+      const float aFirst = mBandAcc[first].max[c];
+      const float hFirst = mBandAcc[first].holdMax[c];
+      const float aA = mSubAnchor.max[c];
+      const bool haveAnchor = mSubAnchor.used[c] && aA > 1e-9f && aFirst > 1e-9f;
       for (int b = 0; b < first; ++b) {
-        mBandAcc[b].max[c] = mBandAcc[first].max[c];
-        mBandAcc[b].holdMax[c] = mBandAcc[first].holdMax[c];
+        float ext = aFirst, extH = hFirst;
+        if (haveAnchor) {
+          const double fb = kSpecFreqLo * std::exp2(logBand * (b + 0.5));
+          const double t = std::log2(fb / (double)kSpecAnchorHz) /
+                           std::log2(fFirst / (double)kSpecAnchorHz);
+          const float hA = (mSubAnchor.holdMax[c] > 1e-9f) ? mSubAnchor.holdMax[c] : hFirst;
+          ext = aA * std::pow(aFirst / aA, (float)t);
+          extH = hA * std::pow(hFirst / hA, (float)t);
+        }
+        mBandAcc[b].max[c] = ext;
+        mBandAcc[b].holdMax[c] = extH;
         mBandAcc[b].used[c] = 1;
       }
     }
@@ -989,6 +1041,11 @@ private:
   static constexpr int kSpectrumBands = 256;
   static constexpr float kSpecFreqLo = 20.f;
   static constexpr float kSpecFreqHi = 20000.f;
+  // 20Hz 下方虚拟锚点: 聚合 [10,20)Hz 的 bin 为一个位置 (显示轴外, 不单独画点),
+  // 给低频空桶提供带自然斜率的入场线 (取代首带常值平延)。10Hz 以下 (含直流近旁) 不计。
+  static constexpr float kSpecAnchorLo = 10.f;
+  static constexpr float kSpecAnchorHz = 14.14214f; // sqrt(10·20), 锚点代表频率
+  static constexpr int kSubBand = -2;               // mBinToBand 哨兵: 归入锚点桶
   static constexpr float kTopDb = 9.f;         // 显示范围顶部 (dBFS), 刻度线仍从 0 dB 开始
   static constexpr float kTickRight = 3.f;     // 刻度文字右缘距频谱区域右缘的边距
   static constexpr float kLabelH = 16.f;       // 14px 字行高 (刻度与 hover 准线标签共用)
@@ -1006,8 +1063,13 @@ private:
     const double logBand = (logHi - logLo) / kSpectrumBands;
     for (int i = 0; i < nb; ++i) {
       const double f = (double)i * binHz;
-      if (f < kSpecFreqLo || f > kSpecFreqHi)
+      if (f > kSpecFreqHi)
         continue;
+      if (f < kSpecFreqLo) {
+        if (f >= kSpecAnchorLo)
+          mBinToBand[i] = kSubBand; // 10-20Hz: 20Hz 下方锚点桶 (轴外)
+        continue;
+      }
       const int b = (int)((std::log2(f) - logLo) / logBand);
       if (b >= 0 && b < kSpectrumBands)
         mBinToBand[i] = b;
@@ -1082,6 +1144,7 @@ private:
   std::vector<Pt> mSpecPtsM;    // 预分配: 合并声道 (L+R) 填充点
   std::vector<Pt> mHoldPts;     // hold 曲线绘制点 (每帧重建, 与显示点同 x)
   std::vector<BandAcc> mBandAcc; // 预分配: 每 band 双通道峰值
+  BandAcc mSubAnchor;            // 20Hz 下方锚点桶 (kSubBand 哨兵聚合, 用后即弃)
 
   // 频谱峰值保持 (与 mSpectrum 同域同长: FFT 为 bin, 其余为 band); 开关/时长随电平表数据帧透传
   std::vector<float> mHoldSpec[3]; // 各通道 hold 幅度 (显示域, 非 dB)

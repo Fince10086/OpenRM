@@ -11,7 +11,7 @@ enum EParams {
   kRes,           // FFT 分辨率档位 (2048/4096/8192)
   kLfRes,         // 低频分辨率档位 (PAZ: 40/20/10 Hz; VQT 不再使用)
   kMode,          // 分析引擎模式 (0: STFT, 1: VQT, 2: PAZ, 3: MR-FFT)
-  kChannelMode,   // 声道显示模式 (0: LR, 1: PWR, 2: SUM)
+  kChannelMode,   // 声道显示模式 (0: PWR, 1: LR, 2: SUM)
   kLevelMode,     // 电平表模式 (0: dBTP, 1: dBFS+RMS, 2: VU)
   kLevelHold,     // 峰值保持时长档位 (0: 0.5s, 1: 2s, 2: ∞ 无限保持)
   kFreeze,        // 冻结开关 (0: 实时, 1: FREEZE 定格; 冻结中切换引擎用新算法重算冻结音频)
@@ -59,8 +59,8 @@ constexpr int kMRFFTBpo = 24;
 // 分析引擎模式 (四态: STFT, VQT, PAZ, MR-FFT)
 enum EAnalyzerMode { kModeFFT = 0, kModeVQT = 1, kModePAZ = 2, kModeMRFFT = 3, kNumModes = 4 };
 
-// 声道显示模式 (三态: LR / PWR(Merge) / SUM(Merge))
-enum EChannelMode { kChanModeLR = 0, kChanModePWR = 1, kChanModeSUM = 2, kNumChanModes = 3 };
+// 声道显示模式 (三态: PWR(Merge) / LR / SUM(Merge))
+enum EChannelMode { kChanModePWR = 0, kChanModeLR = 1, kChanModeSUM = 2, kNumChanModes = 3 };
 
 // 电平表模式
 enum ELevelMode { kLevelModeDBTP = 0, kLevelModeDBFS = 1, kLevelModeVU = 2, kNumLevelModes = 3 };

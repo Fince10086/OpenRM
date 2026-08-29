@@ -72,6 +72,28 @@ struct AntiAliasDec {
       mTauTab[k] = std::max(0.f, (float)(-dp / (kPi / 64.0)));
       prev = cur;
     }
+    // 过渡带以下相位差分无物理意义: |H| ≲ −60dB 时截断 FIR 的相位噪声使 τ 钳 0/毛刺
+    // (τ 表在 frac≈0.58 附近塌到 0, 而过渡带 legit 值 ~32) —— gdD 对齐恰会查询该区
+    // (每层段参考多走一级, frac = fc·2^(L+1)/fs ∈ (0.38,0.76]), 造成每倍频程一个带
+    // 的对齐错位 (显示锯齿, 层越深越重: 55/110/220/440)。以 |H| 加权冻结到最后可信
+    // 值 (≥−40dB 全信, ≤−70dB 全冻结), 通带差分值不变; 滤波器本身不动 (纯对齐元数据)。
+    auto magDbAt = [&](double frac) {
+      double r = 0.0, iq = 0.0;
+      for (int k = 0; k < mNumTaps; ++k) {
+        const double ph = kPi * frac * k;
+        r += mTap[k] * std::cos(ph);
+        iq -= mTap[k] * std::sin(ph);
+      }
+      return 20.0 * std::log10(std::max(std::sqrt(r * r + iq * iq), 1e-9));
+    };
+    double hold = mTauTab[1];
+    for (int k = 1; k <= 64; ++k) {
+      const double w = std::clamp((magDbAt(k / 64.0) + 70.0) / 30.0, 0.0, 1.0);
+      if (w >= 1.0)
+        hold = mTauTab[k];
+      else
+        mTauTab[k] = (float)(w * mTauTab[k] + (1.0 - w) * hold);
+    }
   }
 
   // kind: 0 = 2x 线性相位 BH 半带 (101t, 偶抽头为 0)

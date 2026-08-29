@@ -189,7 +189,15 @@ inline void GetChannelColors(IColor &cL, IColor &cR, IColor &cM) {
 // 绿段 (≤ -18 dB) 使用通道色, 见 SpectrumPad::MeterColorFor。
 inline IColor MeterYellow() { return IColor(255, 232, 173, 40); }
 inline IColor MeterRed() { return IColor(255, 226, 60, 52); }
-inline IColor MeterOverLed() { return IColor(255, 230, 48, 40); }
+inline IColor MeterOverLed() {
+  if (ThemeSatMax() == 0)
+    return ThemeMode() ? IColor(255, 250, 250, 250) : IColor(255, 20, 20, 20);
+  const float satScale = (ThemeSatMax() <= 30)
+                             ? ((float)ThemeSatMax() / 30.f)
+                             : (1.f + (float)(ThemeSatMax() - 30) / 55.f);
+  const float s = std::clamp(0.85f * satScale, 0.f, 1.f);
+  return HSBToIColor(0, s, 0.95f);
+}
 
 } // namespace igraphics
 } // namespace iplug

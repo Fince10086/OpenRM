@@ -126,9 +126,9 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
   GetParam(kRange)->InitInt("Range", 1, 0, 2, ""); // 档位索引: 0=80, 1=100, 2=120 (刻度底部 dB), 默认 100
   GetParam(kAttack)->InitDouble("Attack", 0.05, 0.001, 0.1, 0.001, "s");
   GetParam(kRes)->InitInt("Res", 1, 0, kNumResOptions - 1, ""); // 默认 MID (4096)
-  GetParam(kLfRes)->InitInt("LfRes", 0, 0, kNumLfResOptions - 1, "");
+  GetParam(kLfRes)->InitInt("LfRes", 2, 0, kNumPazLfResOptions - 1, ""); // 默认 10Hz (索引 2)
   GetParam(kMode)->InitInt("Mode", kModeFFT, 0, kNumModes - 1, "");
-  GetParam(kChannelMode)->InitInt("ChanMode", kChanModeLR, 0, kNumChanModes - 1, "");
+  GetParam(kChannelMode)->InitInt("ChanMode", kChanModePWR, 0, kNumChanModes - 1, "");
   GetParam(kLevelMode)->InitInt("LevelMode", kLevelModeDBTP, 0, kNumLevelModes - 1, "");
   GetParam(kLevelHold)->InitInt("LevelHold", 1, 0, kNumHoldTimeOptions - 1, ""); // 档位: 0=0.5s 1=2s 2=∞
   GetParam(kLevelHoldOn)->InitBool("LevelHoldOn", false); // 默认关闭; 用户开关状态持久化于全局设置文件
@@ -141,9 +141,9 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
   GetParam(kSlopeVQT)->InitInt("SlopeVQT", 1, 0, kNumSlopeOptions - 1, "");
   GetParam(kSlopePAZ)->InitInt("SlopePAZ", 1, 0, kNumSlopeOptions - 1, "");
   GetParam(kSlopeMRFFT)->InitInt("SlopeMRFFT", 1, 0, kNumSlopeOptions - 1, "");
-  // 窗函数档位 STFT 与 VQT 各自独立 (kFFTWindow / kWindowVQT), 由同一按钮按模式改绑
+  // 窗函数档位 STFT (默认 Hann/SHARP) 与 VQT (默认 BH4/CLEAN) 各自独立 (kFFTWindow / kWindowVQT)
   GetParam(kFFTWindow)->InitInt("WindowFFT", kFFTWindowHann, 0, kNumFFTWindows - 1, "");
-  GetParam(kWindowVQT)->InitInt("WindowVQT", kFFTWindowHann, 0, kNumFFTWindows - 1, "");
+  GetParam(kWindowVQT)->InitInt("WindowVQT", kFFTWindowBH4, 0, kNumFFTWindows - 1, "");
   mDefaultSnapshot = Snapshot();
   mStableSnapshot = Snapshot();
 
@@ -238,10 +238,10 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     // 三通道色块图例 (L / R / M, 颜色跟随主题) + 电平表读数, 与频谱图形区左缘对齐
     pGraphics->AttachControl(new ChannelLegendControl(IRECT(20, 32, 668, 54)), kCtrlTagLegend);
 
-    // 声道显示模式循环按钮 (三态: LR / PWR / SUM).
+    // 声道显示模式循环按钮 (三态: PWR / L/R / SUM).
     // L/R 样式: 左半 L 色右半 R 色; PWR/SUM 样式: 整块 M 色 (Merge 色) + 居中标签。
     mChanModeBtn = new FlatCycleButton(IRECT(20.f, kTopBtnY, 20.f + kTopBtnW, kTopBtnY + kTopBtnH),
-                                       kChannelMode, {"L/R", "PWR", "SUM"}, btnStyle, true);
+                                       kChannelMode, {"PWR", "L/R", "SUM"}, btnStyle, true);
     pGraphics->AttachControl(mChanModeBtn);
     bindTip(mChanModeBtn, orm::kTxtTipChanMode);
 

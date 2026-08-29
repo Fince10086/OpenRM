@@ -147,13 +147,13 @@ public:
     const int idx = GetParam() ? (int)std::clamp(std::lround(GetParam()->Value()), 0L, (long)num - 1) : 0;
 
     if (mSplitChannels) {
-      // 通道分半样式: 索引 0 = L/R 左半 L 色右半 R 色 (无斜杠, L/R 各半居中);
-      // 其余索引 = 整块 M 色 + 居中标签。文字用背景同灰度色。
+      // 通道分半样式: L/R 档左半 L 色右半 R 色; 其余档整块 M 色 + 居中标签
       IColor cL, cR, cM;
       GetChannelColors(cL, cR, cM);
       const IText wt(20, SplitBtnTextColor(), kFontSemiBold, EAlign::Center, EVAlign::Middle);
       const IRECT pb = b;
-      if (idx == 0) {
+      const bool isSplit = (idx >= 0 && idx < num && std::strcmp(mLabels[idx], "L/R") == 0);
+      if (isSplit) {
         const IRECT hl(pb.L, pb.T, pb.MW(), pb.B);
         const IRECT hr(pb.MW(), pb.T, pb.R, pb.B);
         g.FillRect(cL, hl);
