@@ -146,7 +146,7 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
   // 窗函数档位 STFT (默认 Hann/SHARP) 与 VQT (默认 BH4/CLEAN) 各自独立 (kFFTWindow / kWindowVQT)
   GetParam(kFFTWindow)->InitInt("WindowFFT", kFFTWindowHann, 0, kNumFFTWindows - 1, "");
   GetParam(kWindowVQT)->InitInt("WindowVQT", kFFTWindowBH4, 0, kNumFFTWindows - 1, "");
-  GetParam(kRtaOctave)->InitInt("RtaOctave", 2, 0, kNumRtaOctaveOptions - 1, ""); // 默认 1/6 Oct (索引 2)
+  GetParam(kRtaOctave)->InitInt("RtaOctave", 1, 0, kNumRtaOctaveOptions - 1, ""); // 默认 1/6 Oct (索引 1; 档位: 1/3, 1/6, 1/12, 1/24)
   GetParam(kLoudPreset)->InitInt("LoudPreset", 0, 0, kNumLoudPresets - 1, ""); // 响度目标预设, 默认 -14
   mDefaultSnapshot = Snapshot();
   mStableSnapshot = Snapshot();
@@ -277,9 +277,9 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     bindTip(mGammaBtn, orm::kTxtTipVQTGamma);
     mGammaBtn->Hide(true);
 
-    // RTA 分数倍频程循环按钮 (1/3 Oct / 1/4 Oct / 1/6 Oct) — 同槽位, 仅 RTA 模式可见
+    // RTA 分数倍频程循环按钮 (1/3 / 1/6 / 1/12 / 1/24) — 同槽位, 仅 RTA 模式可见
     mRtaOctBtn = new FlatCycleButton(IRECT(kResX, kTopBtnY, kResX + kTopBtnW, kTopBtnY + kTopBtnH),
-                                     kRtaOctave, {"1/3 Oct", "1/4 Oct", "1/6 Oct"}, btnStyle);
+                                     kRtaOctave, {"1/3", "1/6", "1/12", "1/24"}, btnStyle);
     pGraphics->AttachControl(mRtaOctBtn);
     bindTip(mRtaOctBtn, orm::kTxtTipRtaOctave);
     mRtaOctBtn->Hide(true);

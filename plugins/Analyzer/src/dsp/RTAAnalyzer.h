@@ -6,8 +6,8 @@
 // N+1 个 2 阶谐振低通, 截止放在带缘 (q = 2·bpo, prewrap 预畸变), 每带 =
 // 相邻两个低通输出之差 → 各带构成信号的互补分割 (Σ band = 最高低通),
 // 无独立带通滤波器组的响应重叠与重复计数; 检测为逐样本连续功率积分
-// (无矩形窗, 低频带无逐 hop 闪动)。带中心增益经重建期离线仿真校准
-// (中心正弦 → 0 dB, 与其他引擎同一标准)。
+// (无矩形窗, 低频带无逐 hop 闪动)。带中心增益经解析传输函数校准
+// (z=e^{jω0} 稳态模, 与旧仿真校准同值但无瞬态残差, 与其他引擎同一标准)。
 
 #ifndef STANDALONE_TEST
 #include "ISender.h"
@@ -30,17 +30,22 @@ public:
   using Base = ISender<MAXNC, QUEUE_SIZE, TDataPacket>;
 
   static constexpr int kHop = 1024;
-  static constexpr int kMaxBands = 64; // 与原版一致 (1/6 Oct 15.6Hz..29kHz ≈ 64 带)
+  static constexpr int kMaxBands = 256; // 1/24 Oct 22Hz..20kHz ≈ 236 带 (上限留余量)
   static constexpr double kPi = 3.14159265358979323846;
   static constexpr double kLn2 = 0.69314718055994530942;
   static constexpr double kFreqHi = 20000.0; // 分析上限 (与 MR-FFT/VQT/PBT 一致; 高采样率下带表不再上扩)
 
   enum EOctaveMode {
-    kOctave1_3 = 0, // 1/3 Octave (~31 bands)
-    kOctave1_4 = 1, // 1/4 Octave (~41 bands)
-    kOctave1_6 = 2, // 1/6 Octave (~61 bands)
-    kNumOctaveModes = 3
+    kOctave1_3 = 0,  // 1/3 Octave
+    kOctave1_6 = 1,  // 1/6 Octave
+    kOctave1_12 = 2, // 1/12 Octave
+    kOctave1_24 = 3, // 1/24 Octave
+    kNumOctaveModes = 4
   };
+
+  // 每倍频程带数与预畸变系数 (按档位; ferr 数值拟合见 RebuildBands 注)
+  static constexpr int kBpo[kNumOctaveModes] = {3, 6, 12, 24};
+  static constexpr double kFerr[kNumOctaveModes] = {0.66, 0.68, 0.71, 0.71};
 
   RTAAnalyzer() {
     for (int c = 0; c < MAXNC; ++c)
@@ -193,13 +198,10 @@ private:
     mInvGain.clear();
 
     const double fs = std::max(mSampleRate, 1.0);
-    int bpo = 3;
-    if (mOctaveMode == kOctave1_4)
-      bpo = 4;
-    else if (mOctaveMode == kOctave1_6)
-      bpo = 6;
-    // prewrap 预畸变系数 (原版 ferr, 按 bpo)
-    const double ferr = (bpo == 3) ? 0.904 : (bpo == 4) ? 0.905 : 0.909;
+    const int bpo = kBpo[mOctaveMode];
+    // 预畸变系数 ferr (数值拟合): 使相邻带实际交叉频率对齐设计网格带缘,
+    // 全采样率 (44.1/48/96/192k) 最坏偏差 ≤0.0005 oct @1/3 (原版 0.904/0.905/0.909 最坏 0.021 oct)
+    const double ferr = kFerr[mOctaveMode];
 
     // 带中心/带缘网格 (原版 update()): 中心 15.625·2^(j/bpo) 自 22Hz 起, 带缘取
     // 几何中点并加 Nyquist 扭曲项; 上缘超 fedg = 0.47·fs 或中心超 20kHz 的带不收录
@@ -241,34 +243,34 @@ private:
       mK0[j] = (float)((0.5 / (2.0 * bpo)) * (1.0 - mK1[j] - mK2[j]));
     }
 
-    // 带中心增益离线仿真校准: 中心正弦 (幅度 1) 稳态后测差分通路 rms → 归一 0dB
+    // 带中心增益解析校准: 稳态增益 = |(1+z⁻¹)·(LP_{j+1}−LP_j)| 在 z=e^{jω0} 的模。
+    // 与旧仿真校准 (中心正弦稳态测差分 rms) 收敛值一致 —— 同一拓扑同一系数,
+    // 但无瞬态残差、无 O(fs·Q/f0) 的仿真开销 (1/24 档 192k 下重建仍为瞬时)。
     mInvGain.resize(nb);
     for (int j = 0; j < nb; ++j) {
-      const double f0 = centers[j];
-      int settle = (int)(fs * 30.0 / std::max(f0, 1.0)); // 谐振余振 (Q≈6) 衰减到 −120dB
-      settle = std::clamp(settle, 8192, 96000);
-      const int meas = std::max(2048, (int)(fs * 4.0 / f0));
-      double s1 = 0.0, s2 = 0.0, t1 = 0.0, t2 = 0.0;
-      double ph = 0.0, prevIn = 0.0, sumSq = 0.0;
-      const double w = 2.0 * kPi * f0 / fs;
-      const int total = settle + meas;
-      for (int n = 0; n < total; ++n) {
-        const double s = std::sin(ph);
-        ph += w;
-        const double x = s + prevIn;
-        prevIn = s;
-        const double o1 = x * mK0[j] + s1 * mK1[j] + s2 * mK2[j];
-        s2 = s1;
-        s1 = o1;
-        const double o2 = x * mK0[j + 1] + t1 * mK1[j + 1] + t2 * mK2[j + 1];
-        t2 = t1;
-        t1 = o2;
-        if (n >= settle) {
-          const double bd = o2 - o1;
-          sumSq += bd * bd;
-        }
-      }
-      const double g = std::sqrt(2.0 * sumSq / meas);
+      const double w0 = 2.0 * kPi * centers[j] / fs;
+      const double zr = std::cos(w0), zi = -std::sin(w0);          // z⁻¹ = e^{−jω0}
+      const double z2r = std::cos(2.0 * w0), z2i = -std::sin(2.0 * w0); // z⁻²
+      const double k0Lo = mK0[j], k1Lo = mK1[j], k2Lo = mK2[j];
+      const double k0Hi = mK0[j + 1], k1Hi = mK1[j + 1], k2Hi = mK2[j + 1];
+      // A(z) = 1 − k1·z⁻¹ − k2·z⁻²
+      const double aLoRe = 1.0 - k1Lo * zr - k2Lo * z2r;
+      const double aLoIm = -(k1Lo * zi + k2Lo * z2i);
+      const double aHiRe = 1.0 - k1Hi * zr - k2Hi * z2r;
+      const double aHiIm = -(k1Hi * zi + k2Hi * z2i);
+      // num = k0Hi·A_lo − k0Lo·A_hi, den = A_lo·A_hi
+      const double numRe = k0Hi * aLoRe - k0Lo * aHiRe;
+      const double numIm = k0Hi * aLoIm - k0Lo * aHiIm;
+      const double denRe = aLoRe * aHiRe - aLoIm * aHiIm;
+      const double denIm = aLoRe * aHiIm + aLoIm * aHiRe;
+      const double denSq = denRe * denRe + denIm * denIm;
+      const double qRe = (denSq > 0.0) ? (numRe * denRe + numIm * denIm) / denSq : 0.0;
+      const double qIm = (denSq > 0.0) ? (numIm * denRe - numRe * denIm) / denSq : 0.0;
+      // H = (1 + z⁻¹)·q, 1 + z⁻¹ = 1 + cos w0 − j·sin w0
+      const double oneRe = 1.0 + zr, oneIm = -std::sin(w0);
+      const double hRe = oneRe * qRe - oneIm * qIm;
+      const double hIm = oneRe * qIm + oneIm * qRe;
+      const double g = std::sqrt(hRe * hRe + hIm * hIm);
       mInvGain[j] = (float)(1.0 / std::max(g, 1e-9));
       mFreqs.push_back(centers[j]);
     }
@@ -286,7 +288,7 @@ private:
   }
 
   double mSampleRate = 48000.0;
-  int mOctaveMode = kOctave1_3; // 0=1/3, 1=1/4, 2=1/6
+  int mOctaveMode = kOctave1_6; // 0=1/3, 1=1/6, 2=1/12, 3=1/24 (与插件参数默认一致)
   int mChanTri = 0;             // 0=LR, 1=PWR, 2=SUM
   std::atomic<bool> mNeedRebuild{false};
   float mEnvAlpha = 0.f; // 功率积分系数/hop (τ = 50ms)

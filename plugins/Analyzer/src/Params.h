@@ -21,7 +21,7 @@ enum EParams {
   kSlopePBT,      // 频谱斜率档位索引, PBT 引擎独立保存 (-3/0/1.5 dB/oct)
   kSlopeMRFFT,    // 频谱斜率档位索引, MR-FFT 引擎独立保存 (-3/0/1.5 dB/oct)
   kSlopeRTA,      // 频谱斜率档位索引, RTA 引擎独立保存 (-3/0/1.5 dB/oct)
-  kRtaOctave,     // RTA 分数倍频程档位 (0: 1/3 Oct, 1: 1/4 Oct, 2: 1/6 Oct)
+  kRtaOctave,     // RTA 分数倍频程档位 (0: 1/3, 1: 1/6, 2: 1/12, 3: 1/24)
   kFFTWindow,     // STFT 窗函数档位 (0: Hann, 1: BH4 4阶Blackman-Harris)
   kWindowVQT,     // VQT 窗函数档位 (0: Hann, 1: BH4), 与 STFT 独立保存
   kVQTGamma,      // VQT 低频带宽下限 γ (Hz): bw = fc/q + γ (5/10/20)
@@ -38,8 +38,8 @@ constexpr int kResOptions[] = {2048, 4096, 8192};
 constexpr int kNumResOptions = 3;
 constexpr int kPbtLfResOptions[] = {40, 20, 10};
 constexpr int kNumPbtLfResOptions = 3;
-constexpr int kRtaOctaveOptions[] = {3, 4, 6};
-constexpr int kNumRtaOctaveOptions = 3;
+constexpr int kRtaOctaveOptions[] = {3, 6, 12, 24};
+constexpr int kNumRtaOctaveOptions = 4;
 constexpr int kVQTGammaOptions[] = {5, 10, 20};
 constexpr int kNumVQTGammaOptions = 3;
 
