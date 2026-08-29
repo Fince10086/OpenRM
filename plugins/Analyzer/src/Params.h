@@ -13,7 +13,7 @@ enum EParams {
   kMode,          // 分析引擎模式 (0: STFT, 1: VQT, 2: PAZ, 3: MR-FFT)
   kChannelMode,   // 声道显示模式 (0: LR, 1: PWR, 2: SUM)
   kLevelMode,     // 电平表模式 (0: dBTP, 1: dBFS+RMS, 2: VU)
-  kLevelHold,     // 峰值保持时长档位 (0: 0.5s, 1: 2s, 2: KEEP 持久)
+  kLevelHold,     // 峰值保持时长档位 (0: 0.5s, 1: 2s, 2: ∞ 无限保持)
   kFreeze,        // 冻结开关 (0: 实时, 1: FREEZE 定格; 冻结中切换引擎用新算法重算冻结音频)
   kPyramidDecim,  // VQT 金字塔降采样档位 (0: LIN 线性相位, 1: MIN 最小相位)
   kLevelHoldOn,   // 峰值保持开关 (频谱 hold 曲线与电平表 hold 亮线共用; 默认关闭, 用户状态持久化于全局设置文件; 追加末尾, 保旧状态文件下标兼容)

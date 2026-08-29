@@ -632,7 +632,7 @@ private:
   }
 
   // 频谱峰值保持: 开关/时长与电平表 hold 共用 (mHoldSec 随电平表数据帧透传, 0 = 关,
-  // KEEP 档为 1e9)。逐点跟踪平滑后幅度 (与显示同域: FFT 为 bin, 其余为 band):
+  // ∞ 档为 1e9)。逐点跟踪平滑后幅度 (与显示同域: FFT 为 bin, 其余为 band):
   // 刷新峰值即清计时; 超时时长后按 20 dB/s 回落 (幅度域每秒 ×0.1), 下限为当前幅度。
   // 帧间 dt 取 steady_clock 实测, 首帧/挂起恢复后只采峰不回落。
   void UpdatePeakHold(int nVals) {
@@ -653,7 +653,7 @@ private:
     mLastHoldTp = now;
     mHoldTpValid = true;
 
-    // 回落因子每帧一个; KEEP 档恒为 1, 计时照常累加但永不超时
+    // 回落因子每帧一个; ∞ 档恒为 1, 计时照常累加但永不超时
     const float decay = (mHoldSec < 1e8f && dt > 0.f) ? std::pow(10.f, -dt) : 1.f;
     for (int c = 0; c < 3; ++c) {
       if (mHoldSpec[c].size() != (size_t)nVals) {

@@ -130,7 +130,7 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
   GetParam(kMode)->InitInt("Mode", kModeFFT, 0, kNumModes - 1, "");
   GetParam(kChannelMode)->InitInt("ChanMode", kChanModeLR, 0, kNumChanModes - 1, "");
   GetParam(kLevelMode)->InitInt("LevelMode", kLevelModeDBTP, 0, kNumLevelModes - 1, "");
-  GetParam(kLevelHold)->InitInt("LevelHold", 1, 0, kNumHoldTimeOptions - 1, ""); // 档位: 0=0.5s 1=2s 2=KEEP
+  GetParam(kLevelHold)->InitInt("LevelHold", 1, 0, kNumHoldTimeOptions - 1, ""); // 档位: 0=0.5s 1=2s 2=∞
   GetParam(kLevelHoldOn)->InitBool("LevelHoldOn", false); // 默认关闭; 用户开关状态持久化于全局设置文件
   if (s.holdOn >= 0)
     GetParam(kLevelHoldOn)->Set(s.holdOn > 0 ? 1.0 : 0.0); // 恢复用户上次的保持开关状态
@@ -403,7 +403,7 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     bindTip(mFreezeBtn, orm::kTxtTipFreeze);
 
     // 峰值保持开关 + 时长循环按钮 (替代原 HOLD 滑块): 开关为 BandPass LINK 同款反色开关,
-    // 时长按钮移至 HOLD 右侧空位 (尺寸缩小为 kBtnW), 点击循环 0.5s / 2s / KEEP (持久)。
+    // 时长按钮移至 HOLD 右侧空位 (尺寸缩小为 kBtnW), 点击循环 0.5s / 2s / ∞ (无限保持)。
     // 两者同时控制电平表 hold 亮线与频谱 hold 曲线; RESET 按钮清除已积累的保持。
     mLevelHoldBtn = new FlatToggleControl(IRECT(kCol1X, 339, kCol1X + kBtnW, 369), kLevelHoldOn, " ", toggleStyle,
                                           "HOLD", "HOLD");
@@ -417,7 +417,7 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     bindTip(mLevelHoldBtn, orm::kTxtTipLevelHold);
 
     mLevelHoldTimeBtn =
-        new FlatCycleButton(IRECT(kCol2X, 339, kPanelR, 369), kLevelHold, {"0.5s", "2s", "KEEP"}, btnStyle);
+        new FlatCycleButton(IRECT(kCol2X, 339, kPanelR, 369), kLevelHold, {"0.5s", "2s", "∞"}, btnStyle);
     pGraphics->AttachControl(mLevelHoldTimeBtn);
     bindTip(mLevelHoldTimeBtn, orm::kTxtTipLevelHoldTime);
 
@@ -1349,6 +1349,15 @@ void ORMAnalyzer::ApplyLanguage() {
   for (auto &binding : mTextBindings)
     if (binding.second)
       binding.second(orm::Tr(binding.first, orm::UILang()));
+  if (mResBtn) {
+    mResBtn->SetLabels({orm::Tr(orm::kTxtLfLow, orm::UILang()),
+                        orm::Tr(orm::kTxtLfMid, orm::UILang()),
+                        orm::Tr(orm::kTxtLfHigh, orm::UILang())});
+  }
+  if (mWindowBtn) {
+    mWindowBtn->SetLabels({orm::Tr(orm::kTxtWinSharp, orm::UILang()),
+                           orm::Tr(orm::kTxtWinClean, orm::UILang())});
+  }
   ApplyTooltips();
 #if IPLUG_EDITOR
   if (GetUI()) {
