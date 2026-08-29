@@ -230,7 +230,9 @@ public:
   static constexpr int kHop = 1024; // 每 hop 样本发一帧幅度 (≈21ms @48k)
 
   // 多速率金字塔参数
-  static constexpr int kMaxLayers = 10;      // 层 0..9; 层 L 速率 = fs/2^L (最大 D = 512)
+  static constexpr int kMaxLayers = 9;       // 层 0..8; 层 L 速率 = fs/2^L (最大 D = 256)。
+  // 不下钻到 2^-9: wl=fsL/bw 令窗时长跨层不变, 最深层每 hop 只省百次级乘法, 却使最低频
+  // 层边界的窗覆盖不连续 (时长近同、起点差 ~6ms) 在陡衰减处成 ~3dB 锯齿, 且多 ~26ms 链延迟
   static constexpr double kGuard = 0.78;     // band 上边距该层新奈奎斯特的比例 (防混叠)
   static constexpr double kCycleFloor = 4.0; // 深层窗长下限: 至少覆盖 ~4 个 fc 周期 (稳定)
 
