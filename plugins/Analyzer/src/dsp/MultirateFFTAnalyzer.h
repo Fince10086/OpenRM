@@ -1,6 +1,9 @@
 #pragma once
 
 // MultirateFFTAnalyzer — 多速率八度子带 FFT 频谱分析引擎 (MR-FFT)
+//
+// 半波抽取链固定最小相位形态 (与 PAZ 共用 HalfbandDec2.h): 幅频逐点不变 (FFT 静态
+// 读数/层边界折返不受影响), 深层链延迟 532→76ms @48kHz。
 
 #ifndef STANDALONE_TEST
 #include "ISender.h"
@@ -13,70 +16,10 @@
 #include <cstring>
 #include <vector>
 
+#include "HalfbandDec2.h"
+
 BEGIN_IPLUG_NAMESPACE
 
-#ifndef O_RM_HALFBAND_DEC2_DEFINED
-#define O_RM_HALFBAND_DEC2_DEFINED
-namespace detail {
-// 半带 ×2 抽取器 (跨帧保持滤波状态)。系数为 101 抽头 4 项 Blackman-Harris 窗半带 (截止 π/2, DC 增益 1):
-// 阻带跌落 >90 dB, 杜绝层边界强单音穿透抽取器折返到下层的"假频谱峰" (旧 17 抽头 Hamming 阻带
-// 边缘仅 ~-15..-53 dB)。偶数序 (除中心) 抽头严格为零。要求 nin 为偶数。
-struct HalfbandDec2 {
-  static constexpr int kN = 101;
-  static constexpr int kQ = (kN - 1) / 2;
-  std::array<float, kN> mTap{};
-  std::array<float, kN - 1> mState{};
-  float mWork[kN - 1 + 2048];
-
-  HalfbandDec2() { BuildTaps(); }
-
-  void BuildTaps() {
-    constexpr double kPi = 3.14159265358979323846;
-    double taps[kN];
-    double sum = 0.0;
-    for (int i = 0; i < kN; ++i) {
-      const int n = i - kQ;
-      double v;
-      if (n == 0)
-        v = 0.5;
-      else if ((n & 1) == 0)
-        v = 0.0;
-      else
-        v = 0.5 * std::sin(kPi * n / 2.0) / (kPi * n / 2.0);
-      const double theta = 2.0 * kPi * i / (kN - 1); // 4 项 Blackman-Harris: 旁瓣 -92 dB (Hamming 仅 -53 dB)
-      v *= 0.35875 - 0.48829 * std::cos(theta)
-                   + 0.14128 * std::cos(2.0 * theta)
-                   - 0.01168 * std::cos(3.0 * theta);
-      taps[i] = v;
-      sum += v;
-    }
-    for (int i = 0; i < kN; ++i)
-      mTap[i] = (float)(taps[i] / sum);
-  }
-
-  void Reset() { mState.fill(0.f); }
-
-  int Process(const float *in, int nin, float *out) {
-    const int sz = (kN - 1) + nin;
-    for (int i = 0; i < kN - 1; ++i)
-      mWork[i] = mState[i];
-    for (int i = 0; i < nin; ++i)
-      mWork[(kN - 1) + i] = in[i];
-    const int nout = nin / 2;
-    for (int j = 0; j < nout; ++j) {
-      const int p = 2 * j;
-      float acc = 0.f;
-      for (int i = 0; i < kN; ++i)
-        acc += mTap[i] * mWork[(kN - 1) + p - i];
-      out[j] = acc;
-    }
-    for (int i = 0; i < kN - 1; ++i)
-      mState[i] = mWork[sz - (kN - 1) + i];
-    return nout;
-  }
-};
-} // namespace detail
-#endif
 
 // MAX_BANDS 与其他引擎的包尺寸保持一致
 template <int MAXNC = 3, int QUEUE_SIZE = 64, int MAX_BANDS = 8192>
@@ -286,6 +229,10 @@ private:
   }
 
   void RebuildBands() {
+    // 半波抽取链固定最小相位形态 (|G|=|A| 逐点不变, 分解因子全局共享只算一次)
+    for (int c = 0; c < MAXNC; ++c)
+      for (int l = 0; l < kMaxLayers - 1; ++l)
+        mDecim[c][l].SetMinPhase(true);
     mBands.clear();
     mFreqs.clear();
     const double fs = std::max(mSampleRate, 1.0);
@@ -318,6 +265,7 @@ private:
 
       // 池化能量归一: r_k = |W(2π(k−kc)/N)|/W(0) 为中心单音在第 k bin 的幅度系数,
       // sqrt(Σ r_k²) 即池化路径对中心单音的增益, 取其倒数使中心单音读数恰为 A。
+      // 必须取复数模 (窗对称中心在 (N−1)/2; 只取实部/丢窗索引会差数 dB 且随池宽变化)。
       double poolGain = 1.0;
       {
         constexpr double kPi = 3.14159265358979323846;
@@ -328,10 +276,13 @@ private:
           w0 += w;
         double s2 = 0.0;
         for (int m = lo; m <= hi; ++m) {
-          double r = 0.0;
-          for (int i = 0; i < (int)win.size(); ++i)
-            r += (double)win[i] * std::cos(2.0 * kPi * (double)(m - kFracC) / (double)nFft);
-          r /= w0;
+          double rRe = 0.0, rIm = 0.0;
+          for (int i = 0; i < (int)win.size(); ++i) {
+            const double ang = 2.0 * kPi * (double)(m - kFracC) * (double)i / (double)nFft;
+            rRe += (double)win[i] * std::cos(ang);
+            rIm -= (double)win[i] * std::sin(ang);
+          }
+          const double r = std::sqrt(rRe * rRe + rIm * rIm) / w0;
           s2 += r * r;
         }
         if (s2 > 1e-12)
