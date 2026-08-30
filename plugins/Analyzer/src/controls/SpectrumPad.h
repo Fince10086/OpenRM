@@ -566,8 +566,9 @@ private:
   }
 
   // 独立 VU 表双条 (L/R): 常驻显示两声道功率和 VU (0 VU = -18 dBFS), 独立刻度 -20..+3 VU。
-  // 渐变使用 VU 语义色 (红顶 / 0 VU 黄绿参考), 峰值保持线用 VU 表自己的保持值 (mVuHold),
-  // 与 L/R 条 (mHold) 相互独立, 同样按 VU 位置取色。
+  // 渐变 = 两段语义色: -20..-3 VU 深绿→浅绿 (安全区), -3..+3 VU 浅绿→红 (逼近削波,
+  // 0 VU 附近自然呈黄绿)。峰值保持线用 VU 表自己的保持值 (mVuHold), 与 L/R 条
+  // (mHold) 相互独立, 同样按 VU 位置取色。
   void DrawVuBar(IGraphics &g, const IRECT &plot) {
     const float scaleL = plot.R + 2.f * kGainBarW;
     const IRECT barL(scaleL + kVuScaleW, plot.T, scaleL + kVuScaleW + kVuBarW, plot.B);
@@ -591,12 +592,9 @@ private:
       float b;
     };
     const MeterStop stops[] = {
-      {0.f, 0, 0.72f, 0.93f},           // +3 VU 红 (顶)
-      {tOfV(0.f), 8, 0.68f, 0.90f},     // 0 VU 橙
-      {tOfV(-6.f), 30, 0.72f, 0.86f},   // -6 VU 黄
-      {tOfV(-12.f), 50, 0.64f, 0.74f},  // -12 VU 黄绿
-      {tOfV(-18.f), 120, 0.55f, 0.58f}, // -18 VU 绿
-      {1.f, 150, 0.62f, 0.46f},         // -20 VU 底部
+      {0.f, 0, 0.72f, 0.93f},          // +3 VU 红 (顶)
+      {tOfV(-3.f), 120, 0.55f, 0.78f}, // -3 VU 浅绿 (上区下界)
+      {1.f, 150, 0.62f, 0.40f},        // -20 VU 深绿 (底)
     };
     const int nStops = (int)(sizeof(stops) / sizeof(stops[0]));
 
@@ -606,8 +604,8 @@ private:
       return IColor(alpha, c.R, c.G, c.B);
     };
 
-    auto meterColorAt = [&](float vu, int alpha) {
-      const float t = tOfV(vu);
+    // 渐变停止点间按 t 插值 (t: 0=顶部 +3 VU, 1=底部 -20 VU; 与 VU 值的映射见 tOfV)
+    auto colorAtT = [&](float t, int alpha) {
       for (int i = 0; i + 1 < nStops; ++i) {
         if (t <= stops[i + 1].t) {
           const float span = stops[i + 1].t - stops[i].t;
@@ -622,20 +620,35 @@ private:
       return meterColor(stops[nStops - 1], alpha);
     };
 
+    // 渐变在 VU 位置的颜色 (与条体渐变一致, 停止点间 RGB 线性插值)
+    auto meterColorAt = [&](float vu, int alpha) { return colorAtT(tOfV(vu), alpha); };
+
     // 单条绘制: 背景 + 渐变填充 + 峰值保持线 (各声道用各自的 VU 值与保持值)
     auto drawBar = [&](const IRECT &bar, float vuDb, float vuHold) {
       g.FillRect(COL_300(), bar);
 
+      // 条体渐变填充: 按 stop 分段的 2-stop 渐变 (NanoVG 后端不支持多 stop 渐变, 见
+      // DrawMeterBar); 锚定在段的名义跨度上, 段间重叠 1 设备像素消除抗锯齿接缝。
       auto fillGrad = [&](float yTop, int alpha) {
         if (yTop >= bar.B)
           return;
-        const IRECT active(bar.L, yTop, bar.R, bar.B);
-        IPattern grad = IPattern::CreateLinearGradient(bar.L, plot.T, bar.L, plot.B);
-        for (const auto &st : stops)
-          grad.AddStop(meterColor(st, alpha), st.t);
-        g.PathClear();
-        g.PathRect(active);
-        g.PathFill(grad);
+        const float ov = 1.f / std::max(1.f, g.GetScreenScale() * g.GetDrawScale());
+        for (int i = 0; i + 1 < nStops; ++i) {
+          const float yA = plot.T + stops[i].t * plot.H();
+          const float yB = plot.T + stops[i + 1].t * plot.H();
+          if (yB <= yTop)
+            continue;
+          const float rT = std::max(yA - ov, yTop);
+          const float rB = std::min(yB + ov, bar.B);
+          if (rB - rT <= 0.f)
+            continue;
+          IPattern grad = IPattern::CreateLinearGradient(bar.L, yA, bar.L, yB);
+          grad.AddStop(meterColor(stops[i], alpha), 0.f);
+          grad.AddStop(meterColor(stops[i + 1], alpha), 1.f);
+          g.PathClear();
+          g.PathRect(IRECT(bar.L, rT, bar.R, rB));
+          g.PathFill(grad);
+        }
       };
 
       // vuDb 为 dBFS 域 (0 VU = -18 dBFS), 先转 VU 域 (＋18) 再按 -20..+3 VU 刻度映射,
@@ -703,9 +716,8 @@ private:
       return IColor(alpha, c.R, c.G, c.B);
     };
 
-    // 渐变在 dB 位置的颜色 (与条体渐变一致, 停止点间 RGB 线性插值)
-    auto meterColorAt = [&](float db, int alpha) {
-      const float t = tOf(db);
+    // 渐变停止点间按 t 插值 (t: 0=顶部, 1=底部; 与 dB 的映射见 tOf)
+    auto colorAtT = [&](float t, int alpha) {
       for (int i = 0; i + 1 < nStops; ++i) {
         if (t <= stops[i + 1].t) {
           const float span = stops[i + 1].t - stops[i].t;
@@ -720,16 +732,34 @@ private:
       return meterColor(stops[nStops - 1], alpha);
     };
 
+    // 渐变在 dB 位置的颜色 (与条体渐变一致, 停止点间 RGB 线性插值)
+    auto meterColorAt = [&](float db, int alpha) { return colorAtT(tOf(db), alpha); };
+
+    // 条体渐变填充: 按 stop 分段的 2-stop 渐变。IGraphics 的 NanoVG 后端只支持双色
+    // 线性渐变 (多 stop IPattern 的中间停止点会被丢弃, 此前整条多 stop 渐变被渲染成
+    // 首尾两色混色、色带不随刻度走)。每段色区单独一个引擎原生渐变, 锚定在段的
+    // 名义跨度上, 使 stop 颜色精确落在对应 dB 位置 (与峰值保持线同源); 段间重叠
+    // 1 设备像素, 消除相邻填充抗锯齿羽化造成的接缝细线。
+    const float seamOv = 1.f / std::max(1.f, g.GetScreenScale() * g.GetDrawScale());
     auto fillGrad = [&](float yTop, int alpha) {
       if (yTop >= bar.B)
         return;
-      const IRECT active(bar.L, yTop, bar.R, bar.B);
-      IPattern grad = IPattern::CreateLinearGradient(bar.L, plot.T, bar.L, plot.B);
-      for (const auto &st : stops)
-        grad.AddStop(meterColor(st, alpha), st.t);
-      g.PathClear();
-      g.PathRect(active);
-      g.PathFill(grad);
+      for (int i = 0; i + 1 < nStops; ++i) {
+        const float yA = plot.T + stops[i].t * plot.H();
+        const float yB = plot.T + stops[i + 1].t * plot.H();
+        if (yB <= yTop)
+          continue; // 整段位于信号电平之上, 不绘制
+        const float rT = std::max(yA - seamOv, yTop);
+        const float rB = std::min(yB + seamOv, bar.B);
+        if (rB - rT <= 0.f)
+          continue;
+        IPattern grad = IPattern::CreateLinearGradient(bar.L, yA, bar.L, yB);
+        grad.AddStop(meterColor(stops[i], alpha), 0.f);
+        grad.AddStop(meterColor(stops[i + 1], alpha), 1.f);
+        g.PathClear();
+        g.PathRect(IRECT(bar.L, rT, bar.R, rB));
+        g.PathFill(grad);
+      }
     };
 
     if (mMeterMode == 1) {
