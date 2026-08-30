@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <functional>
 
 BEGIN_IPLUG_NAMESPACE
@@ -57,10 +58,92 @@ inline IVButtonControl *MakeMomentary(const IRECT &r, std::function<void(IContro
 // 一致 (COL_300 底 / COL_900 图标 / hover 叠层, 主题自适应)。
 
 enum IconAction {
-  kIconUndo, // 撤销: 逆时针环形箭头 (缺口朝下, 箭头在下左端)
-  kIconRedo, // 重做: 顺时针环形箭头 (水平镜像, 箭头在下右端)
-  kIconSave, // 保存: 软盘 (描边外框 + 右上卡口 + 底部标签)
-  kIconLoad, // 读取: 托盘 + 下落箭头 (箭杆矩形 + 三角头)
+  kIconUndo, // 撤销: assets/icons/undo.svg (环形箭头, 实体填充)
+  kIconRedo, // 重做: assets/icons/redo.svg (水平镜像)
+  kIconSave, // 保存: assets/icons/import.svg (存入容器)
+  kIconLoad, // 读取: assets/icons/export.svg (从容器取出)
+};
+
+// SVG 路径命令表 (源: assets/icons/*.svg, 1024×1024 网格, 实心填充)。
+// 命令: 0=Move, 1=Line, 2=贝塞尔(c1x,c1y,c2x,c2y,x,y), 3=Close。圆弧已按 SVG
+// 端点参数化转成两条三次贝塞尔 (180° 半圆, k=0.5523r)。绘制时以主题色填充,
+// 保持深/浅主题与色相自适应 (与 FlatActionButton 的 hover/pressed 规则一致)。
+struct SvgPathCmd {
+  uint8_t cmd;
+  float v[6];
+};
+static constexpr SvgPathCmd kUndoIcon[] = {
+    {0, {245.863f, 54.752f}},        {1, {0.f, 300.615f}},
+    {1, {245.863f, 546.504f}},       {1, {321.531f, 470.836f}},
+    {1, {204.725f, 354.056f}},       {1, {662.909f, 354.056f}},
+    {2, {803.245f, 354.056f, 917.010f, 467.821f, 917.010f, 608.157f}},
+    {2, {917.010f, 748.493f, 803.245f, 862.258f, 662.909f, 862.258f}},
+    {1, {328.566f, 862.258f}},       {1, {328.566f, 969.248f}},
+    {1, {662.909f, 969.248f}},       {2, {862.338f, 969.248f, 1024.f, 807.586f, 1024.f, 608.157f}},
+    {2, {1024.f, 408.728f, 862.338f, 247.066f, 662.909f, 247.066f}},
+    {1, {204.859f, 247.066f}},       {1, {321.505f, 130.394f}},
+    {1, {245.863f, 54.752f}},        {3, {}},
+};
+static constexpr SvgPathCmd kRedoIcon[] = {
+    {0, {778.137f, 54.752f}},        {1, {1024.f, 300.615f}},
+    {1, {778.137f, 546.504f}},       {1, {702.469f, 470.836f}},
+    {1, {819.275f, 354.056f}},       {1, {361.091f, 354.056f}},
+    {2, {220.755f, 354.056f, 106.990f, 467.821f, 106.990f, 608.157f}},
+    {2, {106.990f, 748.493f, 220.755f, 862.258f, 361.091f, 862.258f}},
+    {1, {695.434f, 862.258f}},       {1, {695.434f, 969.248f}},
+    {1, {361.091f, 969.248f}},       {2, {161.662f, 969.248f, 0.f, 807.586f, 0.f, 608.157f}},
+    {2, {0.f, 408.728f, 161.662f, 247.066f, 361.091f, 247.066f}},
+    {1, {819.141f, 247.066f}},       {1, {702.495f, 130.394f}},
+    {1, {778.137f, 54.752f}},        {3, {}},
+};
+static constexpr SvgPathCmd kImportIcon[] = { // 保存: 文件夹 + 下箭头引入托盘
+    {0, {849.750f, 419.711f}},       {1, {588.934f, 419.711f}},
+    {1, {549.228f, 419.711f}},       {1, {549.228f, 96.167f}},
+    {1, {174.250f, 96.167f}},        {1, {174.250f, 907.904f}},
+    {1, {463.552f, 907.904f}},       {1, {473.533f, 907.904f}},
+    {1, {473.533f, 994.527f}},       {1, {473.533f, 1004.144f}},
+    {1, {114.583f, 1004.144f}},      {1, {74.877f, 1004.144f}},
+    {1, {74.877f, 38.467f}},         {1, {74.877f, 0.f}},
+    {1, {629.805f, 0.f}},            {1, {638.687f, 0.f}},
+    {1, {944.023f, 327.623f}},       {1, {949.123f, 333.095f}},
+    {1, {949.123f, 567.604f}},       {1, {949.123f, 577.293f}},
+    {1, {859.731f, 577.293f}},       {1, {849.750f, 577.293f}},
+    {1, {849.750f, 419.711f}},       {3, {}},
+    {0, {820.463f, 333.160f}},       {1, {638.693f, 138.204f}},
+    {1, {638.693f, 333.160f}},       {1, {820.463f, 333.160f}},
+    {3, {}},
+    {0, {675.921f, 856.250f}},       {1, {939.215f, 856.250f}},
+    {1, {949.123f, 856.250f}},       {1, {949.123f, 769.700f}},
+    {1, {949.123f, 760.083f}},       {1, {673.735f, 760.083f}},
+    {1, {771.797f, 665.082f}},       {1, {778.828f, 658.271f}},
+    {1, {715.626f, 597.037f}},       {1, {708.596f, 590.226f}},
+    {1, {512.801f, 779.900f}},       {1, {484.712f, 807.111f}},
+    {1, {701.566f, 1017.184f}},      {1, {708.601f, 1024.f}},
+    {1, {771.797f, 962.690f}},       {1, {778.785f, 955.910f}},
+    {1, {675.921f, 856.250f}},       {3, {}},
+};
+static constexpr SvgPathCmd kExportIcon[] = { // 读取: 托盘 + 上箭头取出
+    {0, {111.884f, 623.884f}},       {1, {111.884f, 890.580f}},
+    {1, {111.884f, 917.293f}},       {1, {885.403f, 917.293f}},
+    {1, {912.043f, 917.293f}},       {1, {912.043f, 623.884f}},
+    {1, {805.408f, 623.884f}},       {1, {778.695f, 623.884f}},
+    {1, {778.695f, 543.890f}},       {1, {778.695f, 517.250f}},
+    {1, {992.110f, 517.250f}},       {1, {1018.750f, 517.250f}},
+    {1, {1018.750f, 997.287f}},      {1, {1018.750f, 1024.f}},
+    {1, {31.890f, 1024.f}},          {1, {5.250f, 1024.f}},
+    {1, {5.250f, 543.890f}},         {1, {5.250f, 517.250f}},
+    {1, {218.664f, 517.250f}},       {1, {245.305f, 517.250f}},
+    {1, {245.305f, 597.244f}},       {1, {245.305f, 623.884f}},
+    {1, {111.884f, 623.884f}},       {3, {}},
+    {0, {565.281f, 202.703f}},       {1, {565.281f, 656.172f}},
+    {1, {565.281f, 682.812f}},       {1, {485.359f, 682.812f}},
+    {1, {458.646f, 682.812f}},       {1, {458.646f, 202.703f}},
+    {1, {303.943f, 357.406f}},       {1, {285.320f, 376.029f}},
+    {1, {229.306f, 320.124f}},       {1, {210.613f, 301.467f}},
+    {1, {493.323f, 18.680f}},        {1, {511.997f, 0.f}},
+    {1, {794.694f, 282.697f}},       {1, {813.390f, 301.392f}},
+    {1, {757.340f, 357.334f}},       {1, {738.689f, 375.948f}},
+    {1, {565.281f, 202.703f}},       {3, {}},
 };
 
 class IconActionButton : public IControl {
@@ -83,66 +166,35 @@ public:
     if (GetMouseIsOver())
       g.FillRect(HoverOverlay(), b);
 
-    // 图标几何定义在 24×24 的 viewBox 里, 缩放到 20px 以按钮中心对齐。
-    // 角度约定: 0°=右, 90°=下 (屏幕坐标), 顺时针 = 角度递增, 逆时针 = 递减。
-    constexpr float kD2R = 0.0174532925199433f;
+    // 图标几何来自用户提供的 assets/icons/*.svg (1024×1024 网格), 缩放到 18px
+    // 以按钮中心对齐。实心填充主题色, 随深浅主题/色相自适应。
     const float cx = b.MW(), cy = b.MH();
-    const float s = 20.f / 24.f;
-    auto X = [&](float vx) { return cx + (vx - 12.f) * s; };
-    auto Y = [&](float vy) { return cy + (vy - 12.f) * s; };
+    const float s = 16.f / 1024.f;
+    auto X = [&](float vx) { return cx + (vx - 512.f) * s; };
+    auto Y = [&](float vy) { return cy + (vy - 512.f) * s; };
     const IColor c = COL_900();
 
+    const SvgPathCmd *path = nullptr;
+    int nCmds = 0;
     switch (mIcon) {
-      case kIconUndo: {
-        // 270° 圆弧: 右下 (45°) 起, 逆时针经右侧→顶部→左侧, 止于左下 (135°)
-        const float r = 7.f * s;
-        const float a0 = 45.f * kD2R, a1 = -225.f * kD2R;
-        g.PathMoveTo(cx + r * std::cos(a0), cy + r * std::sin(a0));
-        for (int i = 1; i <= 24; ++i) {
-          const float a = a0 + (a1 - a0) * (float)i / 24.f;
-          g.PathLineTo(cx + r * std::cos(a), cy + r * std::sin(a));
+      case kIconUndo: path = kUndoIcon; nCmds = (int)(sizeof(kUndoIcon) / sizeof(kUndoIcon[0])); break;
+      case kIconRedo: path = kRedoIcon; nCmds = (int)(sizeof(kRedoIcon) / sizeof(kRedoIcon[0])); break;
+      case kIconSave: path = kImportIcon; nCmds = (int)(sizeof(kImportIcon) / sizeof(kImportIcon[0])); break;
+      case kIconLoad: path = kExportIcon; nCmds = (int)(sizeof(kExportIcon) / sizeof(kExportIcon[0])); break;
+    }
+    if (path) {
+      for (int i = 0; i < nCmds; ++i) {
+        const SvgPathCmd &e = path[i];
+        switch (e.cmd) {
+          case 0: g.PathMoveTo(X(e.v[0]), Y(e.v[1])); break;
+          case 1: g.PathLineTo(X(e.v[0]), Y(e.v[1])); break;
+          case 2:
+            g.PathCubicBezierTo(X(e.v[0]), Y(e.v[1]), X(e.v[2]), Y(e.v[3]), X(e.v[4]), Y(e.v[5]));
+            break;
+          default: g.PathClose(); break;
         }
-        g.PathStroke(IPattern(c), 2.4f * s);
-        // 箭头: 弧线下左端, 指向右下 (逆时针切线方向)
-        g.PathTriangle(X(9.6f), Y(19.5f), X(5.2f), Y(18.8f), X(8.9f), Y(15.1f));
-        g.PathFill(IPattern(c));
-        break;
       }
-      case kIconRedo: {
-        // 镜像: 左下 (135°) 起, 顺时针经左侧→顶部→右侧, 止于右下 (405°)
-        const float r = 7.f * s;
-        const float a0 = 135.f * kD2R, a1 = 405.f * kD2R;
-        g.PathMoveTo(cx + r * std::cos(a0), cy + r * std::sin(a0));
-        for (int i = 1; i <= 24; ++i) {
-          const float a = a0 + (a1 - a0) * (float)i / 24.f;
-          g.PathLineTo(cx + r * std::cos(a), cy + r * std::sin(a));
-        }
-        g.PathStroke(IPattern(c), 2.4f * s);
-        // 箭头: 弧线下右端, 指向左下 (顺时针切线方向)
-        g.PathTriangle(X(14.4f), Y(19.5f), X(18.8f), Y(18.8f), X(15.1f), Y(15.1f));
-        g.PathFill(IPattern(c));
-        break;
-      }
-      case kIconSave: {
-        // 软盘: 描边外框 + 右上卡口 + 底部标签 (直角, 无圆角)
-        g.PathMoveTo(X(4.f), Y(4.f));
-        g.PathLineTo(X(20.f), Y(4.f));
-        g.PathLineTo(X(20.f), Y(20.f));
-        g.PathLineTo(X(4.f), Y(20.f));
-        g.PathClose();
-        g.PathStroke(IPattern(c), 2.f * s);
-        g.FillRect(c, IRECT(X(13.f), Y(5.5f), X(17.f), Y(8.5f)));
-        g.FillRect(c, IRECT(X(8.f), Y(12.f), X(16.f), Y(16.5f)));
-        break;
-      }
-      case kIconLoad: {
-        // 托盘横条 + 落箭头 (箭杆矩形 + 三角头)
-        g.FillRect(c, IRECT(X(4.f), Y(17.5f), X(20.f), Y(20.5f)));
-        g.FillRect(c, IRECT(X(10.6f), Y(4.5f), X(13.4f), Y(10.5f)));
-        g.PathTriangle(X(9.5f), Y(10.5f), X(14.5f), Y(10.5f), X(12.f), Y(15.f));
-        g.PathFill(IPattern(c));
-        break;
-      }
+      g.PathFill(IPattern(c));
     }
   }
 

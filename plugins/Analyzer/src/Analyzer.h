@@ -78,6 +78,7 @@ private:
   std::atomic<float> mTrueL{0.f}, mTrueR{0.f};
   std::atomic<float> mRmsL{0.f}, mRmsR{0.f};
   std::atomic<float> mVuL{0.f}, mVuR{0.f};
+  std::atomic<float> mVuHoldL{0.f}, mVuHoldR{0.f};
   std::atomic<float> mHoldL{0.f}, mHoldR{0.f};
   std::atomic<int> mOverL{0}, mOverR{0};
   std::atomic<float> mHoldSec{2.f};
@@ -97,6 +98,7 @@ private:
   int mSentFFTSize = 0;
   double mSentRelease = -1.0;
   int mSentReleaseMode = -1; // 释放回落模式 (0/1), 用于 OnIdle 增量去重
+  int mSentBallistic = -1; // 频谱弹道类型 (0=STD,1=MAX,2=AVG), 用于 OnIdle 增量去重
   double mSentRange = -1.0;
   double mSentAttack = -1.0;
   double mSentLfRes = -1.0;
@@ -112,6 +114,7 @@ private:
   FlatCycleButton *mRangeBtn = nullptr;    // 动态范围循环按钮 (刻度底部 80/100/120)
   FlatCycleButton *mSlopeBtn = nullptr;    // 频谱斜率循环按钮 (刻度底部左缘, 档值随引擎)
   FlatCycleButton *mReleaseModeBtn = nullptr; // 释放回落模式循环按钮 (LOG 对数域 / UNIF 匀速)
+  FlatCycleButton *mBallisticBtn = nullptr;   // 频谱弹道类型循环按钮 (STD 标准 / MAX 最大 / AVG 平均)
   ORMSlider *mAttackSlider = nullptr;
   ORMSlider *mReleaseSlider = nullptr;
   CpuMeterControl *mCpuMeter = nullptr;

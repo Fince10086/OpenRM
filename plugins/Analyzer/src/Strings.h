@@ -84,6 +84,10 @@ enum EText {
   kTxtLoudTarget,     // 响度计: 目标
   kTxtTipLoudPreset,  // 响度计: 目标预设 tooltip
   kTxtTipLoudReset,   // 响度计: RESET tooltip
+  kTxtBallStd,        // 频谱弹道类型按钮: 标准 (STD, 单极点攻放)
+  kTxtBallMax,        // 频谱弹道类型按钮: 最大 (MAX, 瞬时上升峰值式)
+  kTxtBallAvg,        // 频谱弹道类型按钮: 平均 (AVG, 功率域指数平均)
+  kTxtTipBallistic,   // 频谱弹道类型 tooltip
   kNumTexts
 };
 
@@ -131,7 +135,7 @@ inline const char *Tr(int id, int lang) {
           "LIN",
           "HOLD",
           "RESET",
-          "Meter mode: dBTP (true peak, ITU-R BS.1770) / dBFS + RMS / VU (0 VU = -18 dBFS)",
+          "Meter mode: dBTP (true peak, ITU-R BS.1770) / dBFS + RMS (VU meter is always shown separately)",
           "Peak hold on/off (spectrum hold curve and meter hold line)",
           "Clear peak hold and overload latch",
           "LOW",
@@ -163,6 +167,10 @@ inline const char *Tr(int id, int lang) {
           "TARGET",
           "Loudness target preset: -14 (streaming music) / -16 (Apple Music) / -23 (EBU R128 broadcast)",
           "Reset integrated loudness, LRA and true peak hold",
+          "STD",
+          "MAX",
+          "AVG",
+          "Ballistic type: STD = attack/release one-pole; MAX = zero-latency rise, fall by release; AVG = power-domain exponential average (fixed ~0.1 s, attack/release sliders ignored)",
       },
       {
           "释放",
@@ -206,7 +214,7 @@ inline const char *Tr(int id, int lang) {
           "线性",
           "保持",
           "重置",
-          "电平表模式：dBTP 真峰值（ITU-R BS.1770）/ dBFS+RMS / VU（0 VU = -18 dBFS）",
+          "电平表模式：dBTP 真峰值（ITU-R BS.1770）/ dBFS+RMS（独立 VU 表常驻显示）",
           "峰值保持开关（频谱保持曲线与电平表保持亮线）",
           "清除峰值保持与过载锁存",
           "低",
@@ -238,6 +246,10 @@ inline const char *Tr(int id, int lang) {
           "目标",
           "响度目标预设：-14（流媒体音乐）/ -16（Apple Music）/ -23（EBU R128 广播）",
           "重置综合响度、LRA 与真峰值锁存",
+          "标准",
+          "最大",
+          "平均",
+          "频谱弹道类型：标准 = 起音/释放单极点；最大 = 上升瞬时到位、回落按释放；平均 = 功率域指数平均（固定约 0.1 秒，起音/释放滑块不生效）",
       },
   };
   return kTable[lang][id];

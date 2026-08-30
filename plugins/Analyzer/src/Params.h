@@ -7,13 +7,14 @@
 enum EParams {
   kRelease,       // 频谱回落释放时间 (s)
   kReleaseMode,   // 释放回落模式 (0: 对数域单极点, 1: 匀速 dB 速率)
+  kBallistic,     // 频谱弹道类型 (0: STD 标准单极点, 1: MAX 瞬时上升峰值式, 2: AVG 功率域平均)
   kRange,         // 频谱显示动态范围下限 (dBFS)
   kAttack,        // 频谱上升响应时间 (s)
   kRes,           // FFT 分辨率档位 (2048/4096/8192)
   kLfRes,         // PBT 低频分辨率档位 (40/20/10 Hz)
   kMode,          // 分析引擎模式 (0: STFT, 1: VQT, 2: PBT, 3: RTA)
   kChannelMode,   // 声道显示模式 (0: PWR, 1: LR, 2: SUM)
-  kLevelMode,     // 电平表模式 (0: dBTP, 1: dBFS+RMS, 2: VU)
+  kLevelMode,     // 电平表模式 (L/R 条: 0: dBTP, 1: dBFS+RMS; 独立 VU 表常驻)
   kLevelHold,     // 峰值保持时长档位 (0: 0.5s, 1: 2s, 2: ∞ 无限保持)
   kLevelHoldOn,   // 峰值保持开关 (频谱 hold 曲线与电平表 hold 亮线共用; 默认关闭, 用户状态持久化于全局设置文件)
   kFreeze,        // 冻结开关 (0: 实时, 1: FREEZE 定格; 冻结中切换引擎用新算法重算冻结音频)
@@ -30,6 +31,9 @@ enum EParams {
 };
 
 enum EFFTWindow { kFFTWindowHann = 0, kFFTWindowBH4 = 1, kFFTWindowBH5 = 2, kNumFFTWindows = 3 };
+
+// 频谱弹道类型 (kBallistic): STD 标准 | MAX 峰值式 | AVG 功率平均
+enum EBallistic { kBallisticSTD = 0, kBallisticMAX = 1, kBallisticAVG = 2, kNumBallistics = 3 };
 
 using ParamSnapshot = std::array<double, kNumParams>;
 
@@ -75,8 +79,8 @@ enum EAnalyzerMode {
 // 声道显示模式 (三态: PWR(Merge) / LR / SUM(Merge))
 enum EChannelMode { kChanModePWR = 0, kChanModeLR = 1, kChanModeSUM = 2, kNumChanModes = 3 };
 
-// 电平表模式
-enum ELevelMode { kLevelModeDBTP = 0, kLevelModeDBFS = 1, kLevelModeVU = 2, kNumLevelModes = 3 };
+// 电平表模式 (L/R 条): dBTP / dBFS+RMS; 独立 VU 表常驻显示, 不参与模式切换
+enum ELevelMode { kLevelModeDBTP = 0, kLevelModeDBFS = 1, kNumLevelModes = 2 };
 
 // UI 控件消息标签
 enum EControlTags { kCtrlTagPad = 100, kCtrlTagCpu = 101, kCtrlTagLegend = 102, kCtrlTagLoudness = 103 };

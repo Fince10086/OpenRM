@@ -16,18 +16,24 @@ BEGIN_IGRAPHICS_NAMESPACE
 // 频谱右侧布局 (Analyzer.cpp 图例与 SpectrumPad 共用):
 // - kGainBarW: 电平表竖条单条横向宽度 (px)；L/R 两条紧挨无间隙, 总宽 = 2 × kGainBarW
 // - 表头区总宽 = 2 × kGainBarW (dB 刻度文字已移入频谱区域内部右侧)
+// - kVuScaleW: 独立 VU 表左侧刻度文字区宽度 (L/R 条与 VU 表之间的间距, 放 VU 刻度文字)
+// - kVuBarW:   独立 VU 表单条宽度 (L/R 两条并排, 总宽 2 × kVuBarW); 电平区总让宽
+//               = 2×kGainBarW + kVuScaleW + 2×kVuBarW
 constexpr float kGainBarW = 16.f;
+constexpr float kVuScaleW = 28.f;
+constexpr float kVuBarW = 14.f;
 
 // 电平表 UI 数据 (插件 OnIdle 每帧下发; 全 4 字节字段, 打包/解析安全)
 struct LevelMeterUiData {
-  float peakL, peakR; // dBFS 样本峰值 (已平滑)
-  float trueL, trueR; // dBTP 真峰值 (已平滑)
-  float rmsL, rmsR;   // RMS dBFS (300ms 积分)
-  float vuL, vuR;     // VU 对应 dBFS (0 VU = -18 dBFS)
-  float holdL, holdR; // 峰值保持 (显示域 dB; -1000 = 无效)
-  float holdSec;      // 保持时长 (s, 0 = 关)
-  int mode;           // 0: dBTP, 1: dBFS+RMS, 2: VU
-  int overL, overR;   // 过载锁存
+  float peakL, peakR;     // dBFS 样本峰值 (已平滑)
+  float trueL, trueR;     // dBTP 真峰值 (已平滑)
+  float rmsL, rmsR;       // RMS dBFS (300ms 积分)
+  float vuL, vuR;         // VU 对应 dBFS (0 VU = -18 dBFS), 常驻
+  float vuHoldL, vuHoldR; // 独立 VU 表峰值保持 (dB; -1000 = 无效)
+  float holdL, holdR;     // L/R 条峰值保持 (显示域 dB; -1000 = 无效)
+  float holdSec;          // 保持时长 (s, 0 = 关)
+  int mode;               // L/R 条模式: 0: dBTP, 1: dBFS+RMS
+  int overL, overR;       // 过载锁存
 };
 
 // 响度计 UI 数据 (插件 OnIdle 每帧下发; 全 4 字节字段, 打包/解析安全)

@@ -27,16 +27,13 @@ public:
     if (msgTag == kMsgTagLevelReadout && dataSize == (int)sizeof(LevelMeterUiData)) {
       LevelMeterUiData d;
       std::memcpy(&d, pData, sizeof(d));
-      mMeterMode = std::clamp(d.mode, 0, 2);
+      mMeterMode = std::clamp(d.mode, 0, 1);
       if (mMeterMode == 0) {
         mValL = d.trueL;
         mValR = d.trueR;
-      } else if (mMeterMode == 1) {
+      } else {
         mValL = d.peakL;
         mValR = d.peakR;
-      } else {
-        mValL = d.vuL;
-        mValR = d.vuR;
       }
       SetDirty(false);
     }
@@ -49,16 +46,8 @@ private:
   void DrawReadout(IGraphics &g) {
     const float roR = mRECT.R;
     char bufL[16], bufR[16];
-    if (mMeterMode == 2) {
-      std::snprintf(bufL, sizeof(bufL), "%+d", (int)std::lround(mValL + 18.f));
-      std::snprintf(bufR, sizeof(bufR), "%+d", (int)std::lround(mValR + 18.f));
-    } else if (mMeterMode == 0) {
-      std::snprintf(bufL, sizeof(bufL), "%.1f", mValL);
-      std::snprintf(bufR, sizeof(bufR), "%.1f", mValR);
-    } else {
-      std::snprintf(bufL, sizeof(bufL), "%.1f", mValL);
-      std::snprintf(bufR, sizeof(bufR), "%.1f", mValR);
-    }
+    std::snprintf(bufL, sizeof(bufL), "%.1f", mValL);
+    std::snprintf(bufR, sizeof(bufR), "%.1f", mValR);
     const IText readText(20, COL_900(), kFontRegular, EAlign::Far, EVAlign::Middle);
     g.DrawText(readText, bufL, IRECT(roR - 124.f, mRECT.T, roR - 64.f, mRECT.B));
     g.DrawText(readText, bufR, IRECT(roR - 64.f, mRECT.T, roR, mRECT.B));

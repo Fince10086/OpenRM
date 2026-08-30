@@ -29,6 +29,7 @@ public:
     kMsgTagFFTSize,
     kMsgTagRelease,
     kMsgTagReleaseMode, // 释放回落模式 (0: 对数域单极点, 1: 匀速 dB 速率)
+    kMsgTagBallistic,   // 频谱弹道类型 (0: STD 标准, 1: MAX 最大, 2: AVG 平均)
     kMsgTagRange,
     kMsgTagAttack,
     kMsgTagSlope,       // 频谱斜率 (dB/oct, 当前模式生效值; FFT 与逐 band 引擎档值不同)
@@ -92,22 +93,43 @@ public:
       // 与显示范围/斜率无关 (Pro-Q 式视觉恒速)
       const float unifStepDb = (float)(updatePeriod / (2.0 * std::max(mReleaseSec, 1e-3f)) * (kTopDb - mBottomDb));
 
+      // AVG 档: 功率域指数平均系数 (固定平均时间常数, 与攻放滑块无关)
+      mAvgAlpha = (float)(1.0 - std::exp(-updatePeriod / kAvgTauSec));
+
       const float a = mAttackCoeff, r = mReleaseCoeff;
       if (mMode == 0) {
         ProcessFFTBands(d, a, r, unifStepDb);
       } else {
-        // VQT/PBT/RTA: 逐 band 显示域弹道 (目标 = 幅度 dB + 斜率, 已钳到显示范围)
+        // VQT/PBT/RTA: 逐 band 显示域弹道 (目标 = 幅度 dB + 斜率, 已钳到显示范围)。
+        // STD = 攻放单极点; MAX = 上升瞬时到位, 回落仍走释放; AVG = 功率域指数
+        // 平均 (平均器自带时间常数, 不再叠加单极点)。
         const float *tilt = mSlopeDb.empty() ? nullptr : mSlopeDb.data();
+        const bool doAvg = (mBallistic == 2);
+        const bool instAttack = (mBallistic == 1);
         for (int c = 0; c < 3; ++c) {
           if (mSpectrum[c].size() != (size_t)nVals)
             mSpectrum[c].assign(nVals, -150.f);
+          if (mAvgP[c].size() != (size_t)nVals)
+            mAvgP[c].assign(nVals, 0.f);
+          const bool pbtPhys = (mMode == 2 && mPBTFreqs.size() == (size_t)nVals);
           for (int i = 0; i < nVals; ++i) {
-            const float rawDb =
-                (d.vals[c][i] > 1e-30f) ? 6.02059991328f * orm::FastLog2(d.vals[c][i]) : -150.f;
+            float rawDb;
+            if (doAvg) {
+              float &p = mAvgP[c][i];
+              const float amp = d.vals[c][i];
+              p += mAvgAlpha * (amp * amp - p);
+              rawDb = (p > 1e-30f) ? 3.01029995664f * orm::FastLog2(p) : -150.f;
+            } else {
+              rawDb = (d.vals[c][i] > 1e-30f) ? 6.02059991328f * orm::FastLog2(d.vals[c][i]) : -150.f;
+            }
             const float target = SmoothTarget(rawDb, tilt ? tilt[i] : 0.f);
+            if (doAvg) {
+              mSpectrum[c][i] = target; // 平均器自带时间常数, 显示直接取平均结果
+              continue;
+            }
             float aCoef = a;
-            if (mMode == 2 && mPBTFreqs.size() == (size_t)nVals) {
-              // PBT 物理起振时间常数 τ = 1 / (π · bw): 窄带低频展现自然蓄力爬坡感
+            if (!instAttack && pbtPhys) {
+              // PBT 物理起振时间常数 τ = 1 / (π · bw): 窄带低频展现自然蓄力爬坡感 (仅 STD)
               const float fc = mPBTFreqs[i];
               const float bw = (fc < 250.f)
                   ? ((i > 0 && mPBTFreqs[i] < 250.f) ? (mPBTFreqs[i] - mPBTFreqs[i - 1]) : 40.f)
@@ -115,7 +137,7 @@ public:
               const float tauBand = std::max(mAttackSec, 1.f / (3.14159f * std::max(bw, 5.f)));
               aCoef = (float)std::exp(-updatePeriod / tauBand);
             }
-            mSpectrum[c][i] = StepSmoothed(mSpectrum[c][i], target, aCoef, r, unifStepDb);
+            mSpectrum[c][i] = StepSmoothed(mSpectrum[c][i], target, aCoef, r, unifStepDb, instAttack);
           }
         }
       }
@@ -139,6 +161,10 @@ public:
       int mode;
       stream.Get(&mode, 0);
       mReleaseMode = std::clamp(mode, 0, 1);
+    } else if (msgTag == kMsgTagBallistic) {
+      int ballistic;
+      stream.Get(&ballistic, 0);
+      mBallistic = std::clamp(ballistic, 0, 2);
     } else if (msgTag == kMsgTagRange) {
       float rangeDb;
       stream.Get(&rangeDb, 0);
@@ -224,16 +250,20 @@ public:
       mRmsR = d.rmsR;
       mVuL = d.vuL;
       mVuR = d.vuR;
+      mVuHoldL = d.vuHoldL;
+      mVuHoldR = d.vuHoldR;
       mHoldL = d.holdL;
       mHoldR = d.holdR;
       mHoldSec = d.holdSec;
-      mMeterMode = std::clamp(d.mode, 0, 2);
+      mMeterMode = std::clamp(d.mode, 0, 1);
       mOverL = d.overL != 0;
       mOverR = d.overR != 0;
       SetDirty(false);
     } else if (msgTag == kMsgTagReset) {
       for (int c = 0; c < 3; ++c)
         mSpectrum[c].assign(mSpectrum[c].size(), -150.f);
+      for (auto &v : mAvgP)
+        std::fill(v.begin(), v.end(), 0.f);
       ClearPeakHold();
       SetDirty(false);
     }
@@ -261,20 +291,26 @@ public:
 
   void Draw(IGraphics &g) override {
     g.FillRect(COL_100(), mRECT);
-    // 图形区左对齐, 右侧让出 L/R 两条电平表竖条 (刻度文字绘制在频谱区域内部右侧)。
-    // 对 plot 做物理像素对齐: 层位图/层内绘制/贴图/频谱/电平表共用同一矩形,
-    // 避免层内容与位图边缘之间的亚像素透明条带在右侧/底侧露出底色 (白边)。
-    const IRECT plot =
-        mRECT.GetReducedFromRight(2.f * kGainBarW).GetPixelAligned(g.GetScreenScale() * g.GetDrawScale());
+    // 图形区左对齐, 右侧让出 L/R 两条电平表竖条 + VU 刻度区 + 独立 VU 表
+    // (刻度文字绘制在频谱区域内部右侧)。对 plot 做物理像素对齐: 层位图/层内绘制/
+    // 贴图/频谱/电平表共用同一矩形, 避免层内容与位图边缘之间的亚像素透明条带在
+    // 右侧/底侧露出底色 (白边)。
+    const IRECT plot = mRECT.GetReducedFromRight(2.f * kGainBarW + kVuScaleW + 2.f * kVuBarW)
+                           .GetPixelAligned(g.GetScreenScale() * g.GetDrawScale());
 
     // hover 准线: 竖线 (1px) 在光标 x, 标签位于竖线顶部右侧显示 Hz 值;
     // 横线 (1px) 在光标 y, 标签位于横线右端上侧显示 dB 值。
-    // 有效区横向放宽到整个控件右缘 (含 L/R 电平条): 横线贯穿频谱并延伸过电平条,
-    // 光标移到电平条上时准线仍激活; 竖线仅在频谱区域内绘制。
+    // 有效区横向放宽到整个控件右缘 (含 L/R 电平表与独立 VU 表): 横线贯穿频谱并延伸,
+    // 光标移到电平表上时准线仍激活; 频率/音高读数只在频谱区内计算和绘制。
+    // dBFS 模式下 L/R 条顶部为 over LED 区 (仅限 L/R 条横向范围), 光标位于其内时
+    // 整组准线不显示; 频谱区域内 0 dB 以上照常显示。
     // 标签矩形先算好传给刻度绘制 (DrawDbGrid/DrawFreqGrid): 与固定刻度重叠时
     // 隐藏那一个被重叠的刻度, 让位给准线读数。
-    const bool inPlot =
-        mHoverActive && mHoverX >= plot.L && mHoverX <= mRECT.R && mHoverY >= plot.T && mHoverY <= plot.B;
+    const bool ledArea = (mMeterMode == 1) && (mHoverX > plot.R) &&
+                         (mHoverX <= plot.R + 2.f * kGainBarW) && (mHoverY < YOf(plot, 0.f) - 3.f);
+    const bool inPlot = mHoverActive && !ledArea && mHoverX >= plot.L && mHoverX <= mRECT.R &&
+                        mHoverY >= plot.T && mHoverY <= plot.B;
+    const bool inSpectrum = inPlot && mHoverX <= plot.R;
     IRECT hzSkip, dbSkip; // 默认空矩形 = 不跳过任何刻度
     char hzBuf[16] = "", dbBuf[16] = "";
     char noteBuf[8];   // 音高标签 (C4 等最近音名), inPlot 内计算
@@ -285,45 +321,49 @@ public:
       xLine = mHoverX;
       yLine = mHoverY;
 
-      // x -> 对数频率 (与 FreqNorm 反函数一致): 20Hz..20kHz
-      const double hz = 20.0 * std::pow(1000.0, (double)(xLine - plot.L) / plot.W());
-      FreqToNoteName(hz, noteBuf, sizeof(noteBuf));
-      if (hz < 1000.0)
-        std::snprintf(hzBuf, sizeof(hzBuf), "%.0f Hz", hz);
-      else
-        std::snprintf(hzBuf, sizeof(hzBuf), "%.2f kHz", hz / 1000.0);
+      if (inSpectrum) {
+        // x -> 对数频率 (与 FreqNorm 反函数一致): 20Hz..20kHz
+        const double hz = 20.0 * std::pow(1000.0, (double)(xLine - plot.L) / plot.W());
+        FreqToNoteName(hz, noteBuf, sizeof(noteBuf));
+        if (hz < 1000.0)
+          std::snprintf(hzBuf, sizeof(hzBuf), "%.0f Hz", hz);
+        else
+          std::snprintf(hzBuf, sizeof(hzBuf), "%.2f kHz", hz / 1000.0);
+      }
 
       // y -> dB (mBottomDb..kTopDb)
       const float db = mBottomDb + (kTopDb - mBottomDb) * (plot.B - yLine) / plot.H();
       std::snprintf(dbBuf, sizeof(dbBuf), "%.1f dB", db);
 
-      // Hz/音高标签: 与顶部频率刻度同布局同样式, 正常状态音高在准线左侧、频率在准线右侧,
-      // 一侧放不下时折叠到另一侧 (见上方 noteBuf 注释)。矩形取文字实际范围, 供重叠判定。
-      hzText = IText(14, COL_700(), kFontRegular, EAlign::Near, EVAlign::Top);
-      // 先量出两标签的实际宽度 (矩形缩小为文字范围, 供两侧摆放)
-      pitchR = IRECT(plot.L, plot.T + 2.f, plot.R, plot.T + 2.f + kLabelH);
-      g.MeasureText(hzText, noteBuf, pitchR);
-      freqR = IRECT(plot.L, plot.T + 2.f, plot.R, plot.T + 2.f + kLabelH);
-      g.MeasureText(hzText, hzBuf, freqR);
-      const float wP = pitchR.W(), wF = freqR.W();
-      constexpr float kHzGap = 6.f; // 折叠并排时两标签间距
-      const bool pitchFitsLeft = (xLine - 5.f - wP >= plot.L);
-      const bool freqFitsRight = (xLine + 5.f + wF <= plot.R);
-      if (pitchFitsLeft && freqFitsRight) {
-        // 正常: 音高在准线左侧, 频率在准线右侧
-        pitchR = IRECT(xLine - 5.f - wP, plot.T + 2.f, xLine - 5.f, plot.T + 2.f + kLabelH);
-        freqR = IRECT(xLine + 5.f, plot.T + 2.f, xLine + 5.f + wF, plot.T + 2.f + kLabelH);
-      } else if (!pitchFitsLeft) {
-        // 音高放不进左侧: 避让到频率读数的右侧 (频率保持在准线右侧原位)
-        freqR = IRECT(xLine + 5.f, plot.T + 2.f, xLine + 5.f + wF, plot.T + 2.f + kLabelH);
-        pitchR = IRECT(freqR.R + kHzGap, plot.T + 2.f, freqR.R + kHzGap + wP, plot.T + 2.f + kLabelH);
-      } else {
-        // 频率放不进右侧: 避让到音高读数的右侧 (两标签并排在准线左侧)
-        pitchR = IRECT(xLine - 5.f - wF - kHzGap - wP, plot.T + 2.f, xLine - 5.f - wF - kHzGap,
-                       plot.T + 2.f + kLabelH);
-        freqR = IRECT(xLine - 5.f - wF, plot.T + 2.f, xLine - 5.f, plot.T + 2.f + kLabelH);
+      if (inSpectrum) {
+        // Hz/音高标签: 与顶部频率刻度同布局同样式, 正常状态音高在准线左侧、频率在准线右侧,
+        // 一侧放不下时折叠到另一侧 (见上方 noteBuf 注释)。矩形取文字实际范围, 供重叠判定。
+        hzText = IText(14, COL_700(), kFontRegular, EAlign::Near, EVAlign::Top);
+        // 先量出两标签的实际宽度 (矩形缩小为文字范围, 供两侧摆放)
+        pitchR = IRECT(plot.L, plot.T + 2.f, plot.R, plot.T + 2.f + kLabelH);
+        g.MeasureText(hzText, noteBuf, pitchR);
+        freqR = IRECT(plot.L, plot.T + 2.f, plot.R, plot.T + 2.f + kLabelH);
+        g.MeasureText(hzText, hzBuf, freqR);
+        const float wP = pitchR.W(), wF = freqR.W();
+        constexpr float kHzGap = 6.f; // 折叠并排时两标签间距
+        const bool pitchFitsLeft = (xLine - 5.f - wP >= plot.L);
+        const bool freqFitsRight = (xLine + 5.f + wF <= plot.R);
+        if (pitchFitsLeft && freqFitsRight) {
+          // 正常: 音高在准线左侧, 频率在准线右侧
+          pitchR = IRECT(xLine - 5.f - wP, plot.T + 2.f, xLine - 5.f, plot.T + 2.f + kLabelH);
+          freqR = IRECT(xLine + 5.f, plot.T + 2.f, xLine + 5.f + wF, plot.T + 2.f + kLabelH);
+        } else if (!pitchFitsLeft) {
+          // 音高放不进左侧: 避让到频率读数的右侧 (频率保持在准线右侧原位)
+          freqR = IRECT(xLine + 5.f, plot.T + 2.f, xLine + 5.f + wF, plot.T + 2.f + kLabelH);
+          pitchR = IRECT(freqR.R + kHzGap, plot.T + 2.f, freqR.R + kHzGap + wP, plot.T + 2.f + kLabelH);
+        } else {
+          // 频率放不进右侧: 避让到音高读数的右侧 (两标签并排在准线左侧)
+          pitchR = IRECT(xLine - 5.f - wF - kHzGap - wP, plot.T + 2.f, xLine - 5.f - wF - kHzGap,
+                         plot.T + 2.f + kLabelH);
+          freqR = IRECT(xLine - 5.f - wF, plot.T + 2.f, xLine - 5.f, plot.T + 2.f + kLabelH);
+        }
+        hzSkip = pitchR.Union(freqR); // 与固定频率刻度避让: 两标签取并集矩形
       }
-      hzSkip = pitchR.Union(freqR); // 与固定频率刻度避让: 两标签取并集矩形
 
       // dB 标签: 与右侧 dB 刻度同布局同样式 (文字在横线上方, 右对齐);
       // 顶部放不下时翻转到线下侧。
@@ -337,17 +377,18 @@ public:
     DrawGridLayer(g, plot);
     DrawDbGrid(g, plot, dbSkip);
     DrawFreqGrid(g, plot, hzSkip);
-    DrawVuLine(g, plot);
     DrawSpectrum(g, plot);
     DrawLevelMeter(g, plot);
 
     if (inPlot) {
-      // 准线颜色与刻度文字一致 (COL_700), 1px 细线; 最上层绘制, 横线贯穿电平条
-      if (xLine <= plot.R)
+      // 准线颜色与刻度文字一致 (COL_700), 1px 细线; 最上层绘制, 横线贯穿电平条;
+      // 频率/音高读数只在频谱区内显示 (电平条上无频率意义)
+      if (inSpectrum) {
         g.DrawLine(COL_700(), xLine, plot.T, xLine, plot.B, nullptr, 1.f);
+        g.DrawText(hzText, noteBuf, pitchR);
+        g.DrawText(hzText, hzBuf, freqR);
+      }
       g.DrawLine(COL_700(), plot.L, yLine, mRECT.R, yLine, nullptr, 1.f);
-      g.DrawText(hzText, noteBuf, pitchR);
-      g.DrawText(hzText, hzBuf, freqR);
       g.DrawText(dbText, dbBuf, dbSkip);
     }
   }
@@ -478,21 +519,18 @@ private:
     }
   }
 
-  // 电平表满刻度 (显示顶部): dBTP +6 dB / dBFS 0 dBFS / VU +3 VU (-15 dBFS)。
+  // 电平表满刻度 (显示顶部): dBTP +6 dB / dBFS 0 dBFS。
   // 刻度网格仍固定到 kTopDb, 顶部空出的区域放置 over LED。
   float MeterTopDb() const {
-    switch (mMeterMode) {
-    case 1: return 0.f;
-    case 2: return -15.f; // +3 VU = -15 dBFS
-    default: return kTopDb;
-    }
+    return (mMeterMode == 1) ? 0.f : kTopDb;
   }
 
   float YOf(const IRECT &plot, float db) const {
     return plot.B - (db - mBottomDb) / (kTopDb - mBottomDb) * plot.H();
   }
 
-  // L/R 双电平表条 + over 指示 (读数在顶部图例行, 由 ChannelLegendControl 绘制)
+  // L/R 双电平表条 + 独立 VU 表 (VU 刻度文字画在两者之间的间距内) + over 指示
+  // (读数在顶部图例行, 由 ChannelLegendControl 绘制)
   void DrawLevelMeter(IGraphics &g, const IRECT &plot) {
     IColor cL, cR, cM;
     GetChannelColors(cL, cR, cM);
@@ -503,6 +541,120 @@ private:
 
     DrawMeterBar(g, plot, barL, cL, 0);
     DrawMeterBar(g, plot, barR, cR, 1);
+    DrawVuScale(g, plot);
+    DrawVuBar(g, plot);
+  }
+
+  // 独立 VU 表刻度文字: -20/-10/0/+3 (VU), 右对齐 VU 表左缘, 画在 L/R 条与 VU 表
+  // 之间的间距内。样式与 dB 刻度一致 (文字在线上方); +3 贴条顶放不下, 翻到线下侧。
+  void DrawVuScale(IGraphics &g, const IRECT &plot) {
+    const float scaleL = plot.R + 2.f * kGainBarW;
+    const IRECT barV(scaleL + kVuScaleW, plot.T, scaleL + kVuScaleW + kVuBarW, plot.B);
+    const IText t(14, COL_700(), kFontRegular, EAlign::Far, EVAlign::Bottom);
+    struct VuTick {
+      int vu;
+      const char *txt;
+    };
+    static const VuTick kTicks[] = {{-20, "-20"}, {-10, "-10"}, {0, "0"}, {3, "+3"}};
+    for (const auto &tk : kTicks) {
+      const float y = barV.B - (tk.vu - kVuBottomVU) / (kVuTopDb - kVuBottomVU) * barV.H();
+      IRECT labelR(scaleL, y - kLabelH - 1.f, scaleL + kVuScaleW - kTickRight, y - 1.f);
+      if (tk.vu == 3)
+        labelR = IRECT(scaleL, plot.T + 1.f, scaleL + kVuScaleW - kTickRight, plot.T + 1.f + kLabelH);
+      g.DrawText(t, tk.txt, labelR);
+    }
+  }
+
+  // 独立 VU 表双条 (L/R): 常驻显示两声道功率和 VU (0 VU = -18 dBFS), 独立刻度 -20..+3 VU。
+  // 渐变使用 VU 语义色 (红顶 / 0 VU 黄绿参考), 峰值保持线用 VU 表自己的保持值 (mVuHold),
+  // 与 L/R 条 (mHold) 相互独立, 同样按 VU 位置取色。
+  void DrawVuBar(IGraphics &g, const IRECT &plot) {
+    const float scaleL = plot.R + 2.f * kGainBarW;
+    const IRECT barL(scaleL + kVuScaleW, plot.T, scaleL + kVuScaleW + kVuBarW, plot.B);
+    const IRECT barR(barL.R, plot.T, barL.R + kVuBarW, plot.B);
+
+    const float satScale = (ThemeSatMax() <= 30)
+                               ? ((float)ThemeSatMax() / 30.f)
+                               : (1.f + (float)(ThemeSatMax() - 30) / 55.f);
+
+    auto tOfV = [](float vu) {
+      return std::clamp((kVuTopDb - vu) / (kVuTopDb - kVuBottomVU), 0.f, 1.f);
+    };
+    auto yOfV = [&](float vu, const IRECT &bar) {
+      return bar.B - (vu - kVuBottomVU) / (kVuTopDb - kVuBottomVU) * bar.H();
+    };
+
+    struct MeterStop {
+      float t;
+      int h;
+      float s;
+      float b;
+    };
+    const MeterStop stops[] = {
+      {0.f, 0, 0.72f, 0.93f},           // +3 VU 红 (顶)
+      {tOfV(0.f), 8, 0.68f, 0.90f},     // 0 VU 橙
+      {tOfV(-6.f), 30, 0.72f, 0.86f},   // -6 VU 黄
+      {tOfV(-12.f), 50, 0.64f, 0.74f},  // -12 VU 黄绿
+      {tOfV(-18.f), 120, 0.55f, 0.58f}, // -18 VU 绿
+      {1.f, 150, 0.62f, 0.46f},         // -20 VU 底部
+    };
+    const int nStops = (int)(sizeof(stops) / sizeof(stops[0]));
+
+    auto meterColor = [&](const MeterStop &st, int alpha) {
+      const float s = std::clamp(st.s * satScale, 0.f, 1.f);
+      const IColor c = HSBToIColor(st.h, s, st.b);
+      return IColor(alpha, c.R, c.G, c.B);
+    };
+
+    auto meterColorAt = [&](float vu, int alpha) {
+      const float t = tOfV(vu);
+      for (int i = 0; i + 1 < nStops; ++i) {
+        if (t <= stops[i + 1].t) {
+          const float span = stops[i + 1].t - stops[i].t;
+          const float f = (span > 0.f) ? (t - stops[i].t) / span : 0.f;
+          const IColor a = meterColor(stops[i], alpha);
+          const IColor b = meterColor(stops[i + 1], alpha);
+          return IColor(alpha, (int)(a.R + (b.R - a.R) * f + 0.5f),
+                              (int)(a.G + (b.G - a.G) * f + 0.5f),
+                              (int)(a.B + (b.B - a.B) * f + 0.5f));
+        }
+      }
+      return meterColor(stops[nStops - 1], alpha);
+    };
+
+    // 单条绘制: 背景 + 渐变填充 + 峰值保持线 (各声道用各自的 VU 值与保持值)
+    auto drawBar = [&](const IRECT &bar, float vuDb, float vuHold) {
+      g.FillRect(COL_300(), bar);
+
+      auto fillGrad = [&](float yTop, int alpha) {
+        if (yTop >= bar.B)
+          return;
+        const IRECT active(bar.L, yTop, bar.R, bar.B);
+        IPattern grad = IPattern::CreateLinearGradient(bar.L, plot.T, bar.L, plot.B);
+        for (const auto &st : stops)
+          grad.AddStop(meterColor(st, alpha), st.t);
+        g.PathClear();
+        g.PathRect(active);
+        g.PathFill(grad);
+      };
+
+      // vuDb 为 dBFS 域 (0 VU = -18 dBFS), 先转 VU 域 (＋18) 再按 -20..+3 VU 刻度映射,
+      // 使 -18 dBFS 信号落在 0 VU (刻度 87% 处)
+      const float vu = vuDb + 18.f;
+      const float yTop = yOfV(std::clamp(vu, kVuBottomVU, kVuTopDb), bar);
+      fillGrad(yTop, 255);
+
+      // 峰值保持线: vuHold 为 dBFS 域, 同样转 VU 域后按 VU 刻度取色
+      if (mHoldSec > 0.f && vuHold > -900.f) {
+        const float vh = vuHold + 18.f;
+        if (vh > kVuBottomVU) {
+          const float yH = yOfV(std::clamp(vh, kVuBottomVU, kVuTopDb), bar);
+          g.FillRect(meterColorAt(vh, 255), IRECT(bar.L, yH - 1.f, bar.R, yH + 1.f));
+        }
+      }
+    };
+    drawBar(barL, mVuL, mVuHoldL);
+    drawBar(barR, mVuR, mVuHoldR);
   }
 
   void DrawMeterBar(IGraphics &g, const IRECT &plot, const IRECT &bar, const IColor &chan, int ch) {
@@ -514,13 +666,9 @@ private:
       val = ch ? mTrueR : mTrueL;
       hold = ch ? mHoldR : mHoldL;
       over = ch ? mOverR : mOverL;
-    } else if (mMeterMode == 1) {
+    } else {
       val = ch ? mPeakR : mPeakL;
       rmsVal = ch ? mRmsR : mRmsL;
-      hold = ch ? mHoldR : mHoldL;
-      over = ch ? mOverR : mOverL;
-    } else {
-      val = ch ? mVuR : mVuL;
       hold = ch ? mHoldR : mHoldL;
       over = ch ? mOverR : mOverL;
     }
@@ -647,15 +795,6 @@ private:
     }
   }
 
-  // VU 模式: 0 VU (-18 dBFS) 参考刻度线 (位于频谱区域内部右侧, 与刻度文字同区)。
-  // 动态绘制 (不进入网格层缓存), 电平表模式切换即时生效, 无需重建层。
-  void DrawVuLine(IGraphics &g, const IRECT &plot) {
-    if (mMeterMode == 2 && mBottomDb <= -18.f) {
-      const float y18 = YOf(plot, -18.f);
-      g.FillRect(COL_700(), IRECT(plot.R - 52.f, y18 - 1.f, plot.R - kTickRight, y18 + 1.f));
-    }
-  }
-
   // 频率刻度: 20Hz / 100Hz / 1kHz / 10kHz, 位于频谱内部顶端, 文字在竖线右侧 (14px 与 dB 刻度一致)。
   // skipRect 非空时, 与 hover 准线 Hz 标签重叠的刻度隐藏 (按文字实际范围精确判定)。
   void DrawFreqGrid(IGraphics &g, const IRECT &plot, const IRECT &skipRect) {
@@ -696,9 +835,11 @@ private:
   // 单点弹道: 攻击 dB 域单极点; 回落按模式:
   //   LOG  = 显示域差距等比收缩 (与范围/斜率无关, 先快后慢)
   //   UNIF = 恒定屏高比例速率 (2·τ 跨一屏, 恒像素速度), 不低于目标
-  float StepSmoothed(float prevDb, float targetDb, float aCoef, float rCoef, float unifStepDb) const {
+  // instAttack = true 时上升瞬时到位 (MAX 档: 零延迟峰值式, 回落仍走释放)
+  float StepSmoothed(float prevDb, float targetDb, float aCoef, float rCoef, float unifStepDb,
+                     bool instAttack = false) const {
     if (targetDb > prevDb)
-      return aCoef * prevDb + (1.f - aCoef) * targetDb;
+      return instAttack ? targetDb : aCoef * prevDb + (1.f - aCoef) * targetDb;
     if (mReleaseMode == 1)
       return std::max(targetDb, prevDb - unifStepDb);
     return rCoef * prevDb + (1.f - rCoef) * targetDb;
@@ -783,15 +924,27 @@ private:
       mBandUsed[0] = true;
     }
 
-    // 显示域弹道 (含斜率)
+    // 显示域弹道 (含斜率); STD = 攻放单极点, MAX = 上升瞬时到位, AVG = 功率域指数平均
     const bool hasTilt = !mSlopeDb.empty();
-    for (int c = 0; c < 3; ++c)
+    const bool doAvg = (mBallistic == 2);
+    const bool instAttack = (mBallistic == 1);
+    for (int c = 0; c < 3; ++c) {
+      if (mAvgP[c].size() != (size_t)kSpectrumBands)
+        mAvgP[c].assign(kSpectrumBands, 0.f);
       for (int b = 0; b < kSpectrumBands; ++b) {
-        const float rawDb =
-            (bandMax[c][b] > 1e-30f) ? 6.02059991328f * orm::FastLog2(bandMax[c][b]) : -150.f;
+        float rawDb;
+        if (doAvg) {
+          float &p = mAvgP[c][b];
+          const float amp = bandMax[c][b];
+          p += mAvgAlpha * (amp * amp - p);
+          rawDb = (p > 1e-30f) ? 3.01029995664f * orm::FastLog2(p) : -150.f;
+        } else {
+          rawDb = (bandMax[c][b] > 1e-30f) ? 6.02059991328f * orm::FastLog2(bandMax[c][b]) : -150.f;
+        }
         const float target = SmoothTarget(rawDb, hasTilt ? mSlopeDb[b] : 0.f);
-        mSpectrum[c][b] = StepSmoothed(mSpectrum[c][b], target, a, r, unifStepDb);
+        mSpectrum[c][b] = doAvg ? target : StepSmoothed(mSpectrum[c][b], target, a, r, unifStepDb, instAttack);
       }
+    }
   }
 
   // 频谱峰值保持: 开关/时长与电平表 hold 共用 (mHoldSec 随电平表数据帧透传, 0 = 关,
@@ -1025,6 +1178,8 @@ private:
   static constexpr float kSpecAnchorHz = 14.14214f; // sqrt(10·20), 锚点代表频率
   static constexpr int kSubBand = -2;               // mBinToBand 哨兵: 归入锚点桶
   static constexpr float kTopDb = 9.f;         // 显示范围顶部 (dBFS), 刻度线仍从 0 dB 开始
+  static constexpr float kVuTopDb = 3.f;        // 独立 VU 表顶部 (+3 VU)
+  static constexpr float kVuBottomVU = -20.f;   // 独立 VU 表底部 (-20 VU, 0 VU = -18 dBFS)
   static constexpr float kTickRight = 3.f;     // 刻度文字右缘距频谱区域右缘的边距
   static constexpr float kLabelH = 16.f;       // 14px 字行高 (刻度与 hover 准线标签共用)
 
@@ -1058,10 +1213,11 @@ private:
   float mPeakL = -120.f, mPeakR = -120.f;   // 电平表: 样本峰值 dBFS (已平滑)
   float mTrueL = -120.f, mTrueR = -120.f;   // 电平表: dBTP 真峰值 (已平滑)
   float mRmsL = -120.f, mRmsR = -120.f;     // 电平表: RMS dBFS (300ms 积分)
-  float mVuL = -120.f, mVuR = -120.f;       // 电平表: VU 对应 dBFS (0 VU = -18 dBFS)
+  float mVuL = -120.f, mVuR = -120.f;       // 电平表: VU 对应 dBFS (0 VU = -18 dBFS), 常驻
+  float mVuHoldL = -120.f, mVuHoldR = -120.f; // 独立 VU 表峰值保持 (dBFS 域; -1000 = 无效)
   float mHoldL = -1000.f, mHoldR = -1000.f; // 电平表: 峰值保持 (显示域 dB, -1000 = 无效)
   float mHoldSec = 2.f;                     // 电平表: 保持时长 (s)
-  int mMeterMode = 0;                       // 电平表模式: 0=dBTP, 1=dBFS+RMS, 2=VU
+  int mMeterMode = 0;                       // L/R 条模式: 0=dBTP, 1=dBFS+RMS (独立 VU 表常驻)
   bool mOverL = false, mOverR = false;      // 电平表: 过载锁存
   std::vector<int> mBinToBand;     // 预计算: bin -> band 映射 (-1 = 频段外)
   std::array<bool, kSpectrumBands> mBandUsed{}; // FFT: 本帧有 bin 的 band 标记 (含首带入场线), 绘制门控
@@ -1108,6 +1264,10 @@ private:
   float mAttackCoeff = 0.2f;
   float mReleaseCoeff = 0.9f;
   int mReleaseMode = 0;      // 释放回落模式: 0=对数域(显示域差距等比收缩), 1=匀速(恒定屏高比例速率)
+  int mBallistic = 0;        // 频谱弹道类型: 0=STD 标准, 1=MAX 最大 (瞬时上升), 2=AVG 平均 (功率域指数平均)
+  float mAvgAlpha = 0.f;     // AVG 档功率平均系数 (每帧按 updatePeriod 计算)
+  std::array<std::vector<float>, 3> mAvgP; // AVG 档各通道功率平均状态 (与 mSpectrum 同长)
+  static constexpr float kAvgTauSec = 0.1f; // AVG 档平均时间常数 (s)
   float mAttackSec = 0.05f; // 上升时间常数 (s), 由插件 Attack 参数下发
   float mReleaseSec = 0.2f; // 释放时间常数 (s), 由插件 Release 参数下发
   float mBottomDb = -100.f; // 频谱显示下限 (dBFS), 由插件 Range 参数下发 (-80/-100/-120); 初始与参数默认一致

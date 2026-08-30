@@ -1,11 +1,13 @@
 #pragma once
 
-// LevelMeter — 专业级三模式电平测量引擎 (L/R)
+// LevelMeter — 专业级电平测量引擎 (L/R)
 //
-// 模式:
+// L/R 条模式 (Process 的 mode 参数):
 //   0: dBTP  真峰值 (ITU-R BS.1770-4: 4x 过采样后取峰值; EBU R128 建议上限 -1 dBTP)
 //   1: dBFS + RMS (峰值瞬时 attack + 20 dB/s 线性回落; RMS 300ms 泄漏积分, IEC 60268-10)
-//   2: VU    (IEC 60268-17: |x| 整流 -> 二阶临界阻尼积分, 99% 响应约 300ms, 0 VU = -18 dBFS)
+//
+// 独立 VU 表 (常驻, 与模式无关): IEC 60268-17: |x| 整流 -> 二阶临界阻尼积分,
+// 99% 响应约 300ms, 0 VU = -18 dBFS; 峰值保持独立于 L/R 条 (mVuHold 对)。
 //
 // 附加: 峰值保持 (hold, 时长可调, 超时后 20 dB/s 衰减) 与过载锁存 (over latch, 手动清除)。
 
@@ -26,7 +28,8 @@ public:
     float trueDbL = -120.f, trueDbR = -120.f;   // 真峰值 dBTP (平滑后)
     float rmsDbL = -120.f, rmsDbR = -120.f;     // RMS (300ms 积分)
     float vuDbL = -120.f, vuDbR = -120.f;       // VU 对应的 dBFS (0 VU = -18 dBFS)
-    float holdDbL = -120.f, holdDbR = -120.f;   // 峰值保持 (显示域 dB)
+    float vuHoldDbL = -120.f, vuHoldDbR = -120.f; // 独立 VU 表峰值保持 (显示域 dB)
+    float holdDbL = -120.f, holdDbR = -120.f;   // L/R 条峰值保持 (当前模式主值, 显示域 dB)
     float holdSec = 2.f;                        // 当前保持时长 (UI 端判断是否画 hold 线)
     int overL = 0, overR = 0;                   // 过载锁存
   };
@@ -53,6 +56,8 @@ public:
     mRmsSumL = mRmsSumR = 0.0;
     mVuPosL = mVuVelL = 0.0;
     mVuPosR = mVuVelR = 0.0;
+    mVuHoldL = mVuHoldR = -120.f;
+    mVuHoldTL = mVuHoldTR = 0.0;
     mDispPeakL = mDispPeakR = -120.f;
     mDispTrueL = mDispTrueR = -120.f;
     mHoldL = mHoldR = -120.f;
@@ -63,6 +68,7 @@ public:
   // 仅清除峰值保持与过载锁存 (RESET 按钮 / 模式切换)
   void ResetHoldOver() {
     mHoldL = mHoldR = -120.f;
+    mVuHoldL = mVuHoldR = -120.f;
     mOverL = mOverR = 0;
   }
 
@@ -70,6 +76,8 @@ public:
   void ResetHold() {
     mHoldL = mHoldR = -120.f;
     mHoldTL = mHoldTR = 0.0;
+    mVuHoldL = mVuHoldR = -120.f;
+    mVuHoldTL = mVuHoldTR = 0.0;
   }
 
   void Process(const float *L, const float *R, int n, int mode, double holdSec) {
@@ -90,11 +98,8 @@ public:
     case 0:
       ProcessMode<0>(L, R, n, dt, w2dt, wdt2, rawPeakL, rawPeakR, tpPeakL, tpPeakR);
       break;
-    case 1:
-      ProcessMode<1>(L, R, n, dt, w2dt, wdt2, rawPeakL, rawPeakR, tpPeakL, tpPeakR);
-      break;
     default:
-      ProcessMode<2>(L, R, n, dt, w2dt, wdt2, rawPeakL, rawPeakR, tpPeakL, tpPeakR);
+      ProcessMode<1>(L, R, n, dt, w2dt, wdt2, rawPeakL, rawPeakR, tpPeakL, tpPeakR);
       break;
     }
 
@@ -114,24 +119,28 @@ public:
     mDispTrueL = Ball(mDispTrueL, trueDbL, rate);
     mDispTrueR = Ball(mDispTrueR, trueDbR, rate);
 
-    // 过载锁存 (用瞬时值判定): dBTP > -1 / dBFS > 0 / VU > +3 VU (-15 dBFS)
-    const float overLv = (mode == 0) ? trueDbL : (mode == 1) ? peakDbL : vuDbL;
-    const float overRv = (mode == 0) ? trueDbR : (mode == 1) ? peakDbR : vuDbR;
-    const float overThr = (mode == 0) ? -1.f : (mode == 1) ? 0.f : -15.f;
+    // 过载锁存 (用瞬时值判定, L/R 条): dBTP > -1 / dBFS > 0
+    const float overLv = (mode == 0) ? trueDbL : peakDbL;
+    const float overRv = (mode == 0) ? trueDbR : peakDbR;
+    const float overThr = (mode == 0) ? -1.f : 0.f;
     if (overLv > overThr)
       mOverL = 1;
     if (overRv > overThr)
       mOverR = 1;
 
-    // 峰值保持 (基于当前模式主值)
-    const float mainL = (mode == 0) ? mDispTrueL : (mode == 1) ? mDispPeakL : vuDbL;
-    const float mainR = (mode == 0) ? mDispTrueR : (mode == 1) ? mDispPeakR : vuDbR;
+    // L/R 条峰值保持 (基于当前模式主值)
+    const float mainL = (mode == 0) ? mDispTrueL : mDispPeakL;
+    const float mainR = (mode == 0) ? mDispTrueR : mDispPeakR;
+    // 独立 VU 表峰值保持 (自己的状态, 与模式无关)
     const float dtBlock = (float)n / (float)sr;
     if (holdSec > 0.0) {
       mHoldL = HoldStep(mHoldL, mainL, dtBlock, rate, holdSec, mHoldTL);
       mHoldR = HoldStep(mHoldR, mainR, dtBlock, rate, holdSec, mHoldTR);
+      mVuHoldL = HoldStep(mVuHoldL, vuDbL, dtBlock, rate, holdSec, mVuHoldTL);
+      mVuHoldR = HoldStep(mVuHoldR, vuDbR, dtBlock, rate, holdSec, mVuHoldTR);
     } else {
-      mHoldL = mHoldR = -1000.f; // 无效, UI 不画 hold 线
+      mHoldL = mHoldR = -1000.f;       // 无效, UI 不画 L/R 条 hold 线
+      mVuHoldL = mVuHoldR = -1000.f;   // 无效, UI 不画 VU 表 hold 线
     }
   }
 
@@ -144,6 +153,8 @@ public:
     s.rmsDbR = Db10(mRmsSumR / (double)mRmsRingR.size());
     s.vuDbL = VUToDb((float)mVuPosL);
     s.vuDbR = VUToDb((float)mVuPosR);
+    s.vuHoldDbL = mVuHoldL;
+    s.vuHoldDbR = mVuHoldR;
     s.holdDbL = mHoldL;
     s.holdDbR = mHoldR;
     s.holdSec = mHoldSec;
@@ -156,8 +167,9 @@ private:
   static constexpr int kHistCap = 16;   // 真峰值历史环形容量 (2 的幂, ≥ 抽头数-1)
   static constexpr int kHistMask = kHistCap - 1;
 
-  // 逐样本循环按模式模板分派 (0=dBTP, 1=dBFS+RMS, 2=VU): 只执行当前模式需要的中段,
+  // 逐样本循环按模式模板分派 (0=dBTP, 1=dBFS+RMS): 真峰值/RMS 只按当前模式执行,
   // 模板常量折叠消除每样本分支; rawPeak 全模式收集, 保持切换模式时 peak ballistics 连续。
+  // VU 积分器全模式无条件运行: UI 的独立 VU 表常驻显示功率 (0 VU = -18 dBFS), 与电平模式无关。
   template <int MODE>
   void ProcessMode(const float *L, const float *R, int n, double dt, double w2dt, double wdt2,
                    float &rawPeakL, float &rawPeakR, float &tpPeakL, float &tpPeakR) {
@@ -166,6 +178,8 @@ private:
       const float l = L[i], r = R[i];
       rawPeakL = std::max(rawPeakL, std::fabs(l));
       rawPeakR = std::max(rawPeakR, std::fabs(r));
+      StepVu(mVuPosL, mVuVelL, std::fabs(l), dt, w2dt, wdt2);
+      StepVu(mVuPosR, mVuVelR, std::fabs(r), dt, w2dt, wdt2);
       if (MODE == 0) {
         tpPeakL = std::max(tpPeakL, TruePeakSample(l, mHistL, mHistIdxL));
         tpPeakR = std::max(tpPeakR, TruePeakSample(r, mHistR, mHistIdxR));
@@ -177,9 +191,6 @@ private:
         mRmsSumR += (double)r * r - mRmsRingR[mRmsHeadR];
         mRmsRingR[mRmsHeadR] = r * r;
         mRmsHeadR = (mRmsHeadR + 1) % ringSize;
-      } else {
-        StepVu(mVuPosL, mVuVelL, std::fabs(l), dt, w2dt, wdt2);
-        StepVu(mVuPosR, mVuVelR, std::fabs(r), dt, w2dt, wdt2);
       }
     }
   }
@@ -271,6 +282,8 @@ private:
   float mHoldL = -120.f, mHoldR = -120.f;
   double mHoldSec = 0.0;
   double mHoldTL = 0.0, mHoldTR = 0.0;
+  float mVuHoldL = -120.f, mVuHoldR = -120.f; // 独立 VU 表峰值保持 (与 L/R 条 mHold 独立)
+  double mVuHoldTL = 0.0, mVuHoldTR = 0.0;
   int mOverL = 0, mOverR = 0;
 };
 
