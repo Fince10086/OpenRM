@@ -658,11 +658,13 @@ private:
   // 参考 SPAN RT MAX)。
   // 释放回落在对数域做单极点 (攻击仍为幅度域): dB 差距每帧按系数等比收缩,
   // 回落行为与绝对电平无关 (幅度域指数在 dB 显示下是先快后慢、尾段拖泥带水)。
-  // 幅度域 ≤1e-6 时按 -150dB 地板处理, 该深度低于任何显示下限, 不可见。
+  // 注意不能用 FastAmpToDb (自带 1e-6/-120dB 阈值): 回落到 -120dB 以下时 prev
+  // 会被地板钳到 -150, yDb 一帧跳 ~30dB, 曲线在底部附近"直接消失"而非连续回落;
+  // 这里用无阈值换算, 仅对次正规边缘 (≤1e-30) 兜底, 回落全程连续。
   static float LogDomainRelease(float prev, float raw, float coef) {
     constexpr float kDbFloor = -150.f;
-    const float prevDb = orm::FastAmpToDb(prev, kDbFloor);
-    const float rawDb = orm::FastAmpToDb(raw, kDbFloor);
+    const float prevDb = (prev > 1e-30f) ? 6.02059991328f * orm::FastLog2(prev) : kDbFloor;
+    const float rawDb = (raw > 1e-30f) ? 6.02059991328f * orm::FastLog2(raw) : kDbFloor;
     return std::exp2f((coef * prevDb + (1.f - coef) * rawDb) * 0.16609640474f);
   }
 
