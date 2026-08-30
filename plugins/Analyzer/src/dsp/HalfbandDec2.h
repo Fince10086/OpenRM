@@ -162,6 +162,9 @@ struct HalfbandDec2 {
   static constexpr int kN = 101;
   static constexpr int kQ = (kN - 1) / 2;
   std::array<float, kN> mTap{};
+  // 抽头反转形态 (mTapRev[i] = mTap[kN-1-i]): 点积内层改全升序访存 (NEON 无降序向量加载),
+  // 与 mTap 版逐输出数学等价 (同一批乘积, 累加顺序反转, 浮点噪声级差异)
+  std::array<float, kN> mTapRev{};
   std::array<float, kN - 1> mState{};
   float mWork[kN - 1 + 2048];
   bool mMinPhase = false;
@@ -232,19 +235,24 @@ struct HalfbandDec2 {
   void RebuildTaps() {
     if (mMinPhase) {
       mTap = MinPhaseTaps();
-      return;
+    } else {
+      double taps[kN];
+      BuildProtoTaps(taps);
+      double sum = 0.0;
+      for (double v : taps)
+        sum += v;
+      for (int i = 0; i < kN; ++i)
+        mTap[i] = (float)(taps[i] / sum);
     }
-    double taps[kN];
-    BuildProtoTaps(taps);
-    double sum = 0.0;
-    for (double v : taps)
-      sum += v;
     for (int i = 0; i < kN; ++i)
-      mTap[i] = (float)(taps[i] / sum);
+      mTapRev[i] = mTap[kN - 1 - i];
   }
 
   void Reset() { mState.fill(0.f); }
 
+  // 输出驻留 8 路分块 FIR: 每轮加载 1 个抽头同时累加 8 个输出, 抽头加载量 /8,
+  // 8 条输入流共享缓存行 (该形态下 clang 无法自动生成, 手工展开; 每输出乘积序列与升序
+  // 标量版逐位一致, 与旧版降序仅累加次序反转 —— 数学等价, 浮点噪声级)
   int Process(const float *in, int nin, float *out) {
     const int sz = (kN - 1) + nin;
     for (int i = 0; i < kN - 1; ++i)
@@ -252,11 +260,38 @@ struct HalfbandDec2 {
     for (int i = 0; i < nin; ++i)
       mWork[(kN - 1) + i] = in[i];
     const int nout = nin / 2;
-    for (int j = 0; j < nout; ++j) {
-      const int p = 2 * j;
+    const float *t = mTapRev.data();
+    int j = 0;
+    for (; j + 8 <= nout; j += 8) {
+      // 输出 j+m 的窗口 = mWork[2(j+m) .. 2(j+m)+kN-1], 全部升序
+      const float *x = mWork + 2 * j;
+      float a0 = 0.f, a1 = 0.f, a2 = 0.f, a3 = 0.f;
+      float a4 = 0.f, a5 = 0.f, a6 = 0.f, a7 = 0.f;
+      for (int i = 0; i < kN; ++i) {
+        const float tv = t[i];
+        a0 += tv * x[i];
+        a1 += tv * x[i + 2];
+        a2 += tv * x[i + 4];
+        a3 += tv * x[i + 6];
+        a4 += tv * x[i + 8];
+        a5 += tv * x[i + 10];
+        a6 += tv * x[i + 12];
+        a7 += tv * x[i + 14];
+      }
+      out[j] = a0;
+      out[j + 1] = a1;
+      out[j + 2] = a2;
+      out[j + 3] = a3;
+      out[j + 4] = a4;
+      out[j + 5] = a5;
+      out[j + 6] = a6;
+      out[j + 7] = a7;
+    }
+    for (; j < nout; ++j) {
+      const float *x = mWork + 2 * j;
       float acc = 0.f;
       for (int i = 0; i < kN; ++i)
-        acc += mTap[i] * mWork[(kN - 1) + p - i];
+        acc += t[i] * x[i];
       out[j] = acc;
     }
     for (int i = 0; i < kN - 1; ++i)

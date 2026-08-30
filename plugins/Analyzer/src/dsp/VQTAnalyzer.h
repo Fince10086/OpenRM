@@ -26,6 +26,9 @@ struct AntiAliasDec {
   int mD = 2;                     // 抽取倍率
   int mNumTaps = 0;               // 实际抽头数
   std::array<float, kMaxTaps> mTap{};
+  // 抽头反转形态 (mTapRev[i] = mTap[mNumTaps-1-i]): 点积内层改全升序访存 (NEON 无降序
+  // 向量加载), 与 mTap 版逐输出数学等价 (同一批乘积, 累加顺序反转, 浮点噪声级差异)
+  std::array<float, kMaxTaps> mTapRev{};
   std::array<float, kMaxTaps - 1> mState{};
   float mWork[kMaxTaps - 1 + 4096];
   std::array<float, 65> mTauTab{}; // τ(frac) 查找表: frac = fc/输入流Nyquist ∈[0,1), 65 点线性插值
@@ -115,11 +118,15 @@ struct AntiAliasDec {
     for (int i = 0; i < kN; ++i)
       mTap[i] = (float)(taps[i] / sum);
     MinPhaseConvert(mTap, kN);
+    for (int i = 0; i < mNumTaps; ++i)
+      mTapRev[i] = mTap[mNumTaps - 1 - i];
   }
 
   void Reset() { mState.fill(0.f); }
 
   // 通用 FIR + mD 抽取 (out 可与 in 别名, 输入先拷贝到 mWork)
+  // mD==2 走输出驻留 8 路分块 (每轮 1 抽头 × 8 输出, 全升序访存; 与 HalfbandDec2 同款,
+  // 抽头加载 /8; 每输出乘积序列与升序标量版逐位一致, 与旧降序版仅累加次序反转)
   int Process(const float* in, int nin, float* out) {
     const int nt = mNumTaps;
     const int sz = (nt - 1) + nin;
@@ -128,12 +135,48 @@ struct AntiAliasDec {
     for (int i = 0; i < nin; ++i)
       mWork[(nt - 1) + i] = in[i];
     const int nout = nin / mD;
-    for (int j = 0; j < nout; ++j) {
-      const int p = mD * j;
-      float acc = 0.f;
-      for (int i = 0; i < nt; ++i)
-        acc += mTap[i] * mWork[(nt - 1) + p - i];
-      out[j] = acc;
+    if (mD == 2) {
+      const float *t = mTapRev.data();
+      int j = 0;
+      for (; j + 8 <= nout; j += 8) {
+        const float *x = mWork + 2 * j;
+        float a0 = 0.f, a1 = 0.f, a2 = 0.f, a3 = 0.f;
+        float a4 = 0.f, a5 = 0.f, a6 = 0.f, a7 = 0.f;
+        for (int i = 0; i < nt; ++i) {
+          const float tv = t[i];
+          a0 += tv * x[i];
+          a1 += tv * x[i + 2];
+          a2 += tv * x[i + 4];
+          a3 += tv * x[i + 6];
+          a4 += tv * x[i + 8];
+          a5 += tv * x[i + 10];
+          a6 += tv * x[i + 12];
+          a7 += tv * x[i + 14];
+        }
+        out[j] = a0;
+        out[j + 1] = a1;
+        out[j + 2] = a2;
+        out[j + 3] = a3;
+        out[j + 4] = a4;
+        out[j + 5] = a5;
+        out[j + 6] = a6;
+        out[j + 7] = a7;
+      }
+      for (; j < nout; ++j) {
+        const float *x = mWork + 2 * j;
+        float acc = 0.f;
+        for (int i = 0; i < nt; ++i)
+          acc += t[i] * x[i];
+        out[j] = acc;
+      }
+    } else {
+      for (int j = 0; j < nout; ++j) {
+        const int p = mD * j;
+        float acc = 0.f;
+        for (int i = 0; i < nt; ++i)
+          acc += mTap[i] * mWork[(nt - 1) + p - i];
+        out[j] = acc;
+      }
     }
     for (int i = 0; i < nt - 1; ++i)
       mState[i] = mWork[sz - (nt - 1) + i];
