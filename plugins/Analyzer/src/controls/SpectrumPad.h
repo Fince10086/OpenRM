@@ -43,7 +43,6 @@ public:
   };
 
   SpectrumPad(const IRECT &bounds) : IControl(bounds) {
-    mBandAcc.assign(kSpectrumBands, BandAcc{});
     mSpecPtsL.reserve(kSpectrumBands);
     mSpecPtsR.reserve(kSpectrumBands);
     mSpecPtsM.reserve(kSpectrumBands);
@@ -62,7 +61,7 @@ public:
   // 清空频谱峰值保持 (RESET 按钮联动; hold 关闭时由 UpdatePeakHold 自动调用一次)
   void ClearPeakHold() {
     for (int c = 0; c < 3; ++c) {
-      mHoldSpec[c].assign(mHoldSpec[c].size(), 0.f);
+      mHoldSpec[c].assign(mHoldSpec[c].size(), -1000.f);
       mHoldAge[c].assign(mHoldAge[c].size(), 0.f);
     }
     mHoldSignal = false;
@@ -89,39 +88,38 @@ public:
       const double updatePeriod = hop / std::max(mSampleRate, 1.0);
       mAttackCoeff = (float)std::exp(-updatePeriod / mAttackSec);
       mReleaseCoeff = (float)std::exp(-updatePeriod / mReleaseSec);
+      // 匀速档: 每帧固定"屏高比例"下落 (2·τ 秒跨一屏) -> 显示域恒像素速度,
+      // 与显示范围/斜率无关 (Pro-Q 式视觉恒速)
+      const float unifStepDb = (float)(updatePeriod / (2.0 * std::max(mReleaseSec, 1e-3f)) * (kTopDb - mBottomDb));
 
       const float a = mAttackCoeff, r = mReleaseCoeff;
-      if (mMode == 2 && mPBTFreqs.size() == (size_t)nVals) {
-        for (int c = 0; c < 3; ++c) {
-          if (mSpectrum[c].size() != (size_t)nVals)
-            mSpectrum[c].assign(nVals, 0.f);
-          for (int i = 0; i < nVals; ++i) {
-            const float raw = d.vals[c][i], prev = mSpectrum[c][i];
-            const float fc = mPBTFreqs[i];
-            const float bw = (fc < 250.f)
-                ? ((i > 0 && mPBTFreqs[i] < 250.f) ? (mPBTFreqs[i] - mPBTFreqs[i - 1]) : 40.f)
-                : (fc * 0.1f);
-            // 物理起振时间常数 τ = 1 / (π · bw): 窄带低频展现自然蓄力爬坡感
-            const float tauBand = std::max(mAttackSec, 1.f / (3.14159f * std::max(bw, 5.f)));
-            const float aBand = (float)std::exp(-updatePeriod / tauBand);
-            mSpectrum[c][i] = (raw > prev) ? aBand * prev + (1.f - aBand) * raw
-                                           : ((mReleaseMode == 1) ? UniformRelease(prev, raw, r)
-                                                                  : LogDomainRelease(prev, raw, r));
-          }
-        }
+      if (mMode == 0) {
+        ProcessFFTBands(d, a, r, unifStepDb);
       } else {
+        // VQT/PBT/RTA: 逐 band 显示域弹道 (目标 = 幅度 dB + 斜率, 已钳到显示范围)
+        const float *tilt = mSlopeDb.empty() ? nullptr : mSlopeDb.data();
         for (int c = 0; c < 3; ++c) {
           if (mSpectrum[c].size() != (size_t)nVals)
-            mSpectrum[c].assign(nVals, 0.f);
+            mSpectrum[c].assign(nVals, -150.f);
           for (int i = 0; i < nVals; ++i) {
-            const float raw = d.vals[c][i], prev = mSpectrum[c][i];
-            mSpectrum[c][i] = (raw > prev) ? a * prev + (1.f - a) * raw
-                                           : ((mReleaseMode == 1) ? UniformRelease(prev, raw, r)
-                                                                  : LogDomainRelease(prev, raw, r));
+            const float rawDb =
+                (d.vals[c][i] > 1e-30f) ? 6.02059991328f * orm::FastLog2(d.vals[c][i]) : -150.f;
+            const float target = SmoothTarget(rawDb, tilt ? tilt[i] : 0.f);
+            float aCoef = a;
+            if (mMode == 2 && mPBTFreqs.size() == (size_t)nVals) {
+              // PBT 物理起振时间常数 τ = 1 / (π · bw): 窄带低频展现自然蓄力爬坡感
+              const float fc = mPBTFreqs[i];
+              const float bw = (fc < 250.f)
+                  ? ((i > 0 && mPBTFreqs[i] < 250.f) ? (mPBTFreqs[i] - mPBTFreqs[i - 1]) : 40.f)
+                  : (fc * 0.1f);
+              const float tauBand = std::max(mAttackSec, 1.f / (3.14159f * std::max(bw, 5.f)));
+              aCoef = (float)std::exp(-updatePeriod / tauBand);
+            }
+            mSpectrum[c][i] = StepSmoothed(mSpectrum[c][i], target, aCoef, r, unifStepDb);
           }
         }
       }
-      UpdatePeakHold(nVals);
+      UpdatePeakHold();
       SetDirty(false);
     } else if (msgTag == kMsgTagSampleRate) {
       double sr;
@@ -235,7 +233,7 @@ public:
       SetDirty(false);
     } else if (msgTag == kMsgTagReset) {
       for (int c = 0; c < 3; ++c)
-        mSpectrum[c].assign(mSpectrum[c].size(), 0.f);
+        mSpectrum[c].assign(mSpectrum[c].size(), -150.f);
       ClearPeakHold();
       SetDirty(false);
     }
@@ -377,14 +375,6 @@ private:
 
   struct Pt {
     float x, y;
-  };
-  struct BandAcc {
-    float max[3] = {0.f, 0.f, 0.f};
-    float holdMax[3] = {0.f, 0.f, 0.f}; // 峰值保持: 同域聚合的各通道 hold 幅度 (FFT 模式 bin -> band)
-    // 是否收到过 bin (与幅度无关)。FFT 模式的 band 是 bin 的聚合桶, 低频 band
-    // 宽度可小于 bin 间距而完全无 bin; 无 bin 的空桶收集后用首个覆盖频带的值
-    // 常值外推 (max/holdMax 同步), 有 bin 的照常收录
-    char used[3] = {0, 0, 0};
   };
 
   // 频率(Hz) -> 归一化 x (0..1), 与 BandPass Freq 参数 (20..20000, ShapeExp) 一致
@@ -653,33 +643,127 @@ private:
     }
   }
 
-  // 释放回落模式 (mReleaseMode): 0=对数域单极点, 1=匀速 dB 速率。两种模式共用
-  // 同一回落系数 r (对数域按 dB 差距等比收缩; 匀速域幅度乘 r = 恒定 8.686/τ dB/s,
-  // 参考 SPAN RT MAX)。
-  // 释放回落在对数域做单极点 (攻击仍为幅度域): dB 差距每帧按系数等比收缩,
-  // 回落行为与绝对电平无关 (幅度域指数在 dB 显示下是先快后慢、尾段拖泥带水)。
-  // 注意不能用 FastAmpToDb (自带 1e-6/-120dB 阈值): 回落到 -120dB 以下时 prev
-  // 会被地板钳到 -150, yDb 一帧跳 ~30dB, 曲线在底部附近"直接消失"而非连续回落;
-  // 这里用无阈值换算, 仅对次正规边缘 (≤1e-30) 兜底, 回落全程连续。
-  static float LogDomainRelease(float prev, float raw, float coef) {
-    constexpr float kDbFloor = -150.f;
-    const float prevDb = (prev > 1e-30f) ? 6.02059991328f * orm::FastLog2(prev) : kDbFloor;
-    const float rawDb = (raw > 1e-30f) ? 6.02059991328f * orm::FastLog2(raw) : kDbFloor;
-    return std::exp2f((coef * prevDb + (1.f - coef) * rawDb) * 0.16609640474f);
+  // ── 显示域弹道 (mSpectrum 存显示 dB: 已含斜率, 范围归一) ──────────────
+  // 弹道在"显示域"运行: 目标 = 原始幅度 dB + 斜率, 并钳到显示范围 [mBottomDb, kTopDb]
+  // (屏外目标按屏底/屏顶处理)。由此:
+  //   * 屏上运动轨迹只由弹道参数决定, 与显示范围(Range)、斜率、信号电平无关;
+  //   * 各频段 (含斜率差) 的显示差距按同一比例收缩, 回落时频谱整体水平下沉, 无吊尾;
+  //   * 目标钳屏内后, 回落天然收敛在屏内, 不再有冲出屏外/低电平跳变的问题。
+
+  // 弹道目标: 原始 dB + 斜率, 钳到显示范围。底部带 ~10% 屏高缓冲 (Pro-Q 式:
+  // 目标在屏底下方一点, 屏内最后一段的差距含缓冲, 不会因渐近屏底而拖尾磨蹭)
+  float SmoothTarget(float rawDb, float tiltDb) const {
+    const float over = 0.1f * (kTopDb - mBottomDb);
+    return std::clamp(rawDb + tiltDb, mBottomDb - over, kTopDb);
   }
 
-  // 匀速回落: 每帧幅度乘同一系数 coef (等效 dB 域恒定速率 8.686/τ dB/s 下坡),
-  // 但不低于当前信号值 —— 曲线全程匀速落到信号为止, 无对数域的接近渐缓。
-  // 静音 (raw=0) 时按指数自然衰减, 不置零。
-  static float UniformRelease(float prev, float raw, float coef) {
-    return std::max(raw, prev * coef);
+  // 单点弹道: 攻击 dB 域单极点; 回落按模式:
+  //   LOG  = 显示域差距等比收缩 (与范围/斜率无关, 先快后慢)
+  //   UNIF = 恒定屏高比例速率 (2·τ 跨一屏, 恒像素速度), 不低于目标
+  float StepSmoothed(float prevDb, float targetDb, float aCoef, float rCoef, float unifStepDb) const {
+    if (targetDb > prevDb)
+      return aCoef * prevDb + (1.f - aCoef) * targetDb;
+    if (mReleaseMode == 1)
+      return std::max(targetDb, prevDb - unifStepDb);
+    return rCoef * prevDb + (1.f - rCoef) * targetDb;
+  }
+
+  // 合并显示 dB: PWR = 功率和, SUM = 幅度和 (与旧幅度域合并公式同语义)
+  static float MergeDb(float dL, float dR, int algo) {
+    if (algo == 0) {
+      const float p = std::exp2f(dL * 0.33219280949f) + std::exp2f(dR * 0.33219280949f); // 10^(dB/10)
+      return 3.01029995664f * orm::FastLog2(p);
+    }
+    const float a = std::exp2f(dL * 0.16609640474f) + std::exp2f(dR * 0.16609640474f); // 10^(dB/20)
+    return 6.02059991328f * orm::FastLog2(a);
+  }
+
+  // FFT 模式: bin -> 256 band 聚合 (取 max, 仅首带入场外推) 后做显示域弹道;
+  // 无 bin 的空桶不参与绘制 (mBandUsed 门控), 曲线在真实 band 点间由贝塞尔插值。
+  // 弹道在 band 域进行: 聚合后的点数只有 256, 计算量远小于原 bin 域逐点平滑。
+  void ProcessFFTBands(ISenderData<3, TDataPacket> &d, float a, float r, float unifStepDb) {
+    if ((int)mBinToBand.size() != mNumBins)
+      RebuildBinToBand();
+    const int nb = std::min(mNumBins, (int)d.vals[0].size());
+    if (mSpectrum[0].size() != (size_t)kSpectrumBands)
+      for (int c = 0; c < 3; ++c)
+        mSpectrum[c].assign(kSpectrumBands, -150.f);
+
+    // 每帧聚合缓冲 (栈上, 3×256)
+    std::array<std::array<float, kSpectrumBands>, 3> bandMax;
+    std::array<float, 3> anchor{};
+    for (int c = 0; c < 3; ++c)
+      bandMax[c].fill(0.f);
+    mBandUsed.fill(false);
+    bool anchorUsed = false;
+
+    for (int i = 0; i < nb; ++i) {
+      const int b = mBinToBand[i];
+      if (b == kSubBand) { // 20Hz 下方锚点 (轴外位置, 只用于入场线斜率)
+        for (int c = 0; c < 3; ++c)
+          if (d.vals[c][i] > anchor[c])
+            anchor[c] = d.vals[c][i];
+        anchorUsed = true;
+        continue;
+      }
+      if (b < 0)
+        continue;
+      mBandUsed[b] = true;
+      for (int c = 0; c < 3; ++c)
+        if (d.vals[c][i] > bandMax[c][b])
+          bandMax[c][b] = d.vals[c][i];
+    }
+
+    // 空桶策略 (显示端插值): 低频 band 可窄于 bin 间距而完全无 bin, 这类空桶
+    // 不造值 —— 弹道留在空桶 (目标在屏底外), 绘制时跳过, 由贝塞尔曲线直接在
+    // 真实测量的 band 点之间插值相连 (旧版"空桶跳过、曲线直连"观感)。
+    // 仅首带之前 (首个有 bin 的 band 以下) 外推入场线: 有 20Hz 下方锚点
+    // (10-20Hz 桶) 时按 dB-对数频率线性内插带自然入场斜率, 否则首带常值。
+    const double logLo = std::log2(kSpecFreqLo);
+    const double logBand = (std::log2(kSpecFreqHi) - logLo) / kSpectrumBands;
+    int first = 0;
+    while (first < kSpectrumBands && !mBandUsed[first])
+      ++first;
+    if (first < kSpectrumBands) {
+      const double fFirst = kSpecFreqLo * std::exp2(logBand * (first + 0.5));
+      for (int c = 0; c < 3; ++c) {
+        const float aFirst = bandMax[c][first];
+        const float aA = anchor[c];
+        const bool haveAnchor = anchorUsed && aA > 1e-9f && aFirst > 1e-9f;
+        for (int b = 0; b < first; ++b) {
+          float ext = aFirst;
+          if (haveAnchor) {
+            const double fb = kSpecFreqLo * std::exp2(logBand * (b + 0.5));
+            const double t = std::log2(fb / (double)kSpecAnchorHz) /
+                             std::log2(fFirst / (double)kSpecAnchorHz);
+            ext = aA * std::pow(aFirst / aA, (float)t);
+          }
+          bandMax[c][b] = ext;
+        }
+      }
+      // 入场段只画左缘一点 (band 0): 外推值在 dB-对数频率轴上线性共线,
+      // 若整段都画, 贝塞尔经过共线点只会渲染成直线, 在首带处形成折角。
+      // 只留一点后, 该点与首带之间由贝塞尔弧线平滑相连 (拐向由真实曲线形状决定)。
+      mBandUsed[0] = true;
+    }
+
+    // 显示域弹道 (含斜率)
+    const bool hasTilt = !mSlopeDb.empty();
+    for (int c = 0; c < 3; ++c)
+      for (int b = 0; b < kSpectrumBands; ++b) {
+        const float rawDb =
+            (bandMax[c][b] > 1e-30f) ? 6.02059991328f * orm::FastLog2(bandMax[c][b]) : -150.f;
+        const float target = SmoothTarget(rawDb, hasTilt ? mSlopeDb[b] : 0.f);
+        mSpectrum[c][b] = StepSmoothed(mSpectrum[c][b], target, a, r, unifStepDb);
+      }
   }
 
   // 频谱峰值保持: 开关/时长与电平表 hold 共用 (mHoldSec 随电平表数据帧透传, 0 = 关,
-  // ∞ 档为 1e9)。逐点跟踪平滑后幅度 (与显示同域: FFT 为 bin, 其余为 band):
-  // 刷新峰值即清计时; 超时时长后按 20 dB/s 回落 (幅度域每秒 ×0.1), 下限为当前幅度。
+  // ∞ 档为 1e9)。逐点跟踪平滑后显示 dB (与 mSpectrum 同域同长):
+  // 刷新峰值即清计时; 超时时长后按恒定 20 dB/s 回落, 下限为当前显示值。
   // 帧间 dt 取 steady_clock 实测, 首帧/挂起恢复后只采峰不回落。
-  void UpdatePeakHold(int nVals) {
+  void UpdatePeakHold() {
+    const int nVals = (int)mSpectrum[0].size();
     if (mHoldSec <= 0.f) {
       if (mHoldWasActive) {
         ClearPeakHold();
@@ -697,55 +781,43 @@ private:
     mLastHoldTp = now;
     mHoldTpValid = true;
 
-    // 回落因子每帧一个; ∞ 档恒为 1, 计时照常累加但永不超时
-    const float decay = (mHoldSec < 1e8f && dt > 0.f) ? std::pow(10.f, -dt) : 1.f;
+    // 回落速率 20 dB/s; ∞ 档恒为 0, 计时照常累加但永不超时
+    const float fallDb = (mHoldSec < 1e8f && dt > 0.f) ? 20.f * dt : 0.f;
     for (int c = 0; c < 3; ++c) {
       if (mHoldSpec[c].size() != (size_t)nVals) {
-        mHoldSpec[c].assign(nVals, 0.f);
+        mHoldSpec[c].assign(nVals, -1000.f);
         mHoldAge[c].assign(nVals, 0.f);
         mHoldSignal = false;
       }
       for (int i = 0; i < nVals; ++i) {
-        const float raw = mSpectrum[c][i];
+        const float cur = mSpectrum[c][i];
         float &hold = mHoldSpec[c][i];
-        if (raw > hold) {
-          hold = raw;
+        if (cur > hold) {
+          hold = cur;
           mHoldAge[c][i] = 0.f;
-          if (raw > 1e-6f)
+          if (cur > mBottomDb + 0.5f)
             mHoldSignal = true;
-        } else if (decay < 1.f) {
+        } else if (fallDb > 0.f) {
           mHoldAge[c][i] += dt;
-          if (mHoldAge[c][i] > mHoldSec && hold * decay < raw)
-            hold = raw;
-          else if (mHoldAge[c][i] > mHoldSec)
-            hold *= decay;
+          if (mHoldAge[c][i] > mHoldSec)
+            hold = std::max(cur, hold - fallDb);
         }
       }
     }
   }
 
-  // hold 曲线单点值 (VQT/PBT/RTA: band 域直接取): LR 显示取双通道 hold 较大者,
-  // MERGE 用与显示曲线相同的 merge 公式 (PWR 功率和 / SUM 单声道和)。
+  // hold 曲线单点值 (显示 dB): LR 显示取双通道较大者, MERGE 用与显示曲线相同的 merge 公式
   float HoldValAt(int b) const {
-    const float hL = (mHoldSpec[0].size() > (size_t)b) ? mHoldSpec[0][b] : 0.f;
-    const float hR = (mHoldSpec[1].size() > (size_t)b) ? mHoldSpec[1][b] : 0.f;
+    const float hL = (mHoldSpec[0].size() > (size_t)b) ? mHoldSpec[0][b] : -1000.f;
+    const float hR = (mHoldSpec[1].size() > (size_t)b) ? mHoldSpec[1][b] : -1000.f;
     if (mChanMode == 0)
       return (hL > hR) ? hL : hR;
-    const float hSum = (mHoldSpec[2].size() > (size_t)b) ? mHoldSpec[2][b] : 0.f;
-    return (mMergeAlgo == 0) ? std::sqrt(hL * hL + hR * hR) : hSum;
-  }
-
-  // hold 曲线单点值 (FFT: 256 band 聚合后): merge 公式同显示曲线
-  float HoldBandVal(const BandAcc &acc) const {
-    if (mChanMode == 0)
-      return std::max(acc.holdMax[0], acc.holdMax[1]);
-    return (mMergeAlgo == 0)
-               ? std::sqrt(acc.holdMax[0] * acc.holdMax[0] + acc.holdMax[1] * acc.holdMax[1])
-               : acc.holdMax[2];
+    const float hSum = (mHoldSpec[2].size() > (size_t)b) ? mHoldSpec[2][b] : -1000.f;
+    return (mMergeAlgo == 0) ? MergeDb(hL, hR, 0) : hSum;
   }
 
   void DrawSpectrum(IGraphics &g, const IRECT &plot) {
-    if (mSpectrum[0].empty() || mSpectrum[1].empty() || mNumBins <= 0)
+    if (mSpectrum[0].empty() || mSpectrum[1].empty())
       return;
     if (plot.W() <= 0.f || plot.H() <= 0.f)
       return;
@@ -755,229 +827,55 @@ private:
     IColor cL, cR, cO;
     GetChannelColors(cL, cR, cO);
 
-    auto ampToY = [&](float amp) -> float {
-      const float db =
-          (amp > 1e-6f) ? std::clamp(orm::FastAmpToDb(amp, mBottomDb), mBottomDb, kTopDb) : mBottomDb;
-      return plot.B - (db - mBottomDb) / (kTopDb - mBottomDb) * plot.H();
+    // mSpectrum 已存显示 dB (含斜率, 弹道已钳在显示范围内), 直接映射像素
+    const float span = kTopDb - mBottomDb;
+    auto dbToY = [&](float db) -> float {
+      return plot.B - (db - mBottomDb) / span * plot.H();
     };
 
-    mHoldPts.clear();
-
-    // VQT 模式: 数据 = band 幅度, 按 band 中心频率的原始对数位置直接绘制 (不做 256 band 聚合)
-    if (mMode == 1) {
-      mSpecPtsL.clear();
-      mSpecPtsR.clear();
-      mSpecPtsM.clear();
-      const int nb = (int)mVQTFreqs.size();
-      const int have = std::min(nb, (int)mSpectrum[0].size());
-      for (int b = 0; b < have; ++b) {
-        const float x = plot.L + mVQTFreqNorm[b] * plot.W();
-        // 斜率: 每 band 幅度乘常数增益 (显示域变换, 平滑/hold 采集留在原始域;
-        // 正增益与 max 聚合可交换, 显示曲线与 hold 曲线同步倾斜)
-        const float g = SlopeGain(b);
-        const float aL = mSpectrum[0][b] * g;
-        const float aR = mSpectrum[1][b] * g;
-        const float aSum = (mSpectrum[2].size() > (size_t)b) ? mSpectrum[2][b] * g : 0.f;
-        const float yL = ampToY(aL);
-        const float yR = ampToY(aR);
-        mSpecPtsL.push_back({x, yL});
-        mSpecPtsR.push_back({x, yR});
-
-        const float aM = (mMergeAlgo == 0) ? std::sqrt(aL * aL + aR * aR) : aSum;
-        mSpecPtsM.push_back({x, ampToY(aM)});
-        mHoldPts.push_back({x, ampToY(HoldValAt(b) * g)});
-      }
-
-      if (mChanMode == 0) {
-        DrawFill(g, plot, mSpecPtsL, cL, kGradientMinAlpha, kLayerTopAlpha, true, false);
-        DrawFill(g, plot, mSpecPtsR, cR, kGradientMinAlpha, kLayerTopAlpha, true, true);
-      } else {
-        DrawFill(g, plot, mSpecPtsM, cO, kGradientMinAlpha, 255, true);
-      }
-      DrawHoldCurve(g, plot, true);
-      return;
-    }
-
-    // PBT 模式: 数据 = 52/58/69 临界频带幅度, 按 PBT 中心频率绘制, 折线连接呈现经典嶙峋锯齿感
-    if (mMode == 2) {
-      mSpecPtsL.clear();
-      mSpecPtsR.clear();
-      mSpecPtsM.clear();
-      const int nb = (int)mPBTFreqs.size();
-      const int have = std::min(nb, (int)mSpectrum[0].size());
-      for (int b = 0; b < have; ++b) {
-        const float x = plot.L + mPBTFreqNorm[b] * plot.W();
-        const float g = SlopeGain(b); // 斜率: 每 band 常数增益, 曲线与 hold 同步倾斜
-        const float aL = mSpectrum[0][b] * g;
-        const float aR = mSpectrum[1][b] * g;
-        const float aSum = (mSpectrum[2].size() > (size_t)b) ? mSpectrum[2][b] * g : 0.f;
-        const float yL = ampToY(aL);
-        const float yR = ampToY(aR);
-        mSpecPtsL.push_back({x, yL});
-        mSpecPtsR.push_back({x, yR});
-
-        const float aM = (mMergeAlgo == 0) ? std::sqrt(aL * aL + aR * aR) : aSum;
-        mSpecPtsM.push_back({x, ampToY(aM)});
-        mHoldPts.push_back({x, ampToY(HoldValAt(b) * g)});
-      }
-
-      if (mChanMode == 0) {
-        DrawFill(g, plot, mSpecPtsL, cL, kGradientMinAlpha, kLayerTopAlpha, false, false);
-        DrawFill(g, plot, mSpecPtsR, cR, kGradientMinAlpha, kLayerTopAlpha, false, true);
-      } else {
-        DrawFill(g, plot, mSpecPtsM, cO, kGradientMinAlpha, 255, false);
-      }
-      DrawHoldCurve(g, plot, false);
-      return;
-    }
-
-    // RTA 模式: 数据 = 1/6, 1/12, 1/24 八度 IIR 滤波器组各频带 RMS 幅度, 按对数中心频率平滑贝塞尔曲线绘制
-    if (mMode == 3) {
-      mSpecPtsL.clear();
-      mSpecPtsR.clear();
-      mSpecPtsM.clear();
-      const int nb = (int)mRTAFreqs.size();
-      const int have = std::min(nb, (int)mSpectrum[0].size());
-      for (int b = 0; b < have; ++b) {
-        const float x = plot.L + mRTAFreqNorm[b] * plot.W();
-        const float g = SlopeGain(b); // 斜率: 每 band 常数增益, 曲线与 hold 同步倾斜
-        const float aL = mSpectrum[0][b] * g;
-        const float aR = mSpectrum[1][b] * g;
-        const float aSum = (mSpectrum[2].size() > (size_t)b) ? mSpectrum[2][b] * g : 0.f;
-        const float yL = ampToY(aL);
-        const float yR = ampToY(aR);
-        mSpecPtsL.push_back({x, yL});
-        mSpecPtsR.push_back({x, yR});
-
-        const float aM = (mMergeAlgo == 0) ? std::sqrt(aL * aL + aR * aR) : aSum;
-        mSpecPtsM.push_back({x, ampToY(aM)});
-        mHoldPts.push_back({x, ampToY(HoldValAt(b) * g)});
-      }
-
-      if (mChanMode == 0) {
-        DrawFill(g, plot, mSpecPtsL, cL, kGradientMinAlpha, kLayerTopAlpha, true, false);
-        DrawFill(g, plot, mSpecPtsR, cR, kGradientMinAlpha, kLayerTopAlpha, true, true);
-      } else {
-        DrawFill(g, plot, mSpecPtsM, cO, kGradientMinAlpha, 255, true);
-      }
-      DrawHoldCurve(g, plot, true);
-      return;
-    }
+    // 每 band 的 x 与曲线平滑策略 (PBT 折线, 其余贝塞尔)
+    const int nb = (mMode == 1) ? (int)mVQTFreqs.size()
+                 : (mMode == 2) ? (int)mPBTFreqs.size()
+                 : (mMode == 3) ? (int)mRTAFreqs.size()
+                                : kSpectrumBands;
+    const bool smooth = (mMode != 2);
 
     mSpecPtsL.clear();
     mSpecPtsR.clear();
     mSpecPtsM.clear();
-    for (auto &acc : mBandAcc)
-      acc = BandAcc{};
-    mSubAnchor = BandAcc{};
+    mHoldPts.clear();
+    const int have = std::min(nb, (int)mSpectrum[0].size());
+    for (int b = 0; b < have; ++b) {
+      if (mMode == 0 && !mBandUsed[b])
+        continue; // FFT 空桶不画点: 曲线在真实 band 点间由贝塞尔插值相连
+      float x;
+      if (mMode == 1)
+        x = plot.L + mVQTFreqNorm[b] * plot.W();
+      else if (mMode == 2)
+        x = plot.L + mPBTFreqNorm[b] * plot.W();
+      else if (mMode == 3)
+        x = plot.L + mRTAFreqNorm[b] * plot.W();
+      else
+        x = plot.L + mBandNormX[b] * plot.W();
 
-    // bin -> band 映射查表 (预计算, 见 RebuildBinToBand), 避免每帧 2048*2 次 log2
-    if ((int)mBinToBand.size() != mNumBins)
-      RebuildBinToBand();
-    const int nb = std::min(mNumBins, (int)mSpectrum[0].size());
-    for (int i = 0; i < nb; ++i) {
-      const int b = mBinToBand[i];
-      if (b == kSubBand) { // 20Hz 下方锚点 (轴外位置, 只用于入场线斜率)
-        for (int c = 0; c < 3; ++c) {
-          if (i < (int)mSpectrum[c].size()) {
-            const float amp = mSpectrum[c][i];
-            if (amp > mSubAnchor.max[c])
-              mSubAnchor.max[c] = amp;
-            mSubAnchor.used[c] = 1;
-          }
-          if (i < (int)mHoldSpec[c].size()) {
-            const float h = mHoldSpec[c][i];
-            if (h > mSubAnchor.holdMax[c])
-              mSubAnchor.holdMax[c] = h;
-          }
-        }
-        continue;
-      }
-      if (b < 0)
-        continue;
-      for (int c = 0; c < 3; ++c) {
-        if (i < (int)mSpectrum[c].size()) {
-          const float amp = mSpectrum[c][i];
-          if (amp > mBandAcc[b].max[c])
-            mBandAcc[b].max[c] = amp;
-          mBandAcc[b].used[c] = 1;
-        }
-        // hold 同域聚合 (hold 与 mSpectrum 同为 bin 域; 缺帧/未积累时按 0 处理)
-        if (i < (int)mHoldSpec[c].size()) {
-          const float h = mHoldSpec[c][i];
-          if (h > mBandAcc[b].holdMax[c])
-            mBandAcc[b].holdMax[c] = h;
-        }
-      }
-    }
+      const float dL = mSpectrum[0][b];
+      const float dR = mSpectrum[1][b];
+      const float dSum = (mSpectrum[2].size() > (size_t)b) ? mSpectrum[2][b] : mBottomDb;
+      mSpecPtsL.push_back({x, dbToY(dL)});
+      mSpecPtsR.push_back({x, dbToY(dR)});
 
-    // 低频空桶外推: 低于首个有 bin 的频带没有分析结果 (bin 间距 > band 宽度)。
-    // 有 20Hz 下方锚点 (10-20Hz 桶) 时, 锚点与首个实测带之间按 dB-对数频率线性
-    // 内插 —— 入场线带自然斜率 (锚点在显示轴外, 不画点); 无锚点 (如 LOW 档 bin
-    // 间距 23Hz, 20Hz 下无 bin) 或锚点静音时退回首带常值延伸。
-    // max/holdMax 同步外推, hold 曲线在外推段与主曲线保持一致
-    const double logBand = (std::log2((double)kSpecFreqHi) - std::log2((double)kSpecFreqLo)) /
-                           kSpectrumBands;
-    for (int c = 0; c < 3; ++c) {
-      int first = 0;
-      while (first < kSpectrumBands && !mBandAcc[first].used[c])
-        ++first;
-      if (first >= kSpectrumBands)
-        continue;
-      const double fFirst = kSpecFreqLo * std::exp2(logBand * (first + 0.5));
-      const float aFirst = mBandAcc[first].max[c];
-      const float hFirst = mBandAcc[first].holdMax[c];
-      const float aA = mSubAnchor.max[c];
-      const bool haveAnchor = mSubAnchor.used[c] && aA > 1e-9f && aFirst > 1e-9f;
-      for (int b = 0; b < first; ++b) {
-        float ext = aFirst, extH = hFirst;
-        if (haveAnchor) {
-          const double fb = kSpecFreqLo * std::exp2(logBand * (b + 0.5));
-          const double t = std::log2(fb / (double)kSpecAnchorHz) /
-                           std::log2(fFirst / (double)kSpecAnchorHz);
-          const float hA = (mSubAnchor.holdMax[c] > 1e-9f) ? mSubAnchor.holdMax[c] : hFirst;
-          ext = aA * std::pow(aFirst / aA, (float)t);
-          extH = hA * std::pow(hFirst / hA, (float)t);
-        }
-        mBandAcc[b].max[c] = ext;
-        mBandAcc[b].holdMax[c] = extH;
-        mBandAcc[b].used[c] = 1;
-      }
-    }
-
-    for (int b = 0; b < kSpectrumBands; ++b) {
-      const BandAcc &acc = mBandAcc[b];
-      const float x = plot.L + mBandNormX[b] * plot.W();
-      // 斜率: band 级乘常数增益 (bin 原始域聚合后施加; 正增益与 max 可交换),
-      // 显示曲线与 hold 曲线 (同 band 域聚合) 同步倾斜
-      const float g = SlopeGain(b);
-      const float aL = acc.max[0] * g, aR = acc.max[1] * g, aSum = acc.max[2] * g;
-      const float yL = ampToY(aL);
-      const float yR = ampToY(aR);
-      if (acc.used[0])
-        mSpecPtsL.push_back({x, yL});
-      if (acc.used[1])
-        mSpecPtsR.push_back({x, yR});
-
-      const float aM = (mMergeAlgo == 0) ? std::sqrt(aL * aL + aR * aR) : aSum;
-      const bool usedM = (mMergeAlgo == 0) ? (acc.used[0] || acc.used[1]) : (acc.used[2] != 0);
-      if (usedM)
-        mSpecPtsM.push_back({x, ampToY(aM)});
-
-      // hold 曲线点: 门控与显示点一致 (LR/PWR 看任一通道, SUM 看通道 2)
-      const bool usedH =
-          (mChanMode == 0 || mMergeAlgo == 0) ? (acc.used[0] || acc.used[1]) : (acc.used[2] != 0);
-      if (usedH)
-        mHoldPts.push_back({x, ampToY(HoldBandVal(acc) * g)});
+      const float dM = (mMergeAlgo == 0) ? MergeDb(dL, dR, 0) : dSum;
+      mSpecPtsM.push_back({x, dbToY(dM)});
+      mHoldPts.push_back({x, dbToY(HoldValAt(b))});
     }
 
     if (mChanMode == 0) {
-      DrawFill(g, plot, mSpecPtsL, cL, kGradientMinAlpha, kLayerTopAlpha, true, false);
-      DrawFill(g, plot, mSpecPtsR, cR, kGradientMinAlpha, kLayerTopAlpha, true, true);
+      DrawFill(g, plot, mSpecPtsL, cL, kGradientMinAlpha, kLayerTopAlpha, smooth, false);
+      DrawFill(g, plot, mSpecPtsR, cR, kGradientMinAlpha, kLayerTopAlpha, smooth, true);
     } else {
-      DrawFill(g, plot, mSpecPtsM, cO, kGradientMinAlpha, 255, true);
+      DrawFill(g, plot, mSpecPtsM, cO, kGradientMinAlpha, 255, smooth);
     }
-    DrawHoldCurve(g, plot, true);
+    DrawHoldCurve(g, plot, smooth);
   }
 
   // 建开放曲线主路径 (右缘吸附 + 平滑/折线), 供填充与 hold 细线共用:
@@ -1105,7 +1003,7 @@ private:
     }
   }
 
-  std::vector<float> mSpectrum[3]; // 平滑后的 L/R/Sum 频谱幅度 (幅度, 非 dB)
+  std::vector<float> mSpectrum[3]; // 平滑后的显示 dB (已含斜率; FFT = 256 band, 其余 = band 数)
   float mPeakL = -120.f, mPeakR = -120.f;   // 电平表: 样本峰值 dBFS (已平滑)
   float mTrueL = -120.f, mTrueR = -120.f;   // 电平表: dBTP 真峰值 (已平滑)
   float mRmsL = -120.f, mRmsR = -120.f;     // 电平表: RMS dBFS (300ms 积分)
@@ -1115,6 +1013,7 @@ private:
   int mMeterMode = 0;                       // 电平表模式: 0=dBTP, 1=dBFS+RMS, 2=VU
   bool mOverL = false, mOverR = false;      // 电平表: 过载锁存
   std::vector<int> mBinToBand;     // 预计算: bin -> band 映射 (-1 = 频段外)
+  std::array<bool, kSpectrumBands> mBandUsed{}; // FFT: 本帧有 bin 的 band 标记 (含首带入场线), 绘制门控
   int mMode = 0;                   // 分析模式: 0=FFT, 1=VQT, 2=PBT, 3=RTA
   int mChanMode = 0;               // 声道显示模式: 0=L/R, 1=MERGE
   int mMergeAlgo = 0;              // 合并算法: 0=PWR 功率和, 1=SUM 单声道和
@@ -1126,14 +1025,14 @@ private:
   std::vector<float> mRTAFreqNorm;  // RTA band 频率归一化位置 (预计算, 与 mRTAFreqs 同步)
   std::array<float, kSpectrumBands> mBandNormX{}; // FFT 256 band 频率归一化位置 (预计算)
 
-  // ── 频谱斜率 (显示域变换) ────────────────────────────────────────────
-  // 每显示值幅度乘常数增益 g(f) = 10^(S·log2(f/f_pivot)/20), S 为当前模式生效斜率
+  // ── 频谱斜率 (显示域变换, 在弹道前施加) ────────────────────────────────
+  // 每显示值 t 加常数 dB: tiltDb(f) = S·log2(f/f_pivot), S 为当前模式生效斜率
   // (FFT: 0/3/4.5 dB/oct; VQT/PBT/RTA: -3/0/1.5, 由插件按模式档值下发)。
-  // 增益为每 band 正常数, 与攻击/释放平滑及 hold 采集可交换, 故仅在绘制时施加;
-  // 表在斜率/模式/band 表变化时重建 (与 RebuildBinToBand 同模式, 热路径只查表)。
+  // 弹道在含斜率后的显示域运行: 高频的抬升进入"差距"本身, 回落时整体水平
+  // 下沉, 不会出现高频吊尾; 表在斜率/模式/band 表变化时重建 (热路径只查表)。
   static constexpr float kSlopeRefHz = 632.45553f; // 支点 = 显示范围几何中心 sqrt(20·20000)
   float mSlopeDbPerOct = 0.f;   // 当前模式生效斜率 (dB/oct), 0 = 无倾斜
-  std::vector<float> mSlopeGain; // 每显示值斜率增益 (FFT 256 band / 逐 band 引擎各 band)
+  std::vector<float> mSlopeDb;  // 每显示值斜率 (dB, FFT 256 band / 逐 band 引擎各 band)
 
   void RebuildSlopeGain() {
     std::vector<float> *freqs = nullptr;
@@ -1144,25 +1043,20 @@ private:
       freqs = (mMode == 1) ? &mVQTFreqs : (mMode == 2) ? &mPBTFreqs : &mRTAFreqs;
       n = (int)freqs->size();
     }
-    mSlopeGain.assign(n, 1.f);
+    mSlopeDb.assign(n, 0.f);
     if (mSlopeDbPerOct == 0.f || n <= 0)
       return;
-    // gain = 10^(S·log2(f/f0)/20) = exp2(S·log2(f/f0)·log2(10)/20)
-    const float k = mSlopeDbPerOct * 0.16609640474f; // log2(10)/20
     const double logLo = std::log2(kSpecFreqLo);
     const double logBand = (std::log2(kSpecFreqHi) - logLo) / kSpectrumBands;
     for (int b = 0; b < n; ++b) {
       const float f = (mMode == 0) ? (float)(kSpecFreqLo * std::exp2(logBand * (b + 0.5)))
                                    : (*freqs)[b];
-      mSlopeGain[b] = std::exp2f(k * orm::FastLog2(f / kSlopeRefHz));
+      mSlopeDb[b] = mSlopeDbPerOct * orm::FastLog2(f / kSlopeRefHz); // S·log2(f/f0) dB
     }
-  }
-  float SlopeGain(int b) const {
-    return (b >= 0 && b < (int)mSlopeGain.size()) ? mSlopeGain[b] : 1.f;
   }
   float mAttackCoeff = 0.2f;
   float mReleaseCoeff = 0.9f;
-  int mReleaseMode = 0;      // 释放回落模式: 0=对数域单极点, 1=匀速 dB 速率
+  int mReleaseMode = 0;      // 释放回落模式: 0=对数域(显示域差距等比收缩), 1=匀速(恒定屏高比例速率)
   float mAttackSec = 0.05f; // 上升时间常数 (s), 由插件 Attack 参数下发
   float mReleaseSec = 0.2f; // 释放时间常数 (s), 由插件 Release 参数下发
   float mBottomDb = -100.f; // 频谱显示下限 (dBFS), 由插件 Range 参数下发 (-80/-100/-120); 初始与参数默认一致
@@ -1173,13 +1067,12 @@ private:
   std::vector<Pt> mSpecPtsR;    // 预分配: R 填充点
   std::vector<Pt> mSpecPtsM;    // 预分配: 合并声道 (L+R) 填充点
   std::vector<Pt> mHoldPts;     // hold 曲线绘制点 (每帧重建, 与显示点同 x)
-  std::vector<BandAcc> mBandAcc; // 预分配: 每 band 双通道峰值
-  BandAcc mSubAnchor;            // 20Hz 下方锚点桶 (kSubBand 哨兵聚合, 用后即弃)
 
-  // 频谱峰值保持 (与 mSpectrum 同域同长: FFT 为 bin, 其余为 band); 开关/时长随电平表数据帧透传
-  std::vector<float> mHoldSpec[3]; // 各通道 hold 幅度 (显示域, 非 dB)
+  // 频谱峰值保持 (与 mSpectrum 同域同长, 单位: 显示 dB, -1000 = 无有效峰值);
+  // 开关/时长随电平表数据帧透传
+  std::vector<float> mHoldSpec[3]; // 各通道 hold 显示 dB
   std::vector<float> mHoldAge[3];  // 各通道距上次刷新峰值的时间 (s)
-  bool mHoldSignal = false;        // 已有有效峰值 (全零不画线)
+  bool mHoldSignal = false;        // 已有有效峰值 (全 -1000 不画线)
   bool mHoldTpValid = false;       // 帧时间戳有效 (首帧不衰减)
   bool mHoldWasActive = false;     // hold 开关边沿检测 (关闭时清一次积累)
   std::chrono::steady_clock::time_point mLastHoldTp{};
