@@ -6,6 +6,7 @@
 
 enum EParams {
   kRelease,       // 频谱回落释放时间 (s)
+  kReleaseMode,   // 释放回落模式 (0: 对数域单极点, 1: 匀速 dB 速率)
   kRange,         // 频谱显示动态范围下限 (dBFS)
   kAttack,        // 频谱上升响应时间 (s)
   kRes,           // FFT 分辨率档位 (2048/4096/8192)
@@ -21,14 +22,14 @@ enum EParams {
   kSlopePBT,      // 频谱斜率档位索引, PBT 引擎独立保存 (-3/0/1.5 dB/oct)
   kSlopeRTA,      // 频谱斜率档位索引, RTA 引擎独立保存 (-3/0/1.5 dB/oct)
   kRtaOctave,     // RTA 分数倍频程档位 (0: 1/6, 1: 1/12, 2: 1/24)
-  kFFTWindow,     // STFT 窗函数档位 (0: Hann, 1: BH4 4阶Blackman-Harris)
+  kFFTWindow,     // STFT 窗函数档位 (0: Hann, 1: BH4 4阶Blackman-Harris, 2: BH5 5阶Blackman-Harris)
   kWindowVQT,     // VQT 窗函数档位 (0: Hann, 1: BH4), 与 STFT 独立保存
   kVQTGamma,      // VQT 低频带宽下限 γ (Hz): bw = fc/q + γ (5/10/20)
   kLoudPreset,    // 响度目标预设档位 (0: -14 流媒体, 1: -16 Apple, 2: -23 R128)
   kNumParams
 };
 
-enum EFFTWindow { kFFTWindowHann = 0, kFFTWindowBH4 = 1, kNumFFTWindows = 2 };
+enum EFFTWindow { kFFTWindowHann = 0, kFFTWindowBH4 = 1, kFFTWindowBH5 = 2, kNumFFTWindows = 3 };
 
 using ParamSnapshot = std::array<double, kNumParams>;
 

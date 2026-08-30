@@ -18,7 +18,7 @@ public:
   using Data = ISenderData<MAXNC, TDataPacket>;
   using Base = ISender<MAXNC, QUEUE_SIZE, TDataPacket>;
 
-  enum EWindowType { kWindowHann = 0, kWindowBH4 = 1, kNumWindowTypes = 2 };
+  enum EWindowType { kWindowHann = 0, kWindowBH4 = 1, kWindowBH5 = 2, kNumWindowTypes = 3 };
 
   SpectrumSTFT(int fftSize = 4096, int overlap = 4, int windowType = 0) {
     WDL_fft_init();
@@ -31,7 +31,7 @@ public:
     mHop = mFFTSize / mOverlap;
     mNumBins = mFFTSize / 2;
     if (windowType >= 0)
-      mWindowType = std::clamp(windowType, 0, 1);
+      mWindowType = std::clamp(windowType, 0, kNumWindowTypes - 1);
     RebuildWindow();
 
     for (auto &h : mHistory)
@@ -40,7 +40,7 @@ public:
   }
 
   void SetWindowType(int windowType) {
-    const int newType = std::clamp(windowType, 0, 1);
+    const int newType = std::clamp(windowType, 0, kNumWindowTypes - 1);
     if (newType != mWindowType) {
       mWindowType = newType;
       RebuildWindow();
@@ -61,6 +61,19 @@ public:
       for (int i = 0; i < mFFTSize; ++i) {
         const float theta = 2.0f * PI * i / M;
         mWindow[i] = a0 - a1 * std::cos(theta) + a2 * std::cos(2.0f * theta) - a3 * std::cos(3.0f * theta);
+        sum += mWindow[i];
+      }
+    } else if (mWindowType == 2) {
+      // 5-term Blackman-Harris 窗: 旁瓣抑制达 -125 dB (数值优化系数, 主瓣半宽 ~5 bin)
+      constexpr float a0 = 0.3230984033f;
+      constexpr float a1 = 0.4714310503f;
+      constexpr float a2 = 0.1756446367f;
+      constexpr float a3 = 0.0285582447f;
+      constexpr float a4 = 0.001267665f;
+      for (int i = 0; i < mFFTSize; ++i) {
+        const float theta = 2.0f * PI * i / M;
+        mWindow[i] = a0 - a1 * std::cos(theta) + a2 * std::cos(2.0f * theta) - a3 * std::cos(3.0f * theta) +
+                     a4 * std::cos(4.0f * theta);
         sum += mWindow[i];
       }
     } else {
@@ -159,7 +172,7 @@ private:
   int mNumBins = 2048;
   int mBufCount = 0;
   int mChanTri = 0; // 0=LR, 1=PWR, 2=SUM
-  int mWindowType = 0; // 0=Hann, 1=BH4
+  int mWindowType = 0; // 0=Hann, 1=BH4, 2=BH5
   float mScaling = 0.f;
   std::array<float, MAX_FFT_SIZE> mWindow{};
   std::array<std::array<float, MAX_FFT_SIZE>, MAXNC> mHistory{};

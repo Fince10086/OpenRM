@@ -7,6 +7,7 @@
 #include "../Theme.h"
 
 #include <algorithm>
+#include <cmath>
 #include <functional>
 
 BEGIN_IPLUG_NAMESPACE
@@ -48,6 +49,110 @@ inline IVButtonControl *MakeMomentary(const IRECT &r, std::function<void(IContro
         p->SetDirty(false);
       },
       label, st);
+}
+
+// ── 小图标按钮 (文字放不下的窄按钮) ────────────────────────────────────────
+// 撤销/重做/保存/读取四个动作改用图标表达, 图标全部由主题色矩形与正圆圆弧
+// (多段线逼近) 拼成, 延续界面的矩形+正圆极简语言; 颜色规则与 FlatActionButton
+// 一致 (COL_300 底 / COL_900 图标 / hover 叠层, 主题自适应)。
+
+enum IconAction {
+  kIconUndo, // 撤销: 逆时针环形箭头 (缺口朝下, 箭头在下左端)
+  kIconRedo, // 重做: 顺时针环形箭头 (水平镜像, 箭头在下右端)
+  kIconSave, // 保存: 软盘 (描边外框 + 右上卡口 + 底部标签)
+  kIconLoad, // 读取: 托盘 + 下落箭头 (箭杆矩形 + 三角头)
+};
+
+class IconActionButton : public IControl {
+public:
+  IconActionButton(const IRECT &bounds, std::function<void(IControl *)> fn, IconAction icon)
+      : IControl(bounds), mFn(std::move(fn)), mIcon(icon) {}
+
+  // 快速连击: 偶数次点击会被平台识别为双击, 若不处理会走 IControl 默认的
+  // SetValueToDefault, 导致丢一次响应。双击视为再次按下。
+  void OnMouseDblClick(float x, float y, const IMouseMod &mod) override { OnMouseDown(x, y, mod); }
+
+  void OnMouseDown(float x, float y, const IMouseMod &mod) override {
+    if (mod.L && !mod.A)
+      mFn(this);
+  }
+
+  void Draw(IGraphics &g) override {
+    const IRECT b = mRECT;
+    g.FillRect(COL_300(), b);
+    if (GetMouseIsOver())
+      g.FillRect(HoverOverlay(), b);
+
+    // 图标几何定义在 24×24 的 viewBox 里, 缩放到 20px 以按钮中心对齐。
+    // 角度约定: 0°=右, 90°=下 (屏幕坐标), 顺时针 = 角度递增, 逆时针 = 递减。
+    constexpr float kD2R = 0.0174532925199433f;
+    const float cx = b.MW(), cy = b.MH();
+    const float s = 20.f / 24.f;
+    auto X = [&](float vx) { return cx + (vx - 12.f) * s; };
+    auto Y = [&](float vy) { return cy + (vy - 12.f) * s; };
+    const IColor c = COL_900();
+
+    switch (mIcon) {
+      case kIconUndo: {
+        // 270° 圆弧: 右下 (45°) 起, 逆时针经右侧→顶部→左侧, 止于左下 (135°)
+        const float r = 7.f * s;
+        const float a0 = 45.f * kD2R, a1 = -225.f * kD2R;
+        g.PathMoveTo(cx + r * std::cos(a0), cy + r * std::sin(a0));
+        for (int i = 1; i <= 24; ++i) {
+          const float a = a0 + (a1 - a0) * (float)i / 24.f;
+          g.PathLineTo(cx + r * std::cos(a), cy + r * std::sin(a));
+        }
+        g.PathStroke(IPattern(c), 2.4f * s);
+        // 箭头: 弧线下左端, 指向右下 (逆时针切线方向)
+        g.PathTriangle(X(9.6f), Y(19.5f), X(5.2f), Y(18.8f), X(8.9f), Y(15.1f));
+        g.PathFill(IPattern(c));
+        break;
+      }
+      case kIconRedo: {
+        // 镜像: 左下 (135°) 起, 顺时针经左侧→顶部→右侧, 止于右下 (405°)
+        const float r = 7.f * s;
+        const float a0 = 135.f * kD2R, a1 = 405.f * kD2R;
+        g.PathMoveTo(cx + r * std::cos(a0), cy + r * std::sin(a0));
+        for (int i = 1; i <= 24; ++i) {
+          const float a = a0 + (a1 - a0) * (float)i / 24.f;
+          g.PathLineTo(cx + r * std::cos(a), cy + r * std::sin(a));
+        }
+        g.PathStroke(IPattern(c), 2.4f * s);
+        // 箭头: 弧线下右端, 指向左下 (顺时针切线方向)
+        g.PathTriangle(X(14.4f), Y(19.5f), X(18.8f), Y(18.8f), X(15.1f), Y(15.1f));
+        g.PathFill(IPattern(c));
+        break;
+      }
+      case kIconSave: {
+        // 软盘: 描边外框 + 右上卡口 + 底部标签 (直角, 无圆角)
+        g.PathMoveTo(X(4.f), Y(4.f));
+        g.PathLineTo(X(20.f), Y(4.f));
+        g.PathLineTo(X(20.f), Y(20.f));
+        g.PathLineTo(X(4.f), Y(20.f));
+        g.PathClose();
+        g.PathStroke(IPattern(c), 2.f * s);
+        g.FillRect(c, IRECT(X(13.f), Y(5.5f), X(17.f), Y(8.5f)));
+        g.FillRect(c, IRECT(X(8.f), Y(12.f), X(16.f), Y(16.5f)));
+        break;
+      }
+      case kIconLoad: {
+        // 托盘横条 + 落箭头 (箭杆矩形 + 三角头)
+        g.FillRect(c, IRECT(X(4.f), Y(17.5f), X(20.f), Y(20.5f)));
+        g.FillRect(c, IRECT(X(10.6f), Y(4.5f), X(13.4f), Y(10.5f)));
+        g.PathTriangle(X(9.5f), Y(10.5f), X(14.5f), Y(10.5f), X(12.f), Y(15.f));
+        g.PathFill(IPattern(c));
+        break;
+      }
+    }
+  }
+
+private:
+  std::function<void(IControl *)> mFn;
+  IconAction mIcon;
+};
+
+inline IconActionButton *MakeIconMomentary(const IRECT &r, std::function<void(IControl *)> fn, IconAction icon) {
+  return new IconActionButton(r, std::move(fn), icon);
 }
 
 class InvertToggleControl : public IVToggleControl {

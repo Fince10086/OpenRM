@@ -123,7 +123,8 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     }
   }
   // 初始化参数（默认值、范围与步长）
-  GetParam(kRelease)->InitDouble("Release", 0.2, 0.05, 0.5, 0.01, "s");
+  GetParam(kRelease)->InitDouble("Release", 0.2, 0.05, 2.0, 0.01, "s");
+  GetParam(kReleaseMode)->InitInt("ReleaseMode", 0, 0, 1, ""); // 释放回落模式: 0=对数域单极点, 1=匀速 dB 速率
   GetParam(kRange)->InitInt("Range", 0, 0, 2, ""); // 档位索引: 0=80, 1=100, 2=120 (刻度底部 dB), 默认 80
   GetParam(kAttack)->InitDouble("Attack", 0.05, 0.001, 0.1, 0.001, "s");
   GetParam(kRes)->InitInt("Res", 1, 0, kNumResOptions - 1, ""); // 默认 MID (4096)
@@ -283,13 +284,14 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     bindTip(mRtaOctBtn, orm::kTxtTipRtaOctave);
     mRtaOctBtn->Hide(true);
 
-    // 窗函数循环按钮 (SHARP/CLEAN) — RES 分辨率按钮右侧 (即原 VQT 金字塔按钮位 B1 的槽位,
+    // 窗函数循环按钮 (SHARP/CLEAN/BH5) — RES 分辨率按钮右侧 (即原 VQT 金字塔按钮位 B1 的槽位,
     // 尺寸 62x26 同 PWR/STFT, 间距同 PWR→STFT 的 kTopBtnGap)。STFT 与 VQT 各自独立保存
     // 档位 (kFFTWindow / kWindowVQT), 按当前模式改绑参数 (见 OnIdle 模式块)。
     constexpr float kWinX = kResX + kTopBtnW + kTopBtnGap;
     const int initMode = (int)GetParam(kMode)->Value();
     mWindowBtn = new FlatCycleButton(IRECT(kWinX, kTopBtnY, kWinX + kTopBtnW, kTopBtnY + kTopBtnH),
-                                     initMode == kModeFFT ? kFFTWindow : kWindowVQT, {"SHARP", "CLEAN"}, btnStyle);
+                                     initMode == kModeFFT ? kFFTWindow : kWindowVQT, {"SHARP", "CLEAN", "BH5"},
+                                     btnStyle);
     pGraphics->AttachControl(mWindowBtn);
     bindTip(mWindowBtn, orm::kTxtTipWindow);
     mWindowBtn->Hide(initMode != kModeFFT && initMode != kModeVQT);
@@ -366,7 +368,7 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     // 行距与下方按钮行一致)。标签带单位: FFT 0/3/4.5 dB/Oct, 其余 -3/0/1.5 dB/Oct;
     // 各引擎独立保存档位, 切引擎时改绑参数并换标签 (见 OnIdle 模式块)。
     // (BPO 滑块已删除, 下方整堆上移 51px 填补空位)
-    constexpr float kSlopeBtnY = 183.f; // 与下方 UNDO 行 (y=222) 保持 39px 行距
+    constexpr float kSlopeBtnY = 183.f; // 与下方图标按钮行 (y=241.5) 保持 28.5px 行距
     mSlopeBtn = new FlatCycleButton(
         IRECT(kCol1X, kSlopeBtnY, kPanelR, kSlopeBtnY + kBtnH), SlopeParamForMode(initMode),
         initMode == kModeFFT ? std::initializer_list<const char *>{"0 dB/Oct", "3 dB/Oct", "4.5 dB/Oct"}
@@ -375,34 +377,34 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     pGraphics->AttachControl(mSlopeBtn);
     bindTip(mSlopeBtn, orm::kTxtTipSlope);
 
-    IVButtonControl *undoBtn =
-        MakeMomentary(IRECT(kCol1X, 222, kCol1X + kBtnW, 252), [this](IControl *) { Undo(); }, "UNDO", btnStyle);
+    // 释放回落模式循环按钮 (LOG 对数域单极点 / UNIF 匀速 dB 速率): 位于斜率行下方整行,
+    // 与原撤销列位置重叠, 下方四个图标按钮下移一行腾出此空位 (见下)。
+    mReleaseModeBtn =
+        new FlatCycleButton(IRECT(kCol1X, 241.5f, kPanelR, 241.5f + kBtnH), kReleaseMode, {"LOG", "UNIF"}, btnStyle);
+    pGraphics->AttachControl(mReleaseModeBtn);
+    bindTip(mReleaseModeBtn, orm::kTxtTipReleaseMode);
+
+    // 撤销/重做/保存/读取: 文字按钮改为两两一组 (撤销|重做, 保存|读取) 的小图标按钮。
+    // 单个宽 (kBtnW-kBtnGap)/2=36, 高仍 kBtnH; 组内组间空隙均 kBtnGap, 整排
+    // 4×36+3×4=156 铺满右栏。整排下移一行 (y=300), 让位给上方释放回落模式按钮。
+    constexpr float kIconBtnW = (kBtnW - kBtnGap) / 2.f;
+    constexpr float kIconBtnY = 300.f;
+    constexpr float kIconStep = kIconBtnW + kBtnGap;
+    IControl *undoBtn = MakeIconMomentary(
+        IRECT(kCol1X, kIconBtnY, kCol1X + kIconBtnW, kIconBtnY + kBtnH), [this](IControl *) { Undo(); }, kIconUndo);
     pGraphics->AttachControl(undoBtn);
-    bindText(orm::kTxtUndo, [undoBtn](const char *s) {
-      undoBtn->SetLabelStr(s);
-      undoBtn->SetDirty(false);
-    });
-    IVButtonControl *redoBtn =
-        MakeMomentary(IRECT(kCol2X, 222, kPanelR, 252), [this](IControl *) { Redo(); }, "REDO", btnStyle);
+    IControl *redoBtn = MakeIconMomentary(
+        IRECT(kCol1X + kIconStep, kIconBtnY, kCol1X + kIconStep + kIconBtnW, kIconBtnY + kBtnH),
+        [this](IControl *) { Redo(); }, kIconRedo);
     pGraphics->AttachControl(redoBtn);
-    bindText(orm::kTxtRedo, [redoBtn](const char *s) {
-      redoBtn->SetLabelStr(s);
-      redoBtn->SetDirty(false);
-    });
-    IVButtonControl *saveBtn =
-        MakeMomentary(IRECT(kCol1X, 261, kCol1X + kBtnW, 291), [this](IControl *) { SaveFile(); }, "SAVE", btnStyle);
+    IControl *saveBtn = MakeIconMomentary(
+        IRECT(kCol1X + 2.f * kIconStep, kIconBtnY, kCol1X + 2.f * kIconStep + kIconBtnW, kIconBtnY + kBtnH),
+        [this](IControl *) { SaveFile(); }, kIconSave);
     pGraphics->AttachControl(saveBtn);
-    bindText(orm::kTxtSave, [saveBtn](const char *s) {
-      saveBtn->SetLabelStr(s);
-      saveBtn->SetDirty(false);
-    });
-    IVButtonControl *loadBtn =
-        MakeMomentary(IRECT(kCol2X, 261, kPanelR, 291), [this](IControl *) { LoadFile(); }, "LOAD", btnStyle);
+    IControl *loadBtn = MakeIconMomentary(
+        IRECT(kCol1X + 3.f * kIconStep, kIconBtnY, kPanelR, kIconBtnY + kBtnH),
+        [this](IControl *) { LoadFile(); }, kIconLoad);
     pGraphics->AttachControl(loadBtn);
-    bindText(orm::kTxtLoad, [loadBtn](const char *s) {
-      loadBtn->SetLabelStr(s);
-      loadBtn->SetDirty(false);
-    });
 
     // 电平表模式循环按钮 (dBTP -> dBFS -> VU): 移入电平条内部底部, 显示覆盖在两条电平条之上,
     // 宽度 = 两条电平条总宽 (2 × kGainBarW), 高度与左侧 Range 循环按钮一致 (kRangeBtnH)。
@@ -417,7 +419,7 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
 
     // 电平表 RESET (清除峰值保持与过载锁存; 频谱 hold 曲线同步清空, 与电平表保持联动)
     mLevelResetBtn =
-        MakeMomentary(IRECT(kCol2X, 300, kPanelR, 330), [this](IControl *) {
+        MakeMomentary(IRECT(kCol2X, 339, kPanelR, 369), [this](IControl *) {
           mLevelResetFlag.store(true);
           if (mSpectrumPad)
             mSpectrumPad->ClearPeakHold();
@@ -435,7 +437,7 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     // (英文 FREEZE / 中文 冻结, 随界面语言), 开启时按钮底色变黑 + 文字反白。
     // 冻结时画面完全定格 (UI 停止消费引擎数据), 切换引擎时用冻结时刻的输入缓冲
     // 在新算法下重算并继续定格, 解冻后从定格画面续接实时。
-    mFreezeBtn = new FlatToggleControl(IRECT(kCol1X, 300, kCol1X + kBtnW, 330), kFreeze, " ", toggleStyle,
+    mFreezeBtn = new FlatToggleControl(IRECT(kCol1X, 339, kCol1X + kBtnW, 369), kFreeze, " ", toggleStyle,
                                        "FREEZE", "FREEZE");
     pGraphics->AttachControl(mFreezeBtn);
     bindText(orm::kTxtFreeze, [this](const char *s) {
@@ -449,7 +451,7 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     // 峰值保持开关 + 时长循环按钮 (替代原 HOLD 滑块): 开关为 BandPass LINK 同款反色开关,
     // 时长按钮移至 HOLD 右侧空位 (尺寸缩小为 kBtnW), 点击循环 0.5s / 2s / ∞ (无限保持)。
     // 两者同时控制电平表 hold 亮线与频谱 hold 曲线; RESET 按钮清除已积累的保持。
-    mLevelHoldBtn = new FlatToggleControl(IRECT(kCol1X, 339, kCol1X + kBtnW, 369), kLevelHoldOn, " ", toggleStyle,
+    mLevelHoldBtn = new FlatToggleControl(IRECT(kCol1X, 378, kCol1X + kBtnW, 408), kLevelHoldOn, " ", toggleStyle,
                                           "HOLD", "HOLD");
     pGraphics->AttachControl(mLevelHoldBtn);
     bindText(orm::kTxtLevelHold, [this](const char *s) {
@@ -461,7 +463,7 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     bindTip(mLevelHoldBtn, orm::kTxtTipLevelHold);
 
     mLevelHoldTimeBtn =
-        new FlatCycleButton(IRECT(kCol2X, 339, kPanelR, 369), kLevelHold, {"0.5s", "2s", "∞"}, btnStyle);
+        new FlatCycleButton(IRECT(kCol2X, 378, kPanelR, 408), kLevelHold, {"0.5s", "2s", "∞"}, btnStyle);
     pGraphics->AttachControl(mLevelHoldTimeBtn);
     bindTip(mLevelHoldTimeBtn, orm::kTxtTipLevelHoldTime);
 
@@ -824,6 +826,7 @@ void ORMAnalyzer::SendSpectrumConfig() {
   // pad 的 bin 数与平滑更新周期必须始终跟随引擎真实尺寸, 否则高频段空白 + 时间常数偏差。
   const int fftSize = mSpectrum.GetFFTSize();
   const float release = (float)GetParam(kRelease)->Value();
+  const int releaseMode = (int)GetParam(kReleaseMode)->Value();
   const float range = CurrentRangeDb();
   const float attack = (float)GetParam(kAttack)->Value();
   const float slopeDb = (float)EffectiveSlopeDb(); // 当前模式生效斜率 (档值随模式)
@@ -833,6 +836,7 @@ void ORMAnalyzer::SendSpectrumConfig() {
   SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagSampleRate, sizeof(double), &sr);
   SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagFFTSize, sizeof(int), &fftSize);
   SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagRelease, sizeof(float), &release);
+  SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagReleaseMode, sizeof(int), &releaseMode);
   SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagRange, sizeof(float), &range);
   SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagAttack, sizeof(float), &attack);
   SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagSlope, sizeof(float), &slopeDb);
@@ -1042,6 +1046,7 @@ void ORMAnalyzer::OnIdle() {
     const int winFFT = CurrentFFTWindow();
     const int winVQT = CurrentVQTWindow();
     const double release = GetParam(kRelease)->Value();
+    const int releaseMode = (int)GetParam(kReleaseMode)->Value();
     const int rangeIdx = (int)std::clamp(std::lround(GetParam(kRange)->Value()), 0L, 2L);
     if (GetParam(kRange)->Value() != (double)rangeIdx)
       SetParamFromEditor(kRange, (double)rangeIdx);
@@ -1051,20 +1056,22 @@ void ORMAnalyzer::OnIdle() {
     const double slope = EffectiveSlopeDb(); // 斜率档位变化时重发 (冻结中照常: 纯显示参数)
     const int rtaOct = CurrentRtaOctave();
     if (sr != mSentSampleRate || fftSize != mSentFFTSize || winFFT != mSentWindowFFT || winVQT != mSentWindowVQT ||
-        release != mSentRelease || range != mSentRange || attack != mSentAttack || lfRes != mSentLfRes ||
-        slope != mSentSlope || rtaOct != mSentRtaOct) {
+        release != mSentRelease || releaseMode != mSentReleaseMode || range != mSentRange || attack != mSentAttack ||
+        lfRes != mSentLfRes || slope != mSentSlope || rtaOct != mSentRtaOct) {
       mSpectrum.SetWindowType(winFFT);
       mVQT.SetWindowType(winVQT);
       // 冻结中 attack/release (回放弹道) 或采样率/窗函数变化需重启回放, 保证确定性;
       // Range/斜率纯显示参数不参与计算, 不重启。窗函数按引擎各查各的档位。
       const bool restartReplay =
-          frozen && (sr != mSentSampleRate || release != mSentRelease || attack != mSentAttack ||
+          frozen && (sr != mSentSampleRate || release != mSentRelease || releaseMode != mSentReleaseMode ||
+                     attack != mSentAttack ||
                      (mode == kModeFFT && winFFT != mSentWindowFFT) || (mode == kModeVQT && winVQT != mSentWindowVQT));
       mSentSampleRate = sr;
       mSentFFTSize = fftSize;
       mSentWindowFFT = winFFT;
       mSentWindowVQT = winVQT;
       mSentRelease = release;
+      mSentReleaseMode = releaseMode;
       mSentRange = range;
       mSentAttack = attack;
       mSentLfRes = lfRes;
@@ -1475,7 +1482,8 @@ void ORMAnalyzer::ApplyLanguage() {
   }
   if (mWindowBtn) {
     mWindowBtn->SetLabels({orm::Tr(orm::kTxtWinSharp, orm::UILang()),
-                           orm::Tr(orm::kTxtWinClean, orm::UILang())});
+                           orm::Tr(orm::kTxtWinClean, orm::UILang()),
+                           orm::Tr(orm::kTxtWinBH5, orm::UILang())});
   }
   ApplyTooltips();
 #if IPLUG_EDITOR

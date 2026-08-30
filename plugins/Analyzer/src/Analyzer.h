@@ -96,6 +96,7 @@ private:
   double mSentSampleRate = 0.0;
   int mSentFFTSize = 0;
   double mSentRelease = -1.0;
+  int mSentReleaseMode = -1; // 释放回落模式 (0/1), 用于 OnIdle 增量去重
   double mSentRange = -1.0;
   double mSentAttack = -1.0;
   double mSentLfRes = -1.0;
@@ -110,6 +111,7 @@ private:
   FlatCycleButton *mRtaOctBtn = nullptr;   // RTA 分数倍频程循环按钮 (LOW=1/6 / MID=1/12 / HIGH=1/24)
   FlatCycleButton *mRangeBtn = nullptr;    // 动态范围循环按钮 (刻度底部 80/100/120)
   FlatCycleButton *mSlopeBtn = nullptr;    // 频谱斜率循环按钮 (刻度底部左缘, 档值随引擎)
+  FlatCycleButton *mReleaseModeBtn = nullptr; // 释放回落模式循环按钮 (LOG 对数域 / UNIF 匀速)
   ORMSlider *mAttackSlider = nullptr;
   ORMSlider *mReleaseSlider = nullptr;
   CpuMeterControl *mCpuMeter = nullptr;

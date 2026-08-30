@@ -28,6 +28,7 @@ public:
     kMsgTagSampleRate = 1,
     kMsgTagFFTSize,
     kMsgTagRelease,
+    kMsgTagReleaseMode, // 释放回落模式 (0: 对数域单极点, 1: 匀速 dB 速率)
     kMsgTagRange,
     kMsgTagAttack,
     kMsgTagSlope,       // 频谱斜率 (dB/oct, 当前模式生效值; FFT 与逐 band 引擎档值不同)
@@ -103,8 +104,9 @@ public:
             // 物理起振时间常数 τ = 1 / (π · bw): 窄带低频展现自然蓄力爬坡感
             const float tauBand = std::max(mAttackSec, 1.f / (3.14159f * std::max(bw, 5.f)));
             const float aBand = (float)std::exp(-updatePeriod / tauBand);
-            const float coef = (raw > prev) ? aBand : r;
-            mSpectrum[c][i] = coef * prev + (1.f - coef) * raw;
+            mSpectrum[c][i] = (raw > prev) ? aBand * prev + (1.f - aBand) * raw
+                                           : ((mReleaseMode == 1) ? UniformRelease(prev, raw, r)
+                                                                  : LogDomainRelease(prev, raw, r));
           }
         }
       } else {
@@ -113,8 +115,9 @@ public:
             mSpectrum[c].assign(nVals, 0.f);
           for (int i = 0; i < nVals; ++i) {
             const float raw = d.vals[c][i], prev = mSpectrum[c][i];
-            const float coef = (raw > prev) ? a : r;
-            mSpectrum[c][i] = coef * prev + (1.f - coef) * raw;
+            mSpectrum[c][i] = (raw > prev) ? a * prev + (1.f - a) * raw
+                                           : ((mReleaseMode == 1) ? UniformRelease(prev, raw, r)
+                                                                  : LogDomainRelease(prev, raw, r));
           }
         }
       }
@@ -133,7 +136,11 @@ public:
     } else if (msgTag == kMsgTagRelease) {
       float releaseSec;
       stream.Get(&releaseSec, 0);
-      mReleaseSec = std::clamp(releaseSec, 0.01f, 1.f);
+      mReleaseSec = std::clamp(releaseSec, 0.01f, 2.f);
+    } else if (msgTag == kMsgTagReleaseMode) {
+      int mode;
+      stream.Get(&mode, 0);
+      mReleaseMode = std::clamp(mode, 0, 1);
     } else if (msgTag == kMsgTagRange) {
       float rangeDb;
       stream.Get(&rangeDb, 0);
@@ -646,6 +653,26 @@ private:
     }
   }
 
+  // 释放回落模式 (mReleaseMode): 0=对数域单极点, 1=匀速 dB 速率。两种模式共用
+  // 同一回落系数 r (对数域按 dB 差距等比收缩; 匀速域幅度乘 r = 恒定 8.686/τ dB/s,
+  // 参考 SPAN RT MAX)。
+  // 释放回落在对数域做单极点 (攻击仍为幅度域): dB 差距每帧按系数等比收缩,
+  // 回落行为与绝对电平无关 (幅度域指数在 dB 显示下是先快后慢、尾段拖泥带水)。
+  // 幅度域 ≤1e-6 时按 -150dB 地板处理, 该深度低于任何显示下限, 不可见。
+  static float LogDomainRelease(float prev, float raw, float coef) {
+    constexpr float kDbFloor = -150.f;
+    const float prevDb = orm::FastAmpToDb(prev, kDbFloor);
+    const float rawDb = orm::FastAmpToDb(raw, kDbFloor);
+    return std::exp2f((coef * prevDb + (1.f - coef) * rawDb) * 0.16609640474f);
+  }
+
+  // 匀速回落: 每帧幅度乘同一系数 coef (等效 dB 域恒定速率 8.686/τ dB/s 下坡),
+  // 但不低于当前信号值 —— 曲线全程匀速落到信号为止, 无对数域的接近渐缓。
+  // 静音 (raw=0) 时按指数自然衰减, 不置零。
+  static float UniformRelease(float prev, float raw, float coef) {
+    return std::max(raw, prev * coef);
+  }
+
   // 频谱峰值保持: 开关/时长与电平表 hold 共用 (mHoldSec 随电平表数据帧透传, 0 = 关,
   // ∞ 档为 1e9)。逐点跟踪平滑后幅度 (与显示同域: FFT 为 bin, 其余为 band):
   // 刷新峰值即清计时; 超时时长后按 20 dB/s 回落 (幅度域每秒 ×0.1), 下限为当前幅度。
@@ -1133,6 +1160,7 @@ private:
   }
   float mAttackCoeff = 0.2f;
   float mReleaseCoeff = 0.9f;
+  int mReleaseMode = 0;      // 释放回落模式: 0=对数域单极点, 1=匀速 dB 速率
   float mAttackSec = 0.05f; // 上升时间常数 (s), 由插件 Attack 参数下发
   float mReleaseSec = 0.2f; // 释放时间常数 (s), 由插件 Release 参数下发
   float mBottomDb = -100.f; // 频谱显示下限 (dBFS), 由插件 Range 参数下发 (-80/-100/-120); 初始与参数默认一致

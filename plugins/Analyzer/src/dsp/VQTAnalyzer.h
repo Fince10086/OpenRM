@@ -317,7 +317,7 @@ public:
   }
 
   bool SetWindowType(int windowType) {
-    const int w = std::clamp(windowType, 0, 1);
+    const int w = std::clamp(windowType, 0, 2);
     if (w != mWindowType) {
       mWindowType = w;
       mNeedRebuild.store(true);
@@ -595,11 +595,18 @@ private:
       if (mWindowType == 0) {
         // 0: Hann 窗 (SHARP 档): 窄主瓣, 提升相邻音符分辨力与时域起振敏锐度
         w = 0.5 * (1.0 - std::cos(theta));
-      } else {
+      } else if (mWindowType == 1) {
         // 1: 4-term Blackman-Harris 窗 (CLEAN 档): 阻带衰减至 -92dB, 杜绝相邻音乐频段横向泄漏
         w = 0.35875 - 0.48829 * std::cos(theta)
                     + 0.14128 * std::cos(2.0 * theta)
                     - 0.01168 * std::cos(3.0 * theta);
+      } else {
+        // 2: 5-term Blackman-Harris 窗 (BH5 档): 阻带衰减至 -125dB (数值优化系数),
+        // 主瓣半宽 ~5 bin (CLEAN 档 ~4 bin), 纯净度换少许分辨力
+        w = 0.3230984033 - 0.4714310503 * std::cos(theta)
+                         + 0.1756446367 * std::cos(2.0 * theta)
+                         - 0.0285582447 * std::cos(3.0 * theta)
+                         + 0.001267665 * std::cos(4.0 * theta);
       }
       sum += w;
       const double ph = step * n;
@@ -612,7 +619,7 @@ private:
     mMaxWinPerLayer[L] = std::max(mMaxWinPerLayer[L], wl + bd.readOff);
   }
 
-  int mWindowType = 0;                    // 窗函数档位 (0=SHARP/Hann, 1=CLEAN/BH4)
+  int mWindowType = 0;                    // 窗函数档位 (0=SHARP/Hann, 1=CLEAN/BH4, 2=BH5)
   int mBpo = 24;                          // bins per octave (插件层固定 24)
   int mGamma = 5;                         // 低频带宽下限 Hz (插件层固定 HIGH 档)
   int mChanTri = 0;                       // 0=LR, 1=PWR, 2=SUM
