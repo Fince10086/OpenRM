@@ -29,6 +29,7 @@ public:
     float rmsDbL = -120.f, rmsDbR = -120.f;     // RMS (300ms 积分)
     float vuDbL = -120.f, vuDbR = -120.f;       // VU 对应的 dBFS (0 VU = -18 dBFS)
     float vuHoldDbL = -120.f, vuHoldDbR = -120.f; // 独立 VU 表峰值保持 (显示域 dB)
+    float persistDbL = -120.f, persistDbR = -120.f; // dBTP 持久锁存 (真峰值 > 0, 只增不减)
     float holdDbL = -120.f, holdDbR = -120.f;   // L/R 条峰值保持 (当前模式主值, 显示域 dB)
     float holdSec = 2.f;                        // 当前保持时长 (UI 端判断是否画 hold 线)
     int overL = 0, overR = 0;                   // 过载锁存
@@ -58,6 +59,7 @@ public:
     mVuPosR = mVuVelR = 0.0;
     mVuHoldL = mVuHoldR = -120.f;
     mVuHoldTL = mVuHoldTR = 0.0;
+    mPersistL = mPersistR = -120.f;
     mDispPeakL = mDispPeakR = -120.f;
     mDispTrueL = mDispTrueR = -120.f;
     mHoldL = mHoldR = -120.f;
@@ -69,6 +71,7 @@ public:
   void ResetHoldOver() {
     mHoldL = mHoldR = -120.f;
     mVuHoldL = mVuHoldR = -120.f;
+    mPersistL = mPersistR = -120.f;
     mOverL = mOverR = 0;
   }
 
@@ -79,6 +82,18 @@ public:
     mVuHoldL = mVuHoldR = -120.f;
     mVuHoldTL = mVuHoldTR = 0.0;
   }
+
+  // 仅清除 dBTP 真峰值持久锁存 (点击 dBTP 电平条)
+  void ResetPersist() { mPersistL = mPersistR = -120.f; }
+
+  // 仅清除 L/R 条峰值保持 (dBFS 模式下点击条体; VU 表保持不动)
+  void ResetMeterHold() {
+    mHoldL = mHoldR = -120.f;
+    mHoldTL = mHoldTR = 0.0;
+  }
+
+  // 仅清除过载锁存 (dBFS 模式下点击顶部 LED)
+  void ResetOver() { mOverL = mOverR = 0; }
 
   void Process(const float *L, const float *R, int n, int mode, double holdSec) {
     if (n <= 0)
@@ -119,6 +134,14 @@ public:
     mDispTrueL = Ball(mDispTrueL, trueDbL, rate);
     mDispTrueR = Ball(mDispTrueR, trueDbR, rate);
 
+    // dBTP 真峰值持久锁存 (额外保持线): 峰值越过 0 dBFS 后只增不减, 直到 RESET
+    if (mode == 0) {
+      if (mDispTrueL > 0.f)
+        mPersistL = std::max(mPersistL, mDispTrueL);
+      if (mDispTrueR > 0.f)
+        mPersistR = std::max(mPersistR, mDispTrueR);
+    }
+
     // 过载锁存 (用瞬时值判定, L/R 条): dBTP > -1 / dBFS > 0
     const float overLv = (mode == 0) ? trueDbL : peakDbL;
     const float overRv = (mode == 0) ? trueDbR : peakDbR;
@@ -155,6 +178,8 @@ public:
     s.vuDbR = VUToDb((float)mVuPosR);
     s.vuHoldDbL = mVuHoldL;
     s.vuHoldDbR = mVuHoldR;
+    s.persistDbL = mPersistL;
+    s.persistDbR = mPersistR;
     s.holdDbL = mHoldL;
     s.holdDbR = mHoldR;
     s.holdSec = mHoldSec;
@@ -284,6 +309,7 @@ private:
   double mHoldTL = 0.0, mHoldTR = 0.0;
   float mVuHoldL = -120.f, mVuHoldR = -120.f; // 独立 VU 表峰值保持 (与 L/R 条 mHold 独立)
   double mVuHoldTL = 0.0, mVuHoldTR = 0.0;
+  float mPersistL = -120.f, mPersistR = -120.f; // dBTP 持久锁存 (真峰值 > 0, 只增不减)
   int mOverL = 0, mOverR = 0;
 };
 

@@ -2,15 +2,12 @@
 
 // ChannelLegend — 电平表读数 (纯展示)
 //
-// 位于频谱区顶部右侧: 显示电平表 L/R 当前数值读数 (无单位, 模式由右栏按钮指示)。
-// 原 L/R/M 色块图例已由顶部声道按钮 (FlatCycleButton 通道分半样式) 取代。
+// 位于频谱区顶部右侧: 显示 True Peak 最高值 (响度链锁存, 原响度计横条读数移入此处;
+// 原 L/R 两声道实时读数已移除, 由电平条本身承载)。> -1 dBTP 红字 (与过载链同阈值)。
 
 #include "IControls.h"
-#include "UiUtils.h"
 #include "../Theme.h"
 
-#include <algorithm>
-#include <cmath>
 #include <cstdio>
 #include <cstring>
 
@@ -19,22 +16,13 @@ BEGIN_IGRAPHICS_NAMESPACE
 
 class ChannelLegendControl : public IControl {
 public:
-  enum MsgTags { kMsgTagLevelReadout = 1 };
+  enum MsgTags { kMsgTagTpMax = 1 };
 
   explicit ChannelLegendControl(const IRECT &bounds) : IControl(bounds) {}
 
   void OnMsgFromDelegate(int msgTag, int dataSize, const void *pData) override {
-    if (msgTag == kMsgTagLevelReadout && dataSize == (int)sizeof(LevelMeterUiData)) {
-      LevelMeterUiData d;
-      std::memcpy(&d, pData, sizeof(d));
-      mMeterMode = std::clamp(d.mode, 0, 1);
-      if (mMeterMode == 0) {
-        mValL = d.trueL;
-        mValR = d.trueR;
-      } else {
-        mValL = d.peakL;
-        mValR = d.peakR;
-      }
+    if (msgTag == kMsgTagTpMax && dataSize == (int)sizeof(float)) {
+      mTpMax = *(const float *)pData;
       SetDirty(false);
     }
   }
@@ -42,19 +30,20 @@ public:
   void Draw(IGraphics &g) override { DrawReadout(g); }
 
 private:
-  // 右侧读数: L/R 当前值, 与电平表竖条同一水平线, 右对齐
+  // 右侧读数: True Peak 锁存值, 右对齐到电平条上方, > -1 dBTP 红字
   void DrawReadout(IGraphics &g) {
     const float roR = mRECT.R;
-    char bufL[16], bufR[16];
-    std::snprintf(bufL, sizeof(bufL), "%.1f", mValL);
-    std::snprintf(bufR, sizeof(bufR), "%.1f", mValR);
-    const IText readText(20, COL_900(), kFontRegular, EAlign::Far, EVAlign::Middle);
-    g.DrawText(readText, bufL, IRECT(roR - 124.f, mRECT.T, roR - 64.f, mRECT.B));
-    g.DrawText(readText, bufR, IRECT(roR - 64.f, mRECT.T, roR, mRECT.B));
+    char buf[32];
+    if (mTpMax > -99.f)
+      std::snprintf(buf, sizeof(buf), "%.1f dBTP", mTpMax);
+    else
+      std::snprintf(buf, sizeof(buf), "%s", "—");
+    const IColor col = (mTpMax > -1.0f) ? MeterRed() : COL_900();
+    const IText readText(16.f, col, kFontSemiBold, EAlign::Far, EVAlign::Middle);
+    g.DrawText(readText, buf, IRECT(roR - 140.f, mRECT.T, roR, mRECT.B));
   }
 
-  int mMeterMode = 0;
-  float mValL = -120.f, mValR = -120.f;
+  float mTpMax = -120.f;
 };
 
 END_IGRAPHICS_NAMESPACE

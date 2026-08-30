@@ -73,7 +73,6 @@ enum EText {
   kTxtTipWindow,
   kTxtWinSharp,
   kTxtWinClean,
-  kTxtWinBH5,
   kTxtTipRtaOctave,
   kTxtTipVQTGamma,
   kTxtLoudMomentary,  // 响度计: 瞬时响度 (M, 400ms)
@@ -88,6 +87,12 @@ enum EText {
   kTxtBallMax,        // 频谱弹道类型按钮: 最大 (MAX, 瞬时上升峰值式)
   kTxtBallAvg,        // 频谱弹道类型按钮: 平均 (AVG, 功率域指数平均)
   kTxtTipBallistic,   // 频谱弹道类型 tooltip
+  kTxtScopeTitle,     // 声像显示面板标题
+  kTxtScopeCorr,      // 声像读数: 相关性
+  kTxtScopeWidth,     // 声像读数: 宽度
+  kTxtScopeBalance,   // 声像读数: 平衡
+  kTxtScopeAnti,      // 声像: 反相角标
+  kTxtTipScopeRange,  // 声像显示范围 tooltip
   kNumTexts
 };
 
@@ -119,8 +124,8 @@ inline const char *Tr(int id, int lang) {
           "Release fall mode: LOG = dB-domain one-pole (slows near signal), LIN = linear dB/s fall (constant speed)",
           "Spectrum display bottom: click to cycle 80 / 100 / 120 dB",
           "Spectrum display attack time",
-          "Spectrum analysis FFT size (LOW/MID/HIGH: 2048/4096/8192)",
-          "PBT low-frequency resolution (40/20/10 Hz)",
+          "Spectrum analysis FFT size (L/M/H: 2048/4096/8192)",
+          "PBT low-frequency resolution (L/M/H: 40/20/10 Hz, smaller = finer)",
           "Switch analysis engine (STFT / VQT / PBT / RTA)",
           "AUDIO",
           "Input",
@@ -137,10 +142,10 @@ inline const char *Tr(int id, int lang) {
           "RESET",
           "Meter mode: dBTP (true peak, ITU-R BS.1770) / dBFS + RMS (VU meter is always shown separately)",
           "Peak hold on/off (spectrum hold curve and meter hold line)",
-          "Clear peak hold and overload latch",
-          "LOW",
-          "MID",
-          "HIGH",
+          "Reset everything: meter hold / overload / persistent true peak / loudness (I, LRA, true peak)",
+          "L",
+          "M",
+          "H",
           "FREEZE",
           "Freeze display: hold current picture; switching engine re-analyzes the same frozen audio with the new algorithm",
           "DEVELOPER",
@@ -153,12 +158,11 @@ inline const char *Tr(int id, int lang) {
           "HOLD",
           "Peak hold duration: click to cycle 0.5s / 2s / ∞ (infinite hold)",
           "Spectrum slope (dB/oct, pivot ~632 Hz): STFT 0/3/4.5, VQT/PBT/RTA -3/0/1.5; each engine keeps its own value",
-          "Window mode (STFT and VQT each keep their own value): SHARP (Hann: sharp mainlobe, classic response) / CLEAN (4-term Blackman-Harris: -92 dB ultra-low leakage) / BH5 (5-term Blackman-Harris: -125 dB ultra-low leakage, slightly wider mainlobe)",
+          "Window mode (STFT and VQT each keep their own value): SHARP (Hann: sharp mainlobe, classic response) / CLEAN (5-term Blackman-Harris: -125 dB ultra-low leakage, slightly wider mainlobe)",
           "SHARP",
           "CLEAN",
-          "BH5",
-          "RTA fractional-octave resolution (LOW/MID/HIGH = 1/6/1/12/1/24: 59/118/236 bands)",
-          "VQT low-frequency bandwidth floor gamma (Hz): band width = fc/Q + gamma — higher = wider low bands, faster response; lower = sharper",
+          "RTA fractional-octave resolution (L/M/H = 1/6/1/12/1/24: 59/118/236 bands)",
+          "VQT low-frequency bandwidth floor gamma (L/M/H = 20/10/5 Hz): band width = fc/Q + gamma — H = narrowest low bands, finest low-frequency resolution; L = wider low bands, faster response",
           "MOMENTARY",
           "SHORT-TERM",
           "INTEGRATED",
@@ -171,6 +175,12 @@ inline const char *Tr(int id, int lang) {
           "MAX",
           "AVG",
           "Ballistic type: STD = attack/release one-pole; MAX = zero-latency rise, fall by release; AVG = power-domain exponential average (fixed ~0.1 s, attack/release sliders ignored)",
+          "STEREO FIELD",
+          "CORRELATION",
+          "WIDTH",
+          "BALANCE",
+          "Anti-Phase",
+          "Stereo display range: click to cycle floor -60 / -80 / -100 dB",
       },
       {
           "释放",
@@ -199,7 +209,7 @@ inline const char *Tr(int id, int lang) {
           "频谱显示范围：点击循环切换底部 80 / 100 / 120 dB",
           "频谱显示上升时间",
           "频谱分析 FFT 尺寸（低/中/高: 2048/4096/8192）",
-          "PBT 低频分辨率（40/20/10 Hz）",
+          "PBT 低频分辨率（低/中/高：40/20/10 Hz，越小越精细）",
           "切换分析引擎（STFT / VQT / PBT / RTA）",
           "音频",
           "输入",
@@ -216,7 +226,7 @@ inline const char *Tr(int id, int lang) {
           "重置",
           "电平表模式：dBTP 真峰值（ITU-R BS.1770）/ dBFS+RMS（独立 VU 表常驻显示）",
           "峰值保持开关（频谱保持曲线与电平表保持亮线）",
-          "清除峰值保持与过载锁存",
+          "全部重置：电平表保持/过载/持久真峰值与响度（综合、LRA、真峰值）",
           "低",
           "中",
           "高",
@@ -232,12 +242,11 @@ inline const char *Tr(int id, int lang) {
           "锁相位",
           "峰值保持时长：点击循环切换 0.5s / 2s / ∞（无限保持）",
           "频谱斜率（dB/oct，支点约 632 Hz）：STFT 0/3/4.5，VQT/PBT/RTA -3/0/1.5；各引擎独立保存",
-          "窗函数模式（STFT 与 VQT 独立保存档位）：锐利（Hann: 锐利窄主瓣，经典响应）/ 纯净（4阶 Blackman-Harris: -92 dB 极低旁瓣泄露）/ BH5（5阶 Blackman-Harris: -125 dB 超低泄露，主瓣略宽）",
+          "窗函数模式（STFT 与 VQT 独立保存档位）：锐利（Hann: 锐利窄主瓣，经典响应）/ 纯净（5阶 Blackman-Harris: -125 dB 超低旁瓣泄露，主瓣略宽）",
           "锐利",
           "纯净",
-          "BH5",
-          "RTA 分数倍频程分辨率（LOW/MID/HIGH = 1/6/1/12/1/24：59/118/236 带）",
-          "VQT 低频带宽下限 γ（Hz）：带宽 = fc/Q + γ —— 越大低频带越宽、响应越快；越小越锐利",
+          "RTA 分数倍频程分辨率（低/中/高 = 1/6/1/12/1/24：59/118/236 带）",
+          "VQT 低频带宽下限 γ（低/中/高 = 20/10/5 Hz）：带宽 = fc/Q + γ —— 高档低频带最窄、最低频分辨力最高；低档低频带更宽、响应更快",
           "瞬时",
           "短时",
           "总响度",
@@ -250,6 +259,12 @@ inline const char *Tr(int id, int lang) {
           "最大",
           "平均",
           "频谱弹道类型：标准 = 起音/释放单极点；最大 = 上升瞬时到位、回落按释放；平均 = 功率域指数平均（固定约 0.1 秒，起音/释放滑块不生效）",
+          "声像",
+          "相关性",
+          "宽度",
+          "平衡",
+          "反相",
+          "声像显示范围：点击循环切换底限 -60 / -80 / -100 dB",
       },
   };
   return kTable[lang][id];

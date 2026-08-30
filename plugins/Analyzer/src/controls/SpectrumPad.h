@@ -13,6 +13,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <functional>
 #include <vector>
 
 BEGIN_IPLUG_NAMESPACE
@@ -39,9 +40,14 @@ public:
     kMsgTagChanMode,    // 声道显示模式 (0: L/R, 1: MERGE)
     kMsgTagMergeAlgo,   // 合并算法 (0: PWR 功率和, 1: SUM 单声道和)
     kMsgTagLevelMeter,  // 电平表数据 (LevelMeterUiData)
+    kMsgTagLoudness,    // 响度数据 (LoudnessUiData, M/S 条用)
     kMsgTagPBTBands,    // PBT 频带中心频率 (Hz)
     kMsgTagRTABands,    // RTA 频带中心频率 (Hz)
   };
+
+  // 电平条点击动作 (Analyzer.cpp 绑定回调转成 mLevelReset*Flag)
+  enum EMeterClick { kClickResetPersist, kClickResetMeterHold, kClickResetOver };
+  std::function<void(EMeterClick)> mMeterClickHandler;
 
   SpectrumPad(const IRECT &bounds) : IControl(bounds) {
     mSpecPtsL.reserve(kSpectrumBands);
@@ -252,12 +258,24 @@ public:
       mVuR = d.vuR;
       mVuHoldL = d.vuHoldL;
       mVuHoldR = d.vuHoldR;
+      mPersistL = d.persistL;
+      mPersistR = d.persistR;
       mHoldL = d.holdL;
       mHoldR = d.holdR;
       mHoldSec = d.holdSec;
       mMeterMode = std::clamp(d.mode, 0, 1);
       mOverL = d.overL != 0;
       mOverR = d.overR != 0;
+      SetDirty(false);
+    } else if (msgTag == kMsgTagLoudness) {
+      if (dataSize != (int)sizeof(LoudnessUiData))
+        return;
+      LoudnessUiData d;
+      std::memcpy(&d, pData, sizeof(d));
+      mMomentary = d.momentary;
+      mShortTerm = d.shortTerm;
+      mIntegrated = d.integrated;
+      mTarget = d.target;
       SetDirty(false);
     } else if (msgTag == kMsgTagReset) {
       for (int c = 0; c < 3; ++c)
@@ -266,6 +284,27 @@ public:
         std::fill(v.begin(), v.end(), 0.f);
       ClearPeakHold();
       SetDirty(false);
+    }
+  }
+
+  // 电平条点击交互: 命中 L/R 条区域时按模式分发 (dBTP → 清持久锁存;
+  // dBFS → 顶部 LED 区清过载 / 下方条体清峰值保持)。模式按钮 attach 在后, 优先命中。
+  void OnMouseDown(float x, float y, const IMouseMod &mod) override {
+    if (!mMeterClickHandler)
+      return;
+    const float totalW = kMeterStripW;
+    const float barL0 = mRECT.R - totalW; // 与 Draw 的 plot.R 一致 (忽略像素对齐的亚像素差)
+    const float barR = barL0 + 2.f * kGainBarW;
+    if (x < barL0 || x > barR || y < mRECT.T || y > mRECT.B)
+      return;
+    if (mMeterMode == 0) {
+      mMeterClickHandler(kClickResetPersist);
+    } else {
+      const float y0 = YOf(mRECT, 0.f);
+      if (y < y0 - 3.f)
+        mMeterClickHandler(kClickResetOver);
+      else
+        mMeterClickHandler(kClickResetMeterHold);
     }
   }
 
@@ -291,11 +330,11 @@ public:
 
   void Draw(IGraphics &g) override {
     g.FillRect(COL_100(), mRECT);
-    // 图形区左对齐, 右侧让出 L/R 两条电平表竖条 + VU 刻度区 + 独立 VU 表
-    // (刻度文字绘制在频谱区域内部右侧)。对 plot 做物理像素对齐: 层位图/层内绘制/
+    // 图形区左对齐, 右侧让出 L/R 两条电平表竖条 + VU 刻度区 + 独立 VU 表双条 +
+    // 响度 M/S 条 (LUFS 刻度 + 双条)。对 plot 做物理像素对齐: 层位图/层内绘制/
     // 贴图/频谱/电平表共用同一矩形, 避免层内容与位图边缘之间的亚像素透明条带在
     // 右侧/底侧露出底色 (白边)。
-    const IRECT plot = mRECT.GetReducedFromRight(2.f * kGainBarW + kVuScaleW + 2.f * kVuBarW)
+    const IRECT plot = mRECT.GetReducedFromRight(kMeterStripW)
                            .GetPixelAligned(g.GetScreenScale() * g.GetDrawScale());
 
     // hover 准线: 竖线 (1px) 在光标 x, 标签位于竖线顶部右侧显示 Hz 值;
@@ -543,6 +582,7 @@ private:
     DrawMeterBar(g, plot, barR, cR, 1);
     DrawVuScale(g, plot);
     DrawVuBar(g, plot);
+    DrawLoudBars(g, plot);
   }
 
   // 独立 VU 表刻度文字: -20/-10/0/+3 (VU), 右对齐 VU 表左缘, 画在 L/R 条与 VU 表
@@ -670,14 +710,85 @@ private:
     drawBar(barR, mVuR, mVuHoldR);
   }
 
+  // 响度 M/S/I 三条 (LUFS): 位于 VU 条右侧, 样式与 VU 条一致 (轨道 + 刻度 + 渐变段),
+  // 颜色沿用响度计原迷你条配色 (绿/黄/红, -60..0 LUFS), 顶部画目标线。
+  void DrawLoudBars(IGraphics &g, const IRECT &plot) {
+    const float scaleL = plot.R + 2.f * kGainBarW + kVuScaleW + 2.f * kVuBarW;
+    const float bar0L = scaleL + kLufsScaleW;
+    const IRECT barM(bar0L, plot.T, bar0L + kLoudBarW, plot.B);
+    const IRECT barS(barM.R, plot.T, barM.R + kLoudBarW, plot.B);
+    const IRECT barI(barS.R, plot.T, barS.R + kLoudBarW, plot.B);
+
+    // LUFS 刻度文字 -60/-30/0 (0 贴条顶翻到线下侧, 与 VU 刻度同样式)
+    const IText t(14, COL_700(), kFontRegular, EAlign::Far, EVAlign::Bottom);
+    struct LTick { int lufs; const char *txt; };
+    static const LTick kTicks[] = {{-60, "-60"}, {-30, "-30"}, {0, "0"}};
+    for (const auto &tk : kTicks) {
+      const float y = plot.B - (float)(tk.lufs + 60) / 60.f * plot.H();
+      IRECT labelR(scaleL, y - kLabelH - 1.f, scaleL + kLufsScaleW - kTickRight, y - 1.f);
+      if (tk.lufs == 0)
+        labelR = IRECT(scaleL, plot.T + 1.f, scaleL + kLufsScaleW - kTickRight, plot.T + 1.f + kLabelH);
+      g.DrawText(t, tk.txt, labelR);
+    }
+
+    // 目标线 (跨 M/S/I 三条), 与响度计原迷你条一致
+    if (mTarget > -100.f) {
+      const float yT = plot.B - std::clamp((mTarget + 60.f) / 60.f, 0.f, 1.f) * plot.H();
+      if (yT > plot.T && yT < plot.B)
+        g.FillRect(COL_900(), IRECT(barM.L, yT - 1.f, barI.R, yT + 1.f));
+    }
+
+    struct LStop { float lufs; IColor c; };
+    const LStop stops[] = {
+      {-60.f, IColor(255, 96, 186, 96)},  // -60 绿 (原 M/S 配色, 颜色暂不变)
+      {-18.f, IColor(255, 232, 173, 40)}, // -18 黄
+      {-6.f, IColor(255, 226, 60, 52)},   // -6 红
+      {0.f, IColor(255, 226, 60, 52)},    // 0 红
+    };
+    const int nStops = (int)(sizeof(stops) / sizeof(stops[0]));
+    auto tOfL = [](float lufs) { return std::clamp((lufs + 60.f) / 60.f, 0.f, 1.f); };
+    const float seamOv = 1.f / std::max(1.f, g.GetScreenScale() * g.GetDrawScale());
+
+    // 单条: 轨道 + 分段 2-stop 渐变填充 (NanoVG 后端不支持多 stop, 见 DrawMeterBar) + 顶部小标签
+    auto drawBar = [&](const IRECT &bar, float lufs, const char *label) {
+      g.FillRect(COL_300(), bar);
+      if (lufs > -99.f) {
+        const float yTop = plot.B - std::clamp((lufs + 60.f) / 60.f, 0.f, 1.f) * plot.H();
+        for (int i = 0; i + 1 < nStops; ++i) {
+          const float yA = plot.T + tOfL(stops[i].lufs) * plot.H();
+          const float yB = plot.T + tOfL(stops[i + 1].lufs) * plot.H();
+          if (yB <= yTop)
+            continue;
+          const float rT = std::max(yA - seamOv, yTop);
+          const float rB = std::min(yB + seamOv, bar.B);
+          if (rB - rT <= 0.f)
+            continue;
+          IPattern grad = IPattern::CreateLinearGradient(bar.L, yA, bar.L, yB);
+          grad.AddStop(stops[i].c, 0.f);
+          grad.AddStop(stops[i + 1].c, 1.f);
+          g.PathClear();
+          g.PathRect(IRECT(bar.L, rT, bar.R, rB));
+          g.PathFill(grad);
+        }
+      }
+      const IText lbl(10.f, COL_500(), kFontRegular, EAlign::Center, EVAlign::Top);
+      g.DrawText(lbl, label, IRECT(bar.L, plot.T, bar.R, plot.T + 12.f));
+    };
+    drawBar(barM, mMomentary, "M");
+    drawBar(barS, mShortTerm, "S");
+    drawBar(barI, mIntegrated, "I");
+  }
+
   void DrawMeterBar(IGraphics &g, const IRECT &plot, const IRECT &bar, const IColor &chan, int ch) {
     const float top = MeterTopDb();
     float val, hold = -1000.f;
     float rmsVal = -999.f;
+    float persist = -120.f;
     bool over = false;
     if (mMeterMode == 0) {
       val = ch ? mTrueR : mTrueL;
       hold = ch ? mHoldR : mHoldL;
+      persist = ch ? mPersistR : mPersistL;
       over = ch ? mOverR : mOverL;
     } else {
       val = ch ? mPeakR : mPeakL;
@@ -784,6 +895,12 @@ private:
                          (int)(hc.B * a + bg.B * (1.f - a) + 0.5f));
       }
       g.FillRect(hc, IRECT(bar.L, yH - 1.f, bar.R, yH + 1.f));
+    }
+
+    // dBTP 持久锁存线: 真峰值越过 0 dBFS 后锁存的最大位置 (只增不减, 点击条重置)
+    if (mMeterMode == 0 && mHoldSec > 0.f && persist > 0.f && persist > mBottomDb) {
+      const float yP = YOf(plot, std::clamp(persist, mBottomDb, top));
+      g.FillRect(MeterOverLed(), IRECT(bar.L, yP - 1.5f, bar.R, yP + 1.5f));
     }
 
     // over 指示 (仅 dBFS)
@@ -1245,10 +1362,14 @@ private:
   float mRmsL = -120.f, mRmsR = -120.f;     // 电平表: RMS dBFS (300ms 积分)
   float mVuL = -120.f, mVuR = -120.f;       // 电平表: VU 对应 dBFS (0 VU = -18 dBFS), 常驻
   float mVuHoldL = -120.f, mVuHoldR = -120.f; // 独立 VU 表峰值保持 (dBFS 域; -1000 = 无效)
+  float mPersistL = -120.f, mPersistR = -120.f; // dBTP 持久锁存 (真峰值 > 0, 只增不减; -120 = 未触发)
   float mHoldL = -1000.f, mHoldR = -1000.f; // 电平表: 峰值保持 (显示域 dB, -1000 = 无效)
   float mHoldSec = 2.f;                     // 电平表: 保持时长 (s)
   int mMeterMode = 0;                       // L/R 条模式: 0=dBTP, 1=dBFS+RMS (独立 VU 表常驻)
   bool mOverL = false, mOverR = false;      // 电平表: 过载锁存
+  float mMomentary = -120.f, mShortTerm = -120.f; // 响度 M/S (LUFS)
+  float mIntegrated = -120.f;               // 总响度 I (LUFS)
+  float mTarget = -14.f;                    // 响度目标 (LUFS)
   std::vector<int> mBinToBand;     // 预计算: bin -> band 映射 (-1 = 频段外)
   std::array<bool, kSpectrumBands> mBandUsed{}; // FFT: 本帧有 bin 的 band 标记 (含首带入场线), 绘制门控
   int mMode = 0;                   // 分析模式: 0=FFT, 1=VQT, 2=PBT, 3=RTA

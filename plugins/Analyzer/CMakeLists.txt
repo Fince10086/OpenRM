@@ -32,6 +32,7 @@ openrm_add_plugin(${PROJECT_NAME}
     src/Theme.h
     src/Strings.h
     src/dsp/SpectrumSTFT.h
+    src/dsp/StereoScope.h
     src/dsp/VQTAnalyzer.h
     src/dsp/PBTAnalyzer.h
     src/dsp/RTAAnalyzer.h
@@ -45,6 +46,7 @@ openrm_add_plugin(${PROJECT_NAME}
     src/controls/SectionTitleControl.h
     src/controls/SettingsPanelControl.h
     src/controls/SpectrumPad.h
+    src/controls/StereoFieldControl.h
     src/controls/LoudnessMeterControl.h
     src/StateFileIO.h
     src/SettingsFileIO.h

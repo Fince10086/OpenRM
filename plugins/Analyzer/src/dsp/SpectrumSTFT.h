@@ -18,7 +18,7 @@ public:
   using Data = ISenderData<MAXNC, TDataPacket>;
   using Base = ISender<MAXNC, QUEUE_SIZE, TDataPacket>;
 
-  enum EWindowType { kWindowHann = 0, kWindowBH4 = 1, kWindowBH5 = 2, kNumWindowTypes = 3 };
+  enum EWindowType { kWindowHann = 0, kWindowClean = 1, kNumWindowTypes = 2 };
 
   SpectrumSTFT(int fftSize = 4096, int overlap = 4, int windowType = 0) {
     WDL_fft_init();
@@ -53,18 +53,7 @@ public:
     const float M = static_cast<float>(mFFTSize - 1);
     double sum = 0.0;
     if (mWindowType == 1) {
-      // 4-term Blackman-Harris 窗: 旁瓣抑制达 -92 dB
-      constexpr float a0 = 0.35875f;
-      constexpr float a1 = 0.48829f;
-      constexpr float a2 = 0.14128f;
-      constexpr float a3 = 0.01168f;
-      for (int i = 0; i < mFFTSize; ++i) {
-        const float theta = 2.0f * PI * i / M;
-        mWindow[i] = a0 - a1 * std::cos(theta) + a2 * std::cos(2.0f * theta) - a3 * std::cos(3.0f * theta);
-        sum += mWindow[i];
-      }
-    } else if (mWindowType == 2) {
-      // 5-term Blackman-Harris 窗: 旁瓣抑制达 -125 dB (数值优化系数, 主瓣半宽 ~5 bin)
+      // 5-term Blackman-Harris 窗 (纯净档): 旁瓣抑制达 -125 dB (数值优化系数, 主瓣半宽 ~5 bin)
       constexpr float a0 = 0.3230984033f;
       constexpr float a1 = 0.4714310503f;
       constexpr float a2 = 0.1756446367f;
@@ -77,7 +66,7 @@ public:
         sum += mWindow[i];
       }
     } else {
-      // 标准 Hann 窗: 主瓣较窄, 旁瓣 -31.5 dB
+      // 标准 Hann 窗 (锐利档): 主瓣较窄, 旁瓣 -31.5 dB
       for (int i = 0; i < mFFTSize; ++i) {
         mWindow[i] = 0.5f * (1.0f - std::cos(2.0f * PI * i / M));
         sum += mWindow[i];
@@ -172,7 +161,7 @@ private:
   int mNumBins = 2048;
   int mBufCount = 0;
   int mChanTri = 0; // 0=LR, 1=PWR, 2=SUM
-  int mWindowType = 0; // 0=Hann, 1=BH4, 2=BH5
+  int mWindowType = 0; // 0=Hann(锐利), 1=BH5(纯净)
   float mScaling = 0.f;
   std::array<float, MAX_FFT_SIZE> mWindow{};
   std::array<std::array<float, MAX_FFT_SIZE>, MAXNC> mHistory{};

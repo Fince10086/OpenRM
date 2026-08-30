@@ -8,6 +8,7 @@
 #include "dsp/RTAAnalyzer.h"
 #include "dsp/LevelMeter.h"
 #include "dsp/LoudnessMeter.h"
+#include "dsp/StereoScope.h"
 #if ORM_ENABLE_TEST_GEN
 #include "dsp/TestSignalGenerator.h"
 #endif
@@ -31,6 +32,7 @@ namespace igraphics {
 class IControl;
 class IVButtonControl;
 class SpectrumPad;
+class StereoFieldControl;
 class ORMSlider;
 class SettingsPanelControl;
 class CpuMeterControl;
@@ -63,6 +65,7 @@ private:
   VQTAnalyzer<3> mVQT;
   PBTAnalyzer<3> mPBT;
   RTAAnalyzer<3> mRTA;
+  StereoScope<> mScope; // 声像显示引擎: 音频线程只攒 hop 样本包 (方位角/弹道/相关性全在 UI 线程)
 
   static constexpr int kMaxBlock = 16384;
   std::array<sample, kMaxBlock> mSpecInL{};
@@ -80,10 +83,14 @@ private:
   std::atomic<float> mVuL{0.f}, mVuR{0.f};
   std::atomic<float> mVuHoldL{0.f}, mVuHoldR{0.f};
   std::atomic<float> mHoldL{0.f}, mHoldR{0.f};
+  std::atomic<float> mPersistL{0.f}, mPersistR{0.f};
   std::atomic<int> mOverL{0}, mOverR{0};
   std::atomic<float> mHoldSec{2.f};
-  std::atomic<bool> mLevelResetFlag{false};     // UI 线程置位, 音频线程下一 block 清除 hold/over
-  std::atomic<bool> mLevelResetHoldFlag{false}; // UI 线程置位, 音频线程下一 block 清除峰值保持 (模式切换)
+  std::atomic<bool> mLevelResetFlag{false};          // UI 线程置位, 音频线程下一 block 清除 hold/over/persist
+  std::atomic<bool> mLevelResetHoldFlag{false};      // UI 线程置位, 音频线程下一 block 清除峰值保持 (模式切换)
+  std::atomic<bool> mLevelResetPersistFlag{false};   // UI 线程置位: 清除 dBTP 持久锁存 (点击 dBTP 条)
+  std::atomic<bool> mLevelResetMeterHoldFlag{false}; // UI 线程置位: 清除 L/R 条峰值保持 (dBFS 点击条体)
+  std::atomic<bool> mLevelResetOverFlag{false};      // UI 线程置位: 清除过载锁存 (dBFS 点击 LED)
   std::atomic<double> mLevelSetSR{-1.0};        // UI 线程置位, 音频线程下一 block 执行 SetSampleRate+Reset (-1=无请求)
 
   // 响度计输出快照 (音频线程写入, UI 线程 OnIdle 读取; 与电平表同模式)
@@ -106,6 +113,8 @@ private:
   int mSentChanMode = -1; // 存储三态值 (0=LR,1=PWR,2=SUM), 用于 OnIdle 增量去重
 
   SpectrumPad *mSpectrumPad = nullptr;
+  StereoFieldControl *mScopeCtrl = nullptr;   // 声像显示面板 (频谱下方空闲区, PAZ 式极坐标电平)
+  FlatCycleButton *mScopeRangeBtn = nullptr;  // 声像显示范围循环按钮 (面板头部右缘)
   FlatCycleButton *mResBtn = nullptr;      // STFT 分辨率循环按钮 (LOW/MID/HIGH)
   FlatCycleButton *mWindowBtn = nullptr;   // 窗函数循环按钮 (SHARP/CLEAN, STFT 与 VQT 各自独立档位, 按模式改绑参数)
   FlatCycleButton *mPbtLfResBtn = nullptr; // PBT 低频分辨率循环按钮 (40/20/10 Hz)
@@ -121,18 +130,18 @@ private:
   FlatCycleButton *mModeBtn = nullptr;
   FlatCycleButton *mChanModeBtn = nullptr;
   FlatCycleButton *mLevelModeBtn = nullptr;
-  IVButtonControl *mLevelResetBtn = nullptr;
+  IVButtonControl *mLevelResetBtn = nullptr;  // 全量重置 (右下角; 电平表 + 频谱 hold + 响度)
   FlatToggleControl *mLevelHoldBtn = nullptr;   // 峰值保持开关 (HOLD, 反色开关样式)
   FlatCycleButton *mLevelHoldTimeBtn = nullptr; // 峰值保持时长循环按钮 (0.5s / 2s / ∞)
   FlatToggleControl *mFreezeBtn = nullptr; // 冻结开关 (FREEZE, 反色开关样式, 同 HOLD)
-  LoudnessMeterControl *mLoudCtrl = nullptr;    // 响度计读数横条 (底部)
+  LoudnessMeterControl *mLoudCtrl = nullptr;    // 响度计读数 (右栏上方: I/目标差/TARGET/LRA)
   FlatCycleButton *mLoudPresetBtn = nullptr;    // 响度目标预设循环按钮 (-14 / -16 / -23 LUFS)
-  IVButtonControl *mLoudResetBtn = nullptr;     // 响度计 RESET (清 I/LRA/TP 锁存)
 
   int mSentMode = -1;
   int mSentWindowFFT = -1; // STFT 窗函数档位 (kFFTWindow), OnIdle 增量去重
   int mSentWindowVQT = -1; // VQT 窗函数档位 (kWindowVQT), OnIdle 增量去重
   int mSentRtaOct = -1;    // RTA 分数倍频程档位 (kRtaOctave), OnIdle 增量去重
+  int mSentScopeRange = -1; // 声像显示范围档位 (kScopeRange), OnIdle 增量去重
 
   // ── Freeze (冻结/保持), 确定性回放方案 ─────────────────────────────
   // 音频线程把最近输入滚环记录进 mFreezeRing (freeze 后停止写入, 即冻结时刻快照),
@@ -239,6 +248,12 @@ private:
     const int idx = (int)std::clamp(std::lround(GetParam(kRange)->Value()), 0L, 2L);
     static constexpr float kRangeDb[3] = {80.f, 100.f, 120.f};
     return kRangeDb[idx];
+  }
+  // 声像显示范围 (极坐标电平半径 dB 底限): 离散三档 -60/-80/-100
+  float CurrentScopeFloorDb() const {
+    const int idx = (int)std::clamp(std::lround(GetParam(kScopeRange)->Value()), 0L,
+                                    (long)kNumScopeRangeOptions - 1);
+    return (float)kScopeRangeDb[idx];
   }
   // 峰值保持有效时长 (s): 开关关闭 -> 0 (LevelMeter 不保持, UI 不画 hold 线/曲线);
   // 开启 -> kHoldTimeSecs 档位值 (∞ 档为 1e9, 超时永不触发 = 无限保持)。

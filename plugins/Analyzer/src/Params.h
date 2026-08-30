@@ -11,7 +11,7 @@ enum EParams {
   kRange,         // 频谱显示动态范围下限 (dBFS)
   kAttack,        // 频谱上升响应时间 (s)
   kRes,           // FFT 分辨率档位 (2048/4096/8192)
-  kLfRes,         // PBT 低频分辨率档位 (40/20/10 Hz)
+  kLfRes,         // PBT 低频分辨率档位 (低/中/高 = 40/20/10 Hz)
   kMode,          // 分析引擎模式 (0: STFT, 1: VQT, 2: PBT, 3: RTA)
   kChannelMode,   // 声道显示模式 (0: PWR, 1: LR, 2: SUM)
   kLevelMode,     // 电平表模式 (L/R 条: 0: dBTP, 1: dBFS+RMS; 独立 VU 表常驻)
@@ -23,28 +23,30 @@ enum EParams {
   kSlopePBT,      // 频谱斜率档位索引, PBT 引擎独立保存 (-3/0/1.5 dB/oct)
   kSlopeRTA,      // 频谱斜率档位索引, RTA 引擎独立保存 (-3/0/1.5 dB/oct)
   kRtaOctave,     // RTA 分数倍频程档位 (0: 1/6, 1: 1/12, 2: 1/24)
-  kFFTWindow,     // STFT 窗函数档位 (0: Hann, 1: BH4 4阶Blackman-Harris, 2: BH5 5阶Blackman-Harris)
-  kWindowVQT,     // VQT 窗函数档位 (0: Hann, 1: BH4), 与 STFT 独立保存
-  kVQTGamma,      // VQT 低频带宽下限 γ (Hz): bw = fc/q + γ (5/10/20)
+  kFFTWindow,     // STFT 窗函数档位 (0: Hann/锐利, 1: BH5 5阶Blackman-Harris/纯净)
+  kWindowVQT,     // VQT 窗函数档位 (0: Hann, 1: BH5), 与 STFT 独立保存
+  kVQTGamma,      // VQT 低频带宽下限 γ (Hz): bw = fc/q + γ (低/中/高 = 20/10/5, 越小越精细)
   kLoudPreset,    // 响度目标预设档位 (0: -14 流媒体, 1: -16 Apple, 2: -23 R128)
+  kScopeRange,    // 声像显示范围档位 (极坐标电平半径 dB 底限: 0: -60, 1: -80, 2: -100)
   kNumParams
 };
 
-enum EFFTWindow { kFFTWindowHann = 0, kFFTWindowBH4 = 1, kFFTWindowBH5 = 2, kNumFFTWindows = 3 };
+// 窗函数档位: 0 = Hann (锐利), 1 = 5-term Blackman-Harris (纯净, -125 dB)
+enum EFFTWindow { kFFTWindowHann = 0, kFFTWindowClean = 1, kNumFFTWindows = 2 };
 
 // 频谱弹道类型 (kBallistic): STD 标准 | MAX 峰值式 | AVG 功率平均
 enum EBallistic { kBallisticSTD = 0, kBallisticMAX = 1, kBallisticAVG = 2, kNumBallistics = 3 };
 
 using ParamSnapshot = std::array<double, kNumParams>;
 
-// 算法档位可选值列表（参数实际存储对应的索引）
+// 算法档位可选值列表（参数实际存储对应的索引; 档序均为低→中→高, Hz 越小精度越高）
 constexpr int kResOptions[] = {2048, 4096, 8192};
 constexpr int kNumResOptions = 3;
 constexpr int kPbtLfResOptions[] = {40, 20, 10};
 constexpr int kNumPbtLfResOptions = 3;
 constexpr int kRtaOctaveOptions[] = {6, 12, 24};
 constexpr int kNumRtaOctaveOptions = 3;
-constexpr int kVQTGammaOptions[] = {5, 10, 20};
+constexpr int kVQTGammaOptions[] = {20, 10, 5};
 constexpr int kNumVQTGammaOptions = 3;
 
 // 峰值保持时长档位 (kLevelHold 存索引)。持久档用 1e9s 表示: LevelMeter 的超时逻辑
@@ -55,6 +57,10 @@ constexpr int kNumHoldTimeOptions = 3;
 // 响度目标预设 (LUFS): 流媒体音乐 -14 / Apple Music -16 / EBU R128 广播 -23
 constexpr double kLoudTargets[] = {-14.0, -16.0, -23.0};
 constexpr int kNumLoudPresets = 3;
+
+// 声像显示范围档位 (kScopeRange 存索引): 极坐标电平扇形的半径 dB 底限
+constexpr double kScopeRangeDb[] = {-60.0, -80.0, -100.0};
+constexpr int kNumScopeRangeOptions = 3;
 
 // 频谱斜率档位 (kSlopeFFT/kSlopeVQT/kSlopePBT/kSlopeRTA 存索引, 各引擎独立):
 // 显示域每 band 施加 S·log2(f/f_pivot) dB 的倾斜。FFT 按 bin 显示白噪天生平直,
@@ -83,4 +89,4 @@ enum EChannelMode { kChanModePWR = 0, kChanModeLR = 1, kChanModeSUM = 2, kNumCha
 enum ELevelMode { kLevelModeDBTP = 0, kLevelModeDBFS = 1, kNumLevelModes = 2 };
 
 // UI 控件消息标签
-enum EControlTags { kCtrlTagPad = 100, kCtrlTagCpu = 101, kCtrlTagLegend = 102, kCtrlTagLoudness = 103 };
+enum EControlTags { kCtrlTagPad = 100, kCtrlTagCpu = 101, kCtrlTagLegend = 102, kCtrlTagLoudness = 103, kCtrlTagScope = 104 };
