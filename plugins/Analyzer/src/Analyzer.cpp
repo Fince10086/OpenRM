@@ -233,7 +233,8 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     constexpr float kCol2X = kCol1X + kBtnW + kBtnGap; // 右列按钮左缘
     constexpr float kPanelR = kCol2X + kBtnW;
 
-    // 顶部三按钮 (LR / FFT·VQT·PBT·RTA / RES) 统一尺寸: 宽 62 高 26, 容纳 HIGH/PWR 文字 + 基础内边距
+    // 顶行按钮 (PWR/LR/SUM · STFT·VQT·PBT·RTA · RES · 窗 · LOG/LIN · 斜率) 统一尺寸:
+    // 宽 62 高 26 (斜率按钮因标签带单位加宽至 116), 容纳 HIGH/PWR 文字 + 基础内边距
     constexpr float kTopBtnW = 62.f;
     constexpr float kTopBtnH = 26.f;
     constexpr float kTopBtnY = 22.f;
@@ -296,6 +297,26 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     bindTip(mWindowBtn, orm::kTxtTipWindow);
     mWindowBtn->Hide(initMode != kModeFFT && initMode != kModeVQT);
 
+    // 释放回落模式循环按钮 (LOG 对数域单极点 / LIN 线性 dB 速率): 窗按钮右侧, 同尺寸
+    constexpr float kLogX = kWinX + kTopBtnW + kTopBtnGap;
+    mReleaseModeBtn =
+        new FlatCycleButton(IRECT(kLogX, kTopBtnY, kLogX + kTopBtnW, kTopBtnY + kTopBtnH), kReleaseMode,
+                            {"LOG", "LIN"}, btnStyle);
+    pGraphics->AttachControl(mReleaseModeBtn);
+    bindTip(mReleaseModeBtn, orm::kTxtTipReleaseMode);
+
+    // 频谱斜率循环按钮: LOG 右侧 (标签带单位 "4.5 dB/Oct", 加宽至 116 容纳; 各引擎独立
+    // 保存档位, 切引擎时改绑参数并换标签, 见 OnIdle 模式块)
+    constexpr float kSlopeTopX = kLogX + kTopBtnW + kTopBtnGap;
+    constexpr float kSlopeTopW = 116.f;
+    mSlopeBtn = new FlatCycleButton(
+        IRECT(kSlopeTopX, kTopBtnY, kSlopeTopX + kSlopeTopW, kTopBtnY + kTopBtnH), SlopeParamForMode(initMode),
+        initMode == kModeFFT ? std::initializer_list<const char *>{"0 dB/Oct", "3 dB/Oct", "4.5 dB/Oct"}
+                             : std::initializer_list<const char *>{"-3 dB/Oct", "0 dB/Oct", "1.5 dB/Oct"},
+        btnStyle);
+    pGraphics->AttachControl(mSlopeBtn);
+    bindTip(mSlopeBtn, orm::kTxtTipSlope);
+
     // 主频谱绘制区域
     mSpectrumPad = new SpectrumPad(IRECT(20, 58, 668, 328));
     pGraphics->AttachControl(mSpectrumPad, kCtrlTagPad);
@@ -347,48 +368,39 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     bindTip(mRangeBtn, orm::kTxtTipRange);
 
     // CPU 占用率显示
-    mCpuMeter = new CpuMeterControl(IRECT(kCol1X, 30, kPanelR, 60));
+    // 右栏控件组: 底部锚定标题区上方 (标题上缘 615, 留 5px), 纵向行距与横向并排间距一致
+    // (kBtnGap), 自上而下 = CPU / ATTACK / RELEASE / 图标行 / FREEZE·RESET / HOLD·时长
+    constexpr float kRowGap = kBtnGap;
+    constexpr float kHoldRowY = 610.f - 30.f;
+    constexpr float kFreezeRowY = kHoldRowY - kRowGap - 30.f;
+    constexpr float kIconRowY = kFreezeRowY - kRowGap - 30.f;
+    constexpr float kReleaseY = kIconRowY - kRowGap - 42.f;
+    constexpr float kAttackY = kReleaseY - kRowGap - 42.f;
+    constexpr float kCpuY = kAttackY - kRowGap - 30.f;
+    mCpuMeter = new CpuMeterControl(IRECT(kCol1X, kCpuY, kPanelR, kCpuY + 30.f));
     pGraphics->AttachControl(mCpuMeter, kCtrlTagCpu);
 
-    // 上升响应时间滑块 (s): 原 BPO 滑块已删除, 上移填补空位
+    // 上升响应时间滑块 (s)
     mAttackSlider =
-        new ORMSlider(IRECT(kCol1X, 69, kPanelR, 111), kAttack, "ATTACK", style, EDirection::Horizontal);
+        new ORMSlider(IRECT(kCol1X, kAttackY, kPanelR, kAttackY + 42.f), kAttack, "ATTACK", style, EDirection::Horizontal);
     pGraphics->AttachControl(mAttackSlider);
     bindText(orm::kTxtAttack, [this](const char *s) { mAttackSlider->SetHeaderLabel(s); });
     bindTip(mAttackSlider, orm::kTxtTipAttack);
 
     // 释放衰减时间滑块 (s)
     mReleaseSlider =
-        new ORMSlider(IRECT(kCol1X, 120, kPanelR, 162), kRelease, "RELEASE", style, EDirection::Horizontal);
+        new ORMSlider(IRECT(kCol1X, kReleaseY, kPanelR, kReleaseY + 42.f), kRelease, "RELEASE", style, EDirection::Horizontal);
     pGraphics->AttachControl(mReleaseSlider);
     bindText(orm::kTxtRelease, [this](const char *s) { mReleaseSlider->SetHeaderLabel(s); });
     bindTip(mReleaseSlider, orm::kTxtTipRelease);
 
-    // 频谱斜率循环按钮: 位于右栏 UNDO 上方整行 (与 HOLD 时长按钮同宽 kPanelR-kCol1X, 高 kBtnH,
-    // 行距与下方按钮行一致)。标签带单位: FFT 0/3/4.5 dB/Oct, 其余 -3/0/1.5 dB/Oct;
-    // 各引擎独立保存档位, 切引擎时改绑参数并换标签 (见 OnIdle 模式块)。
-    // (BPO 滑块已删除, 下方整堆上移 51px 填补空位)
-    constexpr float kSlopeBtnY = 183.f; // 与下方图标按钮行 (y=241.5) 保持 28.5px 行距
-    mSlopeBtn = new FlatCycleButton(
-        IRECT(kCol1X, kSlopeBtnY, kPanelR, kSlopeBtnY + kBtnH), SlopeParamForMode(initMode),
-        initMode == kModeFFT ? std::initializer_list<const char *>{"0 dB/Oct", "3 dB/Oct", "4.5 dB/Oct"}
-                             : std::initializer_list<const char *>{"-3 dB/Oct", "0 dB/Oct", "1.5 dB/Oct"},
-        btnStyle);
-    pGraphics->AttachControl(mSlopeBtn);
-    bindTip(mSlopeBtn, orm::kTxtTipSlope);
-
-    // 释放回落模式循环按钮 (LOG 对数域单极点 / UNIF 匀速 dB 速率): 位于斜率行下方整行,
-    // 与原撤销列位置重叠, 下方四个图标按钮下移一行腾出此空位 (见下)。
-    mReleaseModeBtn =
-        new FlatCycleButton(IRECT(kCol1X, 241.5f, kPanelR, 241.5f + kBtnH), kReleaseMode, {"LOG", "UNIF"}, btnStyle);
-    pGraphics->AttachControl(mReleaseModeBtn);
-    bindTip(mReleaseModeBtn, orm::kTxtTipReleaseMode);
+    // 频谱斜率与释放回落模式按钮已移至顶行 (窗按钮右侧), 见上方创建处
 
     // 撤销/重做/保存/读取: 文字按钮改为两两一组 (撤销|重做, 保存|读取) 的小图标按钮。
     // 单个宽 (kBtnW-kBtnGap)/2=36, 高仍 kBtnH; 组内组间空隙均 kBtnGap, 整排
-    // 4×36+3×4=156 铺满右栏。整排下移一行 (y=300), 让位给上方释放回落模式按钮。
+    // 4×36+3×4=156 铺满右栏。位于控件组图标行 (y=kIconRowY)。
     constexpr float kIconBtnW = (kBtnW - kBtnGap) / 2.f;
-    constexpr float kIconBtnY = 300.f;
+    constexpr float kIconBtnY = kIconRowY;
     constexpr float kIconStep = kIconBtnW + kBtnGap;
     IControl *undoBtn = MakeIconMomentary(
         IRECT(kCol1X, kIconBtnY, kCol1X + kIconBtnW, kIconBtnY + kBtnH), [this](IControl *) { Undo(); }, kIconUndo);
@@ -419,7 +431,7 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
 
     // 电平表 RESET (清除峰值保持与过载锁存; 频谱 hold 曲线同步清空, 与电平表保持联动)
     mLevelResetBtn =
-        MakeMomentary(IRECT(kCol2X, 339, kPanelR, 369), [this](IControl *) {
+        MakeMomentary(IRECT(kCol2X, kFreezeRowY, kPanelR, kFreezeRowY + 30.f), [this](IControl *) {
           mLevelResetFlag.store(true);
           if (mSpectrumPad)
             mSpectrumPad->ClearPeakHold();
@@ -437,7 +449,7 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     // (英文 FREEZE / 中文 冻结, 随界面语言), 开启时按钮底色变黑 + 文字反白。
     // 冻结时画面完全定格 (UI 停止消费引擎数据), 切换引擎时用冻结时刻的输入缓冲
     // 在新算法下重算并继续定格, 解冻后从定格画面续接实时。
-    mFreezeBtn = new FlatToggleControl(IRECT(kCol1X, 339, kCol1X + kBtnW, 369), kFreeze, " ", toggleStyle,
+    mFreezeBtn = new FlatToggleControl(IRECT(kCol1X, kFreezeRowY, kCol1X + kBtnW, kFreezeRowY + 30.f), kFreeze, " ", toggleStyle,
                                        "FREEZE", "FREEZE");
     pGraphics->AttachControl(mFreezeBtn);
     bindText(orm::kTxtFreeze, [this](const char *s) {
@@ -451,7 +463,7 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     // 峰值保持开关 + 时长循环按钮 (替代原 HOLD 滑块): 开关为 BandPass LINK 同款反色开关,
     // 时长按钮移至 HOLD 右侧空位 (尺寸缩小为 kBtnW), 点击循环 0.5s / 2s / ∞ (无限保持)。
     // 两者同时控制电平表 hold 亮线与频谱 hold 曲线; RESET 按钮清除已积累的保持。
-    mLevelHoldBtn = new FlatToggleControl(IRECT(kCol1X, 378, kCol1X + kBtnW, 408), kLevelHoldOn, " ", toggleStyle,
+    mLevelHoldBtn = new FlatToggleControl(IRECT(kCol1X, kHoldRowY, kCol1X + kBtnW, kHoldRowY + 30.f), kLevelHoldOn, " ", toggleStyle,
                                           "HOLD", "HOLD");
     pGraphics->AttachControl(mLevelHoldBtn);
     bindText(orm::kTxtLevelHold, [this](const char *s) {
@@ -463,7 +475,7 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     bindTip(mLevelHoldBtn, orm::kTxtTipLevelHold);
 
     mLevelHoldTimeBtn =
-        new FlatCycleButton(IRECT(kCol2X, 378, kPanelR, 408), kLevelHold, {"0.5s", "2s", "∞"}, btnStyle);
+        new FlatCycleButton(IRECT(kCol2X, kHoldRowY, kPanelR, kHoldRowY + 30.f), kLevelHold, {"0.5s", "2s", "∞"}, btnStyle);
     pGraphics->AttachControl(mLevelHoldTimeBtn);
     bindTip(mLevelHoldTimeBtn, orm::kTxtTipLevelHoldTime);
 
@@ -1484,6 +1496,15 @@ void ORMAnalyzer::ApplyLanguage() {
     mWindowBtn->SetLabels({orm::Tr(orm::kTxtWinSharp, orm::UILang()),
                            orm::Tr(orm::kTxtWinClean, orm::UILang()),
                            orm::Tr(orm::kTxtWinBH5, orm::UILang())});
+  }
+  if (mChanModeBtn) { // 声道显示模式 (PWR 能量和 / L/R 左右 / SUM 信号和), 顺序与创建一致
+    mChanModeBtn->SetLabels({orm::Tr(orm::kTxtChanPWR, orm::UILang()),
+                             orm::Tr(orm::kTxtChanLR, orm::UILang()),
+                             orm::Tr(orm::kTxtChanSUM, orm::UILang())});
+  }
+  if (mReleaseModeBtn) { // 释放回落模式 (LOG 对数 / LIN 线性), 顺序与创建一致
+    mReleaseModeBtn->SetLabels({orm::Tr(orm::kTxtRelLog, orm::UILang()),
+                                orm::Tr(orm::kTxtRelLin, orm::UILang())});
   }
   ApplyTooltips();
 #if IPLUG_EDITOR

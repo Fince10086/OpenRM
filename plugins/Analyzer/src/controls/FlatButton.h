@@ -212,6 +212,12 @@ public:
   FlatCycleButton(const IRECT &bounds, int paramIdx, const std::vector<const char *> &labels, const IVStyle &style,
                   bool splitChannels = false)
       : IControl(bounds, paramIdx), mLabels(labels), mStyle(style), mSplitChannels(splitChannels) {
+    // 分半样式锚点记录标签位置而非字符串: 语言切换后标签变中文, strcmp 判断将失效
+    // (创建时刻标签恒为英文, 位置语义稳定)
+    mSplitIdx = -1;
+    for (int i = 0; i < (int)labels.size(); ++i)
+      if (std::strcmp(labels[i], "L/R") == 0)
+        mSplitIdx = i;
     SetActionFunction(EmptyClickActionFunc);
   }
 
@@ -260,7 +266,7 @@ public:
       GetChannelColors(cL, cR, cM);
       const IText wt(20, SplitBtnTextColor(), kFontSemiBold, EAlign::Center, EVAlign::Middle);
       const IRECT pb = b;
-      const bool isSplit = (idx >= 0 && idx < num && std::strcmp(mLabels[idx], "L/R") == 0);
+      const bool isSplit = (idx >= 0 && idx < num && idx == mSplitIdx);
       if (isSplit) {
         const IRECT hl(pb.L, pb.T, pb.MW(), pb.B);
         const IRECT hr(pb.MW(), pb.T, pb.R, pb.B);
@@ -309,6 +315,7 @@ private:
   std::vector<const char *> mLabels;
   IVStyle mStyle;
   bool mSplitChannels = false;
+  int mSplitIdx = -1;   // 分半样式锚点 (标签位置, 见构造注释)
   bool mScaleStyle = false;
   float mTextSize = 0.f; // >0 时覆盖样式字号 (窄按钮场景)
 };

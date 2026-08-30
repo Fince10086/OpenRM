@@ -869,13 +869,28 @@ private:
       mHoldPts.push_back({x, dbToY(HoldValAt(b))});
     }
 
+    // 无信号时弹道目标停在屏底下方的 overshoot 缓冲带内 (mBottomDb - over),
+    // 曲线整段在 plot.B 之下; 此时仍栅格化填充/描边, 会在绘图区底缘沿
+    // plot.B 残留 ~1px 的水平线 (闭合边/描边的抗锯齿余迹)。整条曲线都低于
+    // 底缘时跳过绘制, 曲线藏到屏外, 与其余时刻行为一致。
+    auto allBelow = [&](const std::vector<Pt> &pts) {
+      for (const Pt &p : pts)
+        if (p.y < plot.B)
+          return false;
+      return true;
+    };
+
     if (mChanMode == 0) {
-      DrawFill(g, plot, mSpecPtsL, cL, kGradientMinAlpha, kLayerTopAlpha, smooth, false);
-      DrawFill(g, plot, mSpecPtsR, cR, kGradientMinAlpha, kLayerTopAlpha, smooth, true);
+      if (!allBelow(mSpecPtsL))
+        DrawFill(g, plot, mSpecPtsL, cL, kGradientMinAlpha, kLayerTopAlpha, smooth, false);
+      if (!allBelow(mSpecPtsR))
+        DrawFill(g, plot, mSpecPtsR, cR, kGradientMinAlpha, kLayerTopAlpha, smooth, true);
     } else {
-      DrawFill(g, plot, mSpecPtsM, cO, kGradientMinAlpha, 255, smooth);
+      if (!allBelow(mSpecPtsM))
+        DrawFill(g, plot, mSpecPtsM, cO, kGradientMinAlpha, 255, smooth);
     }
-    DrawHoldCurve(g, plot, smooth);
+    if (!allBelow(mHoldPts))
+      DrawHoldCurve(g, plot, smooth);
   }
 
   // 建开放曲线主路径 (右缘吸附 + 平滑/折线), 供填充与 hold 细线共用:
