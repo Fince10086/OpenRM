@@ -267,12 +267,14 @@ public:
     const IRECT plot =
         mRECT.GetReducedFromRight(2.f * kGainBarW).GetPixelAligned(g.GetScreenScale() * g.GetDrawScale());
 
-    // hover 十字准线: 竖线 (1px) 在光标 x, 标签位于竖线顶部右侧显示 Hz 值;
+    // hover 准线: 竖线 (1px) 在光标 x, 标签位于竖线顶部右侧显示 Hz 值;
     // 横线 (1px) 在光标 y, 标签位于横线右端上侧显示 dB 值。
+    // 有效区横向放宽到整个控件右缘 (含 L/R 电平条): 横线贯穿频谱并延伸过电平条,
+    // 光标移到电平条上时准线仍激活; 竖线仅在频谱区域内绘制。
     // 标签矩形先算好传给刻度绘制 (DrawDbGrid/DrawFreqGrid): 与固定刻度重叠时
     // 隐藏那一个被重叠的刻度, 让位给准线读数。
     const bool inPlot =
-        mHoverActive && mHoverX >= plot.L && mHoverX <= plot.R && mHoverY >= plot.T && mHoverY <= plot.B;
+        mHoverActive && mHoverX >= plot.L && mHoverX <= mRECT.R && mHoverY >= plot.T && mHoverY <= plot.B;
     IRECT hzSkip, dbSkip; // 默认空矩形 = 不跳过任何刻度
     char hzBuf[16] = "", dbBuf[16] = "";
     char noteBuf[8];   // 音高标签 (C4 等最近音名), inPlot 内计算
@@ -337,17 +339,17 @@ public:
     DrawFreqGrid(g, plot, hzSkip);
     DrawVuLine(g, plot);
     DrawSpectrum(g, plot);
+    DrawLevelMeter(g, plot);
 
     if (inPlot) {
-      // 准线颜色与刻度文字一致 (COL_700), 1px 细线
-      g.DrawLine(COL_700(), xLine, plot.T, xLine, plot.B, nullptr, 1.f);
-      g.DrawLine(COL_700(), plot.L, yLine, plot.R, yLine, nullptr, 1.f);
+      // 准线颜色与刻度文字一致 (COL_700), 1px 细线; 最上层绘制, 横线贯穿电平条
+      if (xLine <= plot.R)
+        g.DrawLine(COL_700(), xLine, plot.T, xLine, plot.B, nullptr, 1.f);
+      g.DrawLine(COL_700(), plot.L, yLine, mRECT.R, yLine, nullptr, 1.f);
       g.DrawText(hzText, noteBuf, pitchR);
       g.DrawText(hzText, hzBuf, freqR);
       g.DrawText(dbText, dbBuf, dbSkip);
     }
-
-    DrawLevelMeter(g, plot);
   }
 
 private:
@@ -524,34 +526,59 @@ private:
     }
     g.FillRect(COL_300(), bar);
 
+    auto tOf = [&](float db) {
+      return std::clamp((kTopDb - db) / (kTopDb - mBottomDb), 0.f, 1.f);
+    };
+
+    const float satScale = (ThemeSatMax() <= 30)
+                               ? ((float)ThemeSatMax() / 30.f)
+                               : (1.f + (float)(ThemeSatMax() - 30) / 55.f);
+
+    // 渐变停止点 (t: 0=顶部 +9 dB, 1=底部), 条体与峰值保持线共用同一组颜色。
+    // 饱和度整体下调 (高饱和区段降 0.07~0.08), 低饱和区段 (绿/青/底部) 亮度明显
+    // 压暗 (b 降 0.04~0.09), 让大片底色不刺眼、整体更沉稳。
+    struct MeterStop { float t; int h; float s; float b; };
+    const MeterStop stops[] = {
+      {0.f, 0, 0.73f, 0.87f},          // +9 dB 红
+      {tOf(0.f), 4, 0.71f, 0.92f},     // 0 dB 橙红
+      {tOf(-6.f), 32, 0.78f, 0.94f},   // -6 dB 黄
+      {tOf(-14.f), 50, 0.73f, 0.86f},  // -14 dB 黄绿
+      {tOf(-24.f), 140, 0.58f, 0.71f}, // -24 dB 绿
+      {tOf(-48.f), 150, 0.68f, 0.60f}, // -48 dB 青
+      {1.f, 156, 0.70f, 0.48f},        // 底部 蓝绿
+    };
+    const int nStops = (int)(sizeof(stops) / sizeof(stops[0]));
+
+    auto meterColor = [&](const MeterStop &st, int alpha) {
+      const float s = std::clamp(st.s * satScale, 0.f, 1.f);
+      const IColor c = HSBToIColor(st.h, s, st.b);
+      return IColor(alpha, c.R, c.G, c.B);
+    };
+
+    // 渐变在 dB 位置的颜色 (与条体渐变一致, 停止点间 RGB 线性插值)
+    auto meterColorAt = [&](float db, int alpha) {
+      const float t = tOf(db);
+      for (int i = 0; i + 1 < nStops; ++i) {
+        if (t <= stops[i + 1].t) {
+          const float span = stops[i + 1].t - stops[i].t;
+          const float f = (span > 0.f) ? (t - stops[i].t) / span : 0.f;
+          const IColor a = meterColor(stops[i], alpha);
+          const IColor b = meterColor(stops[i + 1], alpha);
+          return IColor(alpha, (int)(a.R + (b.R - a.R) * f + 0.5f),
+                              (int)(a.G + (b.G - a.G) * f + 0.5f),
+                              (int)(a.B + (b.B - a.B) * f + 0.5f));
+        }
+      }
+      return meterColor(stops[nStops - 1], alpha);
+    };
+
     auto fillGrad = [&](float yTop, int alpha) {
       if (yTop >= bar.B)
         return;
       const IRECT active(bar.L, yTop, bar.R, bar.B);
       IPattern grad = IPattern::CreateLinearGradient(bar.L, plot.T, bar.L, plot.B);
-
-      auto tOf = [&](float db) {
-        return std::clamp((kTopDb - db) / (kTopDb - mBottomDb), 0.f, 1.f);
-      };
-
-      const float satScale = (ThemeSatMax() <= 30)
-                                 ? ((float)ThemeSatMax() / 30.f)
-                                 : (1.f + (float)(ThemeSatMax() - 30) / 55.f);
-
-      auto meterColor = [&](int h, float baseS, float b) {
-        const float s = std::clamp(baseS * satScale, 0.f, 1.f);
-        const IColor c = HSBToIColor(h, s, b);
-        return IColor(alpha, c.R, c.G, c.B);
-      };
-
-      grad.AddStop(meterColor(0, 0.80f, 0.90f), 0.f);          // +9 dB
-      grad.AddStop(meterColor(4, 0.78f, 0.95f), tOf(0.f));     // 0 dB
-      grad.AddStop(meterColor(32, 0.85f, 0.97f), tOf(-6.f));   // -6 dB
-      grad.AddStop(meterColor(50, 0.80f, 0.89f), tOf(-14.f));  // -14 dB
-      grad.AddStop(meterColor(140, 0.65f, 0.75f), tOf(-24.f)); // -24 dB
-      grad.AddStop(meterColor(150, 0.75f, 0.66f), tOf(-48.f)); // -48 dB
-      grad.AddStop(meterColor(156, 0.77f, 0.54f), 1.f);        // 底部
-
+      for (const auto &st : stops)
+        grad.AddStop(meterColor(st, alpha), st.t);
       g.PathClear();
       g.PathRect(active);
       g.PathFill(grad);
@@ -566,10 +593,19 @@ private:
       fillGrad(YOf(plot, val), 255);
     }
 
-    // 峰值保持线
+    // 峰值保持线 (颜色与条体在该位置的实际显示颜色一致: dBFS 模式下条体是
+    // 90 alpha 渐变叠加在 COL_300 背景上, 先按相同比例与背景合成再画, 避免偏亮偏艳)
     if (mHoldSec > 0.f && hold > mBottomDb) {
       const float yH = YOf(plot, std::clamp(hold, mBottomDb, top));
-      g.FillRect(COL_900(), IRECT(bar.L, yH - 1.f, bar.R, yH + 1.f));
+      IColor hc = meterColorAt(hold, 255);
+      if (mMeterMode == 1) {
+        const IColor bg = COL_300();
+        const float a = 90.f / 255.f;
+        hc = IColor(255, (int)(hc.R * a + bg.R * (1.f - a) + 0.5f),
+                         (int)(hc.G * a + bg.G * (1.f - a) + 0.5f),
+                         (int)(hc.B * a + bg.B * (1.f - a) + 0.5f));
+      }
+      g.FillRect(hc, IRECT(bar.L, yH - 1.f, bar.R, yH + 1.f));
     }
 
     // over 指示 (仅 dBFS)
