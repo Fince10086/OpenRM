@@ -12,11 +12,13 @@
 // 角度 = 模型方位角折半 (δ=θ/2): 同相 |θ|≤90° → 中央 ±45°, 反相 → 侧翼
 // 45°..90°, 硬反相 → 基线两端, 整幅正好 180° 半扇 (网格与读数栏沿用)。
 //
-// 每 hop 对 L/R 做 1024 点 FFT, 按 5 个对数频带聚合 (Σ|L|², Σ|R|²,
-// ΣRe(L·conj R)) → 每带一条主射线 (帧级方位 + 电平弹道); 去相关成分
-// (相关低且居中) 或反相成分在 ±90° 补两条侧翼射线 —— 复现 PAZ 观感:
-// 静态单音一条线, 90° 相位差音正中 + ±90° 三条线, 双频双方位两条线,
-// 反相谐波 ±90° 两条线, 噪声三段区域持续跳动 (中间快、两侧慢)。
+// 每 hop 对 L/R 做 1024 点 FFT, 按 16 个对数频带聚合 (Σ|L|², Σ|R|²,
+// ΣRe(L·conj R)) → 每带一条主射线 (帧级方位 + 电平弹道)。反相带 (相关
+// < −0.2) 的主射线角度 = 帧级 (平衡, 相关) 的自然半角映射, 连续覆盖
+// ±45°..±90° 整个侧翼 (PAZ: 反相信号显示在每侧 45°..90° 之间), 硬反相
+// 时 ±90° 在帧间交替点亮两侧; 非反相的去相关内容在 ±90° 补两条侧翼
+// 射线。复现 PAZ 观感: 静态单音一条线, 90° 相位差音正中 + ±90° 三条
+// 线, 双频双方位两条线, 反相谐波两侧 90°, 噪声三段区域持续跳动。
 //
 // 电平弹道攻击基本直跳 (3ms, 快速扫过的线不丢电平, 噪声线长自然"跳动",
 // 对应 PAZ Peak 响度观感), 释放沿用 LOG/LIN 档位; 主射线角度 30ms 平滑、
@@ -119,6 +121,7 @@ private:
   static constexpr float kAngSmoothSec = 0.030f; // 主射线角度平滑
   static constexpr float kWingSmoothSec = 0.100f;// 侧翼比例平滑 (略慢 → 两侧跳动缓于中间)
   static constexpr float kDecorrTol = 0.15f;  // 去相关歧义阈值: |bal|,|corr| 均低于它 → 居中
+  static constexpr float kAntiThresh = -0.2f; // 相关低于此判"反相带" (微小负相关保持三线模式)
   static constexpr float kHeadH = 22.f;       // 顶部标题行高
   static constexpr float kBasePad = 20.f;     // 基线距画布底缘留白 (L/R 标注带)
   static constexpr float kDomePad = 8.f;      // 穹顶距画布上/左右边缘留白
@@ -211,18 +214,21 @@ private:
         const float corr = (float)(rcB[b] / (0.5 * e)); // 能量加权相关 (ΣLR/½E)
         // 主角度 = ½·atan2(Σ|R|²−Σ|L|², 2ΣRe(L·conj R)); 去相关歧义 (两者都≈0)
         // 时无确定方位 → 居中 (0°), 能量交给侧翼 ±90° (PAZ 三线观感)
-        float ang;
+        float raw;
         if (std::fabs(bal) < kDecorrTol && std::fabs(corr) < kDecorrTol)
-          ang = 0.f;
+          raw = 0.f;
         else
-          ang = 0.5f * (float)std::atan2(dlB[b], 2.0 * rcB[b]);
-        // 角度平滑用单位向量 (cos, sin) 一阶平均: 平均结果恒在单位圆附近,
-        // 数学上不可能累积出界或产生 NaN (旧的角度标量平滑带半扇回绕分支,
-        // 曾观察到指向半扇之外 (≈250°/270°) 的异常线, 已整体替换)
-        const float cA = std::cos(ang), sA = std::sin(ang);
-        mBand[b].vecX += angK * (cA - mBand[b].vecX);
-        mBand[b].vecY += angK * (sA - mBand[b].vecY);
-        mBand[b].anti = (corr < 0.f);
+          raw = 0.5f * (float)std::atan2(dlB[b], 2.0 * rcB[b]);
+        // 反相带 (corr < kAntiThresh): 角度直跳 (不做平滑 —— ±90° 在帧间交替,
+        //  平滑会把它折中成 0°), 主射线自然落在 ±45°..±90° 连续域内, 覆盖整个
+        //  侧翼 (PAZ: 反相信号显示在每侧 45°..90° 之间)。
+        // 非反相带: 标量平滑 —— corr ≥ kAntiThresh 把角度域约束在 ±56° 内,
+        //  无跨半扇端点的回绕, 数学上不可能出界。
+        const bool anti = (corr < kAntiThresh);
+        mBand[b].curAng = raw;
+        if (!anti)
+          mBand[b].ang += angK * (raw - mBand[b].ang);
+        mBand[b].anti = anti;
         // 侧翼比例: 反相 → 满; 去相关 (相关低且居中) → 按 (1−corr)(1−2.2|bal|);
         // 硬声像 (|bal| 大) 或强相关 → 0 (单线, 与 PAZ 硬声像观感一致)
         const float wing =
@@ -230,8 +236,8 @@ private:
                          : std::max(0.f, (1.f - corr)) * std::max(0.f, (1.f - 2.2f * std::fabs(bal)));
         mBand[b].wing += wingK * (wing - mBand[b].wing);
       } else {
-        mBand[b].vecX = 0.f;
-        mBand[b].vecY = 1.f; // 无能量: 复位为"正上"方向
+        mBand[b].ang = 0.f;
+        mBand[b].curAng = 0.f;
         mBand[b].anti = false;
         mBand[b].wing *= (1.f - wingK); // 无能量时侧翼回落
       }
@@ -404,26 +410,22 @@ private:
       const float db = mBand[b].db;
       if (db < thr)
         continue;
-      // 反相带: 不画主射线, 只画 ±90° 两条等长侧翼 (谐波反相 → 左右 90° 两线)
-      if (mBand[b].anti) {
-        const float rw = RadiusFor(db, rMax);
-        if (rw > 1.5f) {
-          g.DrawLine(antiCol, cx, cy, cx + rw, cy, nullptr, 2.f);
-          g.DrawLine(antiCol, cx, cy, cx - rw, cy, nullptr, 2.f);
-        }
-        continue;
-      }
-      // 主射线 (长度 = 电平, 角度 = 平滑后方位; 向量解码出的角度
-      //   数学上被限制在半扇 [−90°, +90°], 绘制前再钳一次作双重防御)
-      const float th = std::clamp(std::atan2(mBand[b].vecY, mBand[b].vecX),
-                                  -0.5f * (float)PI, 0.5f * (float)PI);
+      // 角度: 反相带直跳 (当前帧方位, ±90° 帧间交替 → 时间上两侧都点亮),
+      //   非反相带用平滑值。绘制前钳到半扇角域作双重防御。
+      const float thRaw = mBand[b].curAng;
+      const float thSmooth = mBand[b].ang;
+      const float th = std::clamp(mBand[b].anti ? thRaw : thSmooth, -0.5f * (float)PI,
+                                  0.5f * (float)PI);
+      const IColor col = mBand[b].anti ? antiCol : mainCol;
       const float r = RadiusFor(db, rMax);
-      g.DrawLine(mainCol, cx, cy, cx + std::sin(th) * r, cy - std::cos(th) * r, nullptr, 2.f);
-      // 侧翼 ±90° (去相关/居中内容): 长度 = 主长 × wing
-      const float rw = r * mBand[b].wing;
-      if (rw > 1.5f) {
-        g.DrawLine(wingCol, cx, cy, cx + rw, cy, nullptr, 1.f);
-        g.DrawLine(wingCol, cx, cy, cx - rw, cy, nullptr, 1.f);
+      g.DrawLine(col, cx, cy, cx + std::sin(th) * r, cy - std::cos(th) * r, nullptr, 2.f);
+      // 侧翼 ±90°: 只属于非反相的去相关内容 (反相带的连续方位由主射线本身呈现)
+      if (!mBand[b].anti) {
+        const float rw = r * mBand[b].wing;
+        if (rw > 1.5f) {
+          g.DrawLine(wingCol, cx, cy, cx + rw, cy, nullptr, 1.f);
+          g.DrawLine(wingCol, cx, cy, cx - rw, cy, nullptr, 1.f);
+        }
       }
     }
   }
@@ -528,10 +530,10 @@ private:
   // ── 状态 ──────────────────────────────────────────────────────────────
   struct Band {
     float db = -120.f;    // 主射线电平 (显示域弹道 dB)
-    float vecX = 0.f;     // 主射线方位向量 (cos θ, 平滑)
-    float vecY = 1.f;     // 主射线方位向量 (sin θ, 平滑; θ = 显示半扇角)
-    float wing = 0.f;     // ±90° 侧翼长度比例 (0..1, 平滑)
-    bool anti = false;    // 反相带: 只画 ±90° 两条等长侧翼 (红色)
+    float ang = 0.f;      // 非反相带平滑方位 (弧度, 域被 kAntiThresh 约束在 ±56° 内)
+    float curAng = 0.f;   // 当前帧方位 (反相带直跳用, 显示半扇角)
+    float wing = 0.f;     // ±90° 侧翼长度比例 (0..1, 平滑; 仅非反相带绘制)
+    bool anti = false;    // 反相带: 主射线红色, 角度直跳覆盖 ±45°..±90° 连续域
   };
   std::array<Band, kScopeBands> mBand{};
 
