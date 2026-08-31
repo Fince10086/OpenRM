@@ -498,7 +498,7 @@ private:
   }
 
   // 频率读数随信号类型改变语义: 扫频固定 20 Hz-20 kHz, 脉冲串用 FREQ 当速率,
-  // 噪声/静音/直流则不适用 —— 省下一行提示文字的空间。
+  // 噪声/静音则不适用 —— 省下一行提示文字的空间。
   const char *GenFreqLabel() const {
     static char buf[32];
     const double f = mHooks.gen.freq();
@@ -511,9 +511,10 @@ private:
         break;
       case orm::kGenOff:
       case orm::kGenSilence:
-      case orm::kGenDC:
       case orm::kGenWhiteNoise:
       case orm::kGenPinkNoise:
+      case orm::kGenNoiseC:
+      case orm::kGenPinkC:
         std::snprintf(buf, sizeof(buf), "-");
         break;
       default:

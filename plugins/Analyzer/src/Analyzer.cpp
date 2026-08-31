@@ -102,6 +102,13 @@ int orm::DetectSystemLanguage() {
 #endif
 }
 
+// 速度档 × 释放模式 → 释放时间常数 (s): LOG 0.2~4s (Pro-Q 五档实测),
+// LIN ≈ LOG×1.2 (0.25~4.8s, 可见落屏时长对齐)
+static double SpeedReleaseSec(int speedIdx, int releaseMode) {
+  const int s = std::clamp(speedIdx, 0, kNumSpeedOptions - 1);
+  return (releaseMode == 1) ? kSpeedReleaseLin[s] : kSpeedReleaseLog[s];
+}
+
 ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNumParams, 1)) {
   // 读取全局 UI 偏好设置 (语言与主题)
   SettingsData s;
@@ -124,11 +131,9 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     }
   }
   // 初始化参数（默认值、范围与步长）
-  GetParam(kRelease)->InitDouble("Release", 0.2, 0.05, 2.0, 0.01, "s");
   GetParam(kReleaseMode)->InitInt("ReleaseMode", 0, 0, 1, ""); // 释放回落模式: 0=对数域单极点, 1=匀速 dB 速率
-  GetParam(kBallistic)->InitInt("Ballistic", kBallisticSTD, 0, kNumBallistics - 1, ""); // 频谱弹道类型: 0=STD 标准, 1=MAX 最大, 2=AVG 平均
+  GetParam(kSpeed)->InitInt("Speed", kSpeedMAX, 0, kNumSpeedOptions - 1, ""); // 响应速度预设, 默认 MAX (0.2s, 保持原默认手感)
   GetParam(kRange)->InitInt("Range", 0, 0, 2, ""); // 档位索引: 0=80, 1=100, 2=120 (刻度底部 dB), 默认 80
-  GetParam(kAttack)->InitDouble("Attack", 0.05, 0.001, 0.1, 0.001, "s");
   GetParam(kRes)->InitInt("Res", 1, 0, kNumResOptions - 1, ""); // 默认 MID (4096)
   GetParam(kLfRes)->InitInt("LfRes", 2, 0, kNumPbtLfResOptions - 1, ""); // 默认高档 10Hz (索引 2)
   GetParam(kMode)->InitInt("Mode", kModeFFT, 0, kNumModes - 1, "");
@@ -324,12 +329,12 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     pGraphics->AttachControl(mSlopeBtn);
     bindTip(mSlopeBtn, orm::kTxtTipSlope);
 
-    // 频谱弹道类型循环按钮 (STD 标准 / MAX 最大 / AVG 平均): 斜率按钮右侧
-    constexpr float kBallX = kSlopeTopX + kSlopeTopW + kTopBtnGap;
-    mBallisticBtn = new FlatCycleButton(IRECT(kBallX, kTopBtnY, kBallX + kTopBtnW, kTopBtnY + kTopBtnH),
-                                        kBallistic, {"STD", "MAX", "AVG"}, btnStyle);
-    pGraphics->AttachControl(mBallisticBtn);
-    bindTip(mBallisticBtn, orm::kTxtTipBallistic);
+    // 频谱响应速度预设循环按钮 (MIN 最慢 .. MAX 最快, 决定释放时间常数): 斜率按钮右侧
+    constexpr float kSpeedX = kSlopeTopX + kSlopeTopW + kTopBtnGap;
+    mSpeedBtn = new FlatCycleButton(IRECT(kSpeedX, kTopBtnY, kSpeedX + kTopBtnW, kTopBtnY + kTopBtnH),
+                                    kSpeed, {"MIN", "SLOW", "MED", "FAST", "MAX"}, btnStyle);
+    pGraphics->AttachControl(mSpeedBtn);
+    bindTip(mSpeedBtn, orm::kTxtTipSpeed);
 
     // 主频谱绘制区域: 右缘 752 (= 频谱区原右缘 594 + 电平表带总宽 kMeterStripW=158)。
     // 电平表带 (L/R 条 + VU 刻度 + VU 双条 + LUFS 刻度 + M/S/I 响度条) 整体位于频谱
@@ -355,7 +360,7 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
 
     // ── 声像显示面板 (频谱下方空闲区): PAZ 式极坐标电平扇形 ─────────────────
     // 数据: StereoScope 引擎 (音频线程攒 hop 样本包) → OnIdle TransmitData;
-    // 弹道与频谱共用 Attack/Release/STD·MAX·AVG/LOG·LIN, 峰值保持共用 HOLD 开关。
+    // 弹道与频谱共用速度预设 (MIN..MAX) × LOG/LIN 释放, 峰值保持共用 HOLD 开关。
     mScopeCtrl = new StereoFieldControl(IRECT(20.f, 336.f, 752.f, 604.f));
     pGraphics->AttachControl(mScopeCtrl, kCtrlTagScope);
     bindText(orm::kTxtScopeTitle, [this](const char *s) { if (mScopeCtrl) mScopeCtrl->SetTitleText(s); });
@@ -405,30 +410,15 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
 
     // CPU 占用率显示
     // 右栏控件组: 底部锚定标题区上方 (标题上缘 615, 留 5px), 纵向行距与横向并排间距一致
-    // (kBtnGap), 自上而下 = CPU / ATTACK / RELEASE / 图标行 / FREEZE·RESET / HOLD·时长
+    // (kBtnGap), 自上而下 = CPU / 图标行 / FREEZE·RESET / HOLD·时长 (ATTACK/RELEASE 滑块
+    // 已删除, 由顶排速度预设按钮替代, 释放时间随档位与 LOG/LIN 模式派生)
     constexpr float kRowGap = kBtnGap;
     constexpr float kHoldRowY = 610.f - 30.f;
     constexpr float kFreezeRowY = kHoldRowY - kRowGap - 30.f;
     constexpr float kIconRowY = kFreezeRowY - kRowGap - 30.f;
-    constexpr float kReleaseY = kIconRowY - kRowGap - 42.f;
-    constexpr float kAttackY = kReleaseY - kRowGap - 42.f;
-    constexpr float kCpuY = kAttackY - kRowGap - 30.f;
+    constexpr float kCpuY = kIconRowY - kRowGap - 30.f;
     mCpuMeter = new CpuMeterControl(IRECT(kCol1X, kCpuY, kPanelR, kCpuY + 30.f));
     pGraphics->AttachControl(mCpuMeter, kCtrlTagCpu);
-
-    // 上升响应时间滑块 (s)
-    mAttackSlider =
-        new ORMSlider(IRECT(kCol1X, kAttackY, kPanelR, kAttackY + 42.f), kAttack, "ATTACK", style, EDirection::Horizontal);
-    pGraphics->AttachControl(mAttackSlider);
-    bindText(orm::kTxtAttack, [this](const char *s) { mAttackSlider->SetHeaderLabel(s); });
-    bindTip(mAttackSlider, orm::kTxtTipAttack);
-
-    // 释放衰减时间滑块 (s)
-    mReleaseSlider =
-        new ORMSlider(IRECT(kCol1X, kReleaseY, kPanelR, kReleaseY + 42.f), kRelease, "RELEASE", style, EDirection::Horizontal);
-    pGraphics->AttachControl(mReleaseSlider);
-    bindText(orm::kTxtRelease, [this](const char *s) { mReleaseSlider->SetHeaderLabel(s); });
-    bindTip(mReleaseSlider, orm::kTxtTipRelease);
 
     // 频谱斜率与释放回落模式按钮已移至顶行 (窗按钮右侧), 见上方创建处
 
@@ -628,6 +618,28 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     pGraphics->AttachControl(mSettingsPanel);
 
     pGraphics->EnableTooltips(true);
+
+    // 方案0 性能测量快捷键 (无修饰键; 未被控件消费的按键落到这里):
+    //   F: iPlug2 帧间耗时显示 (帧节奏 wall-time; 点击小图循环 FPS / ms / 占比样式)
+    //   P: 频谱面板绘制耗时 HUD (pad 单帧 CPU 毫秒, data/hover 帧分类)
+    pGraphics->SetKeyHandlerFunc([this, pGraphics](const IKeyPress &key, bool isUp) {
+      if (isUp || key.C || key.A || key.S)
+        return false;
+      switch (key.utf8[0]) {
+        case 'f':
+        case 'F':
+          pGraphics->ShowFPSDisplay(!pGraphics->ShowingFPSDisplay());
+          return true;
+        case 'p':
+        case 'P':
+          if (mSpectrumPad)
+            mSpectrumPad->ToggleHud();
+          return true;
+        default:
+          return false;
+      }
+    });
+
     ApplyLanguage();
 
     // UI 控件已全部就绪: 立即同步一次频谱配置并更新去重标记。
@@ -637,12 +649,13 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     SendSpectrumConfig();
     mSentSampleRate = GetSampleRate();
     mSentFFTSize = CurrentFFTSize();
-    mSentRelease = GetParam(kRelease)->Value();
+    mSentSpeed = (int)GetParam(kSpeed)->Value();
+    mSentReleaseMode = (int)GetParam(kReleaseMode)->Value();
+    mSentRelease = SpeedReleaseSec(mSentSpeed, mSentReleaseMode);
     mSentRange = (double)std::clamp(std::lround(GetParam(kRange)->Value()), 0L, 2L);
-    mSentAttack = GetParam(kAttack)->Value();
+    mSentAttack = kSpeedAttackSec;
     mSentLfRes = GetParam(kLfRes)->Value();
     mSentSlope = EffectiveSlopeDb();
-    mSentBallistic = (int)GetParam(kBallistic)->Value();
     mSentMode = (int)GetParam(kMode)->Value();
     mSentChanMode = (int)GetParam(kChannelMode)->Value();
     mSentWindowFFT = CurrentFFTWindow();
@@ -899,11 +912,11 @@ void ORMAnalyzer::SendSpectrumConfig() {
   // 下发引擎实际生效的 FFT 尺寸 (而非参数名义值): 若将来钳制逻辑变化,
   // pad 的 bin 数与平滑更新周期必须始终跟随引擎真实尺寸, 否则高频段空白 + 时间常数偏差。
   const int fftSize = mSpectrum.GetFFTSize();
-  const float release = (float)GetParam(kRelease)->Value();
+  const int speedIdx = (int)GetParam(kSpeed)->Value();
   const int releaseMode = (int)GetParam(kReleaseMode)->Value();
-  const int ballistic = (int)GetParam(kBallistic)->Value();
+  const float release = (float)SpeedReleaseSec(speedIdx, releaseMode);
   const float range = CurrentRangeDb();
-  const float attack = (float)GetParam(kAttack)->Value();
+  const float attack = (float)kSpeedAttackSec; // 上升时间固定 0.05s (全部速度档一致)
   const float slopeDb = (float)EffectiveSlopeDb(); // 当前模式生效斜率 (档值随模式)
   const int chanTri = (int)GetParam(kChannelMode)->Value();
   const int chanMode = (chanTri == kChanModeLR) ? 0 : 1;
@@ -912,9 +925,7 @@ void ORMAnalyzer::SendSpectrumConfig() {
   SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagFFTSize, sizeof(int), &fftSize);
   SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagRelease, sizeof(float), &release);
   SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagReleaseMode, sizeof(int), &releaseMode);
-  SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagBallistic, sizeof(int), &ballistic);
   SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagRange, sizeof(float), &range);
-  SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagAttack, sizeof(float), &attack);
   SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagSlope, sizeof(float), &slopeDb);
   SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagChanMode, sizeof(int), &chanMode);
   SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagMergeAlgo, sizeof(int), &mergeAlgo);
@@ -932,7 +943,6 @@ void ORMAnalyzer::SendSpectrumConfig() {
   SendControlMsgFromDelegate(kCtrlTagScope, StereoFieldControl::kMsgTagAttack, sizeof(float), &attack);
   SendControlMsgFromDelegate(kCtrlTagScope, StereoFieldControl::kMsgTagRelease, sizeof(float), &release);
   SendControlMsgFromDelegate(kCtrlTagScope, StereoFieldControl::kMsgTagReleaseMode, sizeof(int), &releaseMode);
-  SendControlMsgFromDelegate(kCtrlTagScope, StereoFieldControl::kMsgTagBallistic, sizeof(int), &ballistic);
   const float scopeFloor = CurrentScopeFloorDb();
   SendControlMsgFromDelegate(kCtrlTagScope, StereoFieldControl::kMsgTagRange, sizeof(float), &scopeFloor);
 }
@@ -1130,26 +1140,26 @@ void ORMAnalyzer::OnIdle() {
     const int fftSize = CurrentFFTSize();
     const int winFFT = CurrentFFTWindow();
     const int winVQT = CurrentVQTWindow();
-    const double release = GetParam(kRelease)->Value();
+    const int speed = (int)GetParam(kSpeed)->Value();
     const int releaseMode = (int)GetParam(kReleaseMode)->Value();
-    const int ballistic = (int)GetParam(kBallistic)->Value();
+    const double release = SpeedReleaseSec(speed, releaseMode); // 速度档×模式派生 (LOG 0.2~4s / LIN 0.25~4.8s)
     const int rangeIdx = (int)std::clamp(std::lround(GetParam(kRange)->Value()), 0L, 2L);
     if (GetParam(kRange)->Value() != (double)rangeIdx)
       SetParamFromEditor(kRange, (double)rangeIdx);
     const double range = (double)rangeIdx;
-    const double attack = GetParam(kAttack)->Value();
+    const double attack = kSpeedAttackSec; // 固定 0.05s
     const double lfRes = GetParam(kLfRes)->Value();
     const double slope = EffectiveSlopeDb(); // 斜率档位变化时重发 (冻结中照常: 纯显示参数)
     const int rtaOct = CurrentRtaOctave();
     const double scopeRange = (double)std::clamp(std::lround(GetParam(kScopeRange)->Value()), 0L, 2L);
     if (sr != mSentSampleRate || fftSize != mSentFFTSize || winFFT != mSentWindowFFT || winVQT != mSentWindowVQT ||
-        release != mSentRelease || releaseMode != mSentReleaseMode || ballistic != mSentBallistic ||
+        speed != mSentSpeed || releaseMode != mSentReleaseMode || release != mSentRelease ||
         range != mSentRange || attack != mSentAttack ||
         lfRes != mSentLfRes || slope != mSentSlope || rtaOct != mSentRtaOct ||
         scopeRange != mSentScopeRange) {
       mSpectrum.SetWindowType(winFFT);
       mVQT.SetWindowType(winVQT);
-      // 冻结中 attack/release (回放弹道) 或采样率/窗函数变化需重启回放, 保证确定性;
+      // 冻结中 release 派生变化 (速度档/释放模式) 或采样率/窗函数变化需重启回放, 保证确定性;
       // Range/斜率纯显示参数不参与计算, 不重启。窗函数按引擎各查各的档位。
       const bool restartReplay =
           frozen && (sr != mSentSampleRate || release != mSentRelease || releaseMode != mSentReleaseMode ||
@@ -1159,9 +1169,9 @@ void ORMAnalyzer::OnIdle() {
       mSentFFTSize = fftSize;
       mSentWindowFFT = winFFT;
       mSentWindowVQT = winVQT;
-      mSentRelease = release;
+      mSentSpeed = speed;
       mSentReleaseMode = releaseMode;
-      mSentBallistic = ballistic;
+      mSentRelease = release;
       mSentRange = range;
       mSentAttack = attack;
       mSentLfRes = lfRes;
@@ -1324,8 +1334,7 @@ void ORMAnalyzer::OnUIClose() {
   mGammaBtn = nullptr;
   mRtaOctBtn = nullptr;
   mRangeBtn = nullptr;
-  mAttackSlider = nullptr;
-  mReleaseSlider = nullptr;
+  mSpeedBtn = nullptr;
   mCpuMeter = nullptr;
   mModeBtn = nullptr;
   mChanModeBtn = nullptr;
@@ -1619,10 +1628,12 @@ void ORMAnalyzer::ApplyLanguage() {
     mReleaseModeBtn->SetLabels({orm::Tr(orm::kTxtRelLog, orm::UILang()),
                                 orm::Tr(orm::kTxtRelLin, orm::UILang())});
   }
-  if (mBallisticBtn) { // 频谱弹道类型 (STD 标准 / MAX 最大 / AVG 平均), 顺序与创建一致
-    mBallisticBtn->SetLabels({orm::Tr(orm::kTxtBallStd, orm::UILang()),
-                              orm::Tr(orm::kTxtBallMax, orm::UILang()),
-                              orm::Tr(orm::kTxtBallAvg, orm::UILang())});
+  if (mSpeedBtn) { // 频谱响应速度预设 (MIN 最慢 / SLOW 慢速 / MED 中速 / FAST 快速 / MAX 最快), 顺序与创建一致
+    mSpeedBtn->SetLabels({orm::Tr(orm::kTxtSpeedMin, orm::UILang()),
+                          orm::Tr(orm::kTxtSpeedSlow, orm::UILang()),
+                          orm::Tr(orm::kTxtSpeedMed, orm::UILang()),
+                          orm::Tr(orm::kTxtSpeedFast, orm::UILang()),
+                          orm::Tr(orm::kTxtSpeedMax, orm::UILang())});
   }
   ApplyTooltips();
 #if IPLUG_EDITOR

@@ -55,3 +55,18 @@ openrm_add_plugin(${PROJECT_NAME}
   DEFINES SAMPLE_TYPE_FLOAT ${_az_test_gen_def}
   FONTS Mixed-Regular.ttf Mixed-SemiBold.ttf Mixed-Bold.ttf
 )
+
+# 方案3 性能修复: macOS 渲染节拍改由 CVDisplayLink (vsync) 驱动。
+# 默认 iPlug2 用自由运行的 60Hz NSTimer 渲染, 而 CAMetalLayer 的 present 是
+# vsync 锁定的 (nanovg_mtl.m nextDrawable 在 drawable 池耗尽时阻塞主线程等
+# vsync 回收); 两个时钟相位漂移时帧间隔在 ~16.7/~33ms 间震荡 (鼠标移动等
+# 事件扰动会持续踢相位, 表现为帧率忽高忽低)。vsync 驱动渲染消除双钟震荡。
+# 宏使用处 IGraphicsMac_view.mm 直接编进各格式目标, 因此逐目标注入;
+# 其余平台无此宏的使用处, 不涉及。
+if(APPLE)
+  foreach(_az_fmt_tgt ${PROJECT_NAME}-app ${PROJECT_NAME}-vst3 ${PROJECT_NAME}-au)
+    if(TARGET ${_az_fmt_tgt})
+      target_compile_definitions(${_az_fmt_tgt} PRIVATE IGRAPHICS_CVDISPLAYLINK)
+    endif()
+  endforeach()
+endif()

@@ -83,10 +83,12 @@ enum EText {
   kTxtLoudTarget,     // 响度计: 目标
   kTxtTipLoudPreset,  // 响度计: 目标预设 tooltip
   kTxtTipLoudReset,   // 响度计: RESET tooltip
-  kTxtBallStd,        // 频谱弹道类型按钮: 标准 (STD, 单极点攻放)
-  kTxtBallMax,        // 频谱弹道类型按钮: 最大 (MAX, 瞬时上升峰值式)
-  kTxtBallAvg,        // 频谱弹道类型按钮: 平均 (AVG, 功率域指数平均)
-  kTxtTipBallistic,   // 频谱弹道类型 tooltip
+  kTxtSpeedMin,       // 频谱速度预设按钮: 最慢 (MIN, 释放 4s)
+  kTxtSpeedSlow,      // 频谱速度预设按钮: 慢速 (SLOW, 释放 2s)
+  kTxtSpeedMed,       // 频谱速度预设按钮: 中速 (MED, 释放 1s)
+  kTxtSpeedFast,      // 频谱速度预设按钮: 快速 (FAST, 释放 0.5s)
+  kTxtSpeedMax,       // 频谱速度预设按钮: 最快 (MAX, 释放 0.2s)
+  kTxtTipSpeed,       // 频谱速度预设 tooltip
   kTxtScopeTitle,     // 声像显示面板标题
   kTxtScopeCorr,      // 声像读数: 相关性
   kTxtScopeWidth,     // 声像读数: 宽度
@@ -171,10 +173,12 @@ inline const char *Tr(int id, int lang) {
           "TARGET",
           "Loudness target preset: -14 (streaming music) / -16 (Apple Music) / -23 (EBU R128 broadcast)",
           "Reset integrated loudness, LRA and true peak hold",
-          "STD",
+          "MIN",
+          "SLOW",
+          "MED",
+          "FAST",
           "MAX",
-          "AVG",
-          "Ballistic type: STD = attack/release one-pole; MAX = zero-latency rise, fall by release; AVG = power-domain exponential average (fixed ~0.1 s, attack/release sliders ignored)",
+          "Analyzer response speed (release time): LOG 4/2/1/0.5/0.2 s for MIN..MAX; LIN ≈ ×1.2 (4.8/2.4/1.2/0.6/0.25 s). Attack fixed 0.05 s. Click cycles slow → fast.",
           "STEREO FIELD",
           "CORRELATION",
           "WIDTH",
@@ -255,10 +259,12 @@ inline const char *Tr(int id, int lang) {
           "目标",
           "响度目标预设：-14（流媒体音乐）/ -16（Apple Music）/ -23（EBU R128 广播）",
           "重置综合响度、LRA 与真峰值锁存",
-          "标准",
-          "最大",
-          "平均",
-          "频谱弹道类型：标准 = 起音/释放单极点；最大 = 上升瞬时到位、回落按释放；平均 = 功率域指数平均（固定约 0.1 秒，起音/释放滑块不生效）",
+          "最慢",
+          "慢速",
+          "中速",
+          "快速",
+          "最快",
+          "频谱响应速度档位（释放时间）：LOG 下 MIN~MAX 为 4/2/1/0.5/0.2 秒；LIN 下约为 ×1.2（4.8/2.4/1.2/0.6/0.25 秒）。上升时间固定 0.05 秒。点击循环：慢 → 快。",
           "声像",
           "相关性",
           "宽度",

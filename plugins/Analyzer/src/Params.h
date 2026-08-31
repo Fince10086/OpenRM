@@ -5,11 +5,9 @@
 #include <array>
 
 enum EParams {
-  kRelease,       // 频谱回落释放时间 (s)
+  kSpeed,         // 频谱响应速度预设档位 (0: MIN 最慢 .. 4: MAX 最快; 决定释放时间常数, LOG/LIN 各一套值)
   kReleaseMode,   // 释放回落模式 (0: 对数域单极点, 1: 匀速 dB 速率)
-  kBallistic,     // 频谱弹道类型 (0: STD 标准单极点, 1: MAX 瞬时上升峰值式, 2: AVG 功率域平均)
   kRange,         // 频谱显示动态范围下限 (dBFS)
-  kAttack,        // 频谱上升响应时间 (s)
   kRes,           // FFT 分辨率档位 (2048/4096/8192)
   kLfRes,         // PBT 低频分辨率档位 (低/中/高 = 40/20/10 Hz)
   kMode,          // 分析引擎模式 (0: STFT, 1: VQT, 2: PBT, 3: RTA)
@@ -34,8 +32,13 @@ enum EParams {
 // 窗函数档位: 0 = Hann (锐利), 1 = 5-term Blackman-Harris (纯净, -125 dB)
 enum EFFTWindow { kFFTWindowHann = 0, kFFTWindowClean = 1, kNumFFTWindows = 2 };
 
-// 频谱弹道类型 (kBallistic): STD 标准 | MAX 峰值式 | AVG 功率平均
-enum EBallistic { kBallisticSTD = 0, kBallisticMAX = 1, kBallisticAVG = 2, kNumBallistics = 3 };
+// 频谱响应速度预设档位 (kSpeed): MIN 最慢 .. MAX 最快。每档的释放时间常数按释放
+// 模式取两套值: LOG = 0.2~4s (Pro-Q 五档实测值); LIN = LOG ×~1.2 (可见落屏时长
+// 对齐), 0.25~4.8s。上升时间常数全部档位固定 0.05s。
+enum ESpeed { kSpeedMIN = 0, kSpeedSLOW, kSpeedMED, kSpeedFAST, kSpeedMAX, kNumSpeedOptions = 5 };
+constexpr double kSpeedReleaseLog[] = {4.0, 2.0, 1.0, 0.5, 0.2};  // LOG 档释放时间 (s), 按档位索引
+constexpr double kSpeedReleaseLin[] = {4.8, 2.4, 1.2, 0.6, 0.25}; // LIN 档释放时间 (s)
+constexpr double kSpeedAttackSec = 0.05;                          // 固定上升时间常数 (s)
 
 using ParamSnapshot = std::array<double, kNumParams>;
 

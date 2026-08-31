@@ -109,16 +109,8 @@ protected:
       return;
     char buf[32];
     switch (GetParamIdx()) {
-    case kRelease:
-      std::snprintf(buf, sizeof(buf), "%.2fs", p->Value());
-      ds.Set(buf);
-      break;
     case kLevelHold:
       std::snprintf(buf, sizeof(buf), "%.1fs", p->Value());
-      ds.Set(buf);
-      break;
-    case kAttack:
-      std::snprintf(buf, sizeof(buf), "%.3fs", p->Value());
       ds.Set(buf);
       break;
     case kRes: {

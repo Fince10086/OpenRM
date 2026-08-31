@@ -12,6 +12,7 @@
 #include <array>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <functional>
 #include <vector>
@@ -30,7 +31,6 @@ public:
     kMsgTagFFTSize,
     kMsgTagRelease,
     kMsgTagReleaseMode, // 释放回落模式 (0: 对数域单极点, 1: 匀速 dB 速率)
-    kMsgTagBallistic,   // 频谱弹道类型 (0: STD 标准, 1: MAX 最大, 2: AVG 平均)
     kMsgTagRange,
     kMsgTagAttack,
     kMsgTagSlope,       // 频谱斜率 (dB/oct, 当前模式生效值; FFT 与逐 band 引擎档值不同)
@@ -75,10 +75,17 @@ public:
     SetDirty(false);
   }
 
+  // 方案0 测量: 快捷键 P 切换绘制耗时 HUD (由 Analyzer 的全局按键处理调用)
+  void ToggleHud() {
+    mHudOn = !mHudOn;
+    SetDirty(false);
+  }
+
   void OnMsgFromDelegate(int msgTag, int dataSize, const void *pData) override {
     IByteStream stream(pData, dataSize);
 
     if (msgTag == ISender<>::kUpdateMessage) {
+      ++mDataPkts; // 方案0: 数据帧分类计数
       ISenderData<3, TDataPacket> d;
       stream.Get(&d, 0);
       // FFT: 数据 = bins (nBins 个); VQT/PBT/RTA: 数据 = band 幅度 (nBands 个)
@@ -99,43 +106,22 @@ public:
       // 与显示范围/斜率无关 (Pro-Q 式视觉恒速)
       const float unifStepDb = (float)(updatePeriod / (2.0 * std::max(mReleaseSec, 1e-3f)) * (kTopDb - mBottomDb));
 
-      // AVG 档: 功率域指数平均系数 (固定平均时间常数, 与攻放滑块无关)
-      mAvgAlpha = (float)(1.0 - std::exp(-updatePeriod / kAvgTauSec));
-
       const float a = mAttackCoeff, r = mReleaseCoeff;
       if (mMode == 0) {
         ProcessFFTBands(d, a, r, unifStepDb);
       } else {
         // VQT/PBT/RTA: 逐 band 显示域弹道 (目标 = 幅度 dB + 斜率, 已钳到显示范围)。
-        // STD = 攻放单极点; MAX = 上升瞬时到位, 回落仍走释放; AVG = 功率域指数
-        // 平均 (平均器自带时间常数, 不再叠加单极点)。
         const float *tilt = mSlopeDb.empty() ? nullptr : mSlopeDb.data();
-        const bool doAvg = (mBallistic == 2);
-        const bool instAttack = (mBallistic == 1);
         for (int c = 0; c < 3; ++c) {
           if (mSpectrum[c].size() != (size_t)nVals)
             mSpectrum[c].assign(nVals, -150.f);
-          if (mAvgP[c].size() != (size_t)nVals)
-            mAvgP[c].assign(nVals, 0.f);
-          const bool pbtPhys = (mMode == 2 && mPBTFreqs.size() == (size_t)nVals);
           for (int i = 0; i < nVals; ++i) {
-            float rawDb;
-            if (doAvg) {
-              float &p = mAvgP[c][i];
-              const float amp = d.vals[c][i];
-              p += mAvgAlpha * (amp * amp - p);
-              rawDb = (p > 1e-30f) ? 3.01029995664f * orm::FastLog2(p) : -150.f;
-            } else {
-              rawDb = (d.vals[c][i] > 1e-30f) ? 6.02059991328f * orm::FastLog2(d.vals[c][i]) : -150.f;
-            }
+            const float rawDb =
+                (d.vals[c][i] > 1e-30f) ? 6.02059991328f * orm::FastLog2(d.vals[c][i]) : -150.f;
             const float target = SmoothTarget(rawDb, tilt ? tilt[i] : 0.f);
-            if (doAvg) {
-              mSpectrum[c][i] = target; // 平均器自带时间常数, 显示直接取平均结果
-              continue;
-            }
             float aCoef = a;
-            if (!instAttack && pbtPhys) {
-              // PBT 物理起振时间常数 τ = 1 / (π · bw): 窄带低频展现自然蓄力爬坡感 (仅 STD)
+            if (mMode == 2 && mPBTFreqs.size() == (size_t)nVals) {
+              // PBT 物理起振时间常数 τ = 1 / (π · bw): 窄带低频展现自然蓄力爬坡感
               const float fc = mPBTFreqs[i];
               const float bw = (fc < 250.f)
                   ? ((i > 0 && mPBTFreqs[i] < 250.f) ? (mPBTFreqs[i] - mPBTFreqs[i - 1]) : 40.f)
@@ -143,7 +129,7 @@ public:
               const float tauBand = std::max(mAttackSec, 1.f / (3.14159f * std::max(bw, 5.f)));
               aCoef = (float)std::exp(-updatePeriod / tauBand);
             }
-            mSpectrum[c][i] = StepSmoothed(mSpectrum[c][i], target, aCoef, r, unifStepDb, instAttack);
+            mSpectrum[c][i] = StepSmoothed(mSpectrum[c][i], target, aCoef, r, unifStepDb);
           }
         }
       }
@@ -162,15 +148,11 @@ public:
     } else if (msgTag == kMsgTagRelease) {
       float releaseSec;
       stream.Get(&releaseSec, 0);
-      mReleaseSec = std::clamp(releaseSec, 0.01f, 2.f);
+      mReleaseSec = std::clamp(releaseSec, 0.01f, 8.f); // LIN 最慢档释放达 4.8s
     } else if (msgTag == kMsgTagReleaseMode) {
       int mode;
       stream.Get(&mode, 0);
       mReleaseMode = std::clamp(mode, 0, 1);
-    } else if (msgTag == kMsgTagBallistic) {
-      int ballistic;
-      stream.Get(&ballistic, 0);
-      mBallistic = std::clamp(ballistic, 0, 2);
     } else if (msgTag == kMsgTagRange) {
       float rangeDb;
       stream.Get(&rangeDb, 0);
@@ -244,6 +226,7 @@ public:
       RebuildSlopeGain(); // 斜率增益依赖 band 中心频率, band 表更新后重建
       SetDirty(false);
     } else if (msgTag == kMsgTagLevelMeter) {
+      ++mDataPkts; // 方案0: 数据帧分类计数
       if (dataSize != (int)sizeof(LevelMeterUiData))
         return;
       LevelMeterUiData d;
@@ -268,6 +251,7 @@ public:
       mOverR = d.overR != 0;
       SetDirty(false);
     } else if (msgTag == kMsgTagLoudness) {
+      ++mDataPkts; // 方案0: 数据帧分类计数
       if (dataSize != (int)sizeof(LoudnessUiData))
         return;
       LoudnessUiData d;
@@ -278,10 +262,9 @@ public:
       mTarget = d.target;
       SetDirty(false);
     } else if (msgTag == kMsgTagReset) {
+      ++mDataPkts; // 方案0: 数据帧分类计数
       for (int c = 0; c < 3; ++c)
         mSpectrum[c].assign(mSpectrum[c].size(), -150.f);
-      for (auto &v : mAvgP)
-        std::fill(v.begin(), v.end(), 0.f);
       ClearPeakHold();
       SetDirty(false);
     }
@@ -328,7 +311,18 @@ public:
     }
   }
 
+  // 方案0 测量: 绘制 CPU 耗时采样 (steady_clock, 只含本控件绘制, 不含其它控件与帧提交)。
+  // 计时外壳 + HUD; 实际绘制内容在 DrawContent。
   void Draw(IGraphics &g) override {
+    const auto perfT0 = std::chrono::steady_clock::now();
+    DrawContent(g);
+    PerfSample(std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - perfT0).count());
+    if (mHudOn)
+      DrawHud(g);
+  }
+
+private:
+  void DrawContent(IGraphics &g) {
     g.FillRect(COL_100(), mRECT);
     // 图形区左对齐, 右侧让出 L/R 两条电平表竖条 + VU 刻度区 + 独立 VU 表双条 +
     // 响度 M/S 条 (LUFS 刻度 + 双条)。对 plot 做物理像素对齐: 层位图/层内绘制/
@@ -433,6 +427,72 @@ public:
   }
 
 private:
+  // ---- 方案0 绘制耗时采样与 HUD ----
+
+  // 采样一次 pad 绘制耗时; data/hover 帧分类 = 自上次绘制以来是否收到过数据包
+  // (数据泵 ~20Hz 触发 data 帧; 60Hz 渲染门在数据间隙触发 hover 帧)
+  void PerfSample(float ms) {
+    mHudMs[mHudPos] = ms;
+    mHudIsData[mHudPos] = (mDataPkts > 0) ? 1 : 0;
+    mDataPkts = 0;
+    mHudT[mHudPos] =
+        std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    mHudPos = (mHudPos + 1) % kHudN;
+    if (mHudFill < kHudN)
+      ++mHudFill;
+  }
+
+  // 绘制耗时 HUD (绘图区左下角, 两行小字; 快捷键 P 开关):
+  //   pad <avg> ms avg / <max> max / <N> draw/s
+  //   data <avg> ms x<N>/s | hover <avg> ms x<N>/s
+  // 窗口 = 最近 120 次 pad 绘制 (~2 s @60fps); 方案1 落地前后的对比基线。
+  void DrawHud(IGraphics &g) {
+    if (mHudFill <= 0)
+      return;
+    const double now =
+        std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    float sum = 0.f, sumD = 0.f, sumH = 0.f, mx = 0.f;
+    int nD = 0, nH = 0, nD1s = 0, nH1s = 0, nAll1s = 0;
+    for (int i = 0; i < mHudFill; ++i) {
+      const float v = mHudMs[i];
+      sum += v;
+      if (v > mx)
+        mx = v;
+      if (mHudIsData[i]) {
+        sumD += v;
+        ++nD;
+      } else {
+        sumH += v;
+        ++nH;
+      }
+      if (now - mHudT[i] <= 1.0) {
+        ++nAll1s;
+        if (mHudIsData[i])
+          ++nD1s;
+        else
+          ++nH1s;
+      }
+    }
+    const float avg = sum / mHudFill;
+    const float avgD = (nD > 0) ? sumD / nD : 0.f;
+    const float avgH = (nH > 0) ? sumH / nH : 0.f;
+
+    char l1[96], l2[96];
+    std::snprintf(l1, sizeof(l1), "pad %.2f ms avg / %.2f max / %d draw/s", avg, mx, nAll1s);
+    std::snprintf(l2, sizeof(l2), "data %.2f ms x%d/s | hover %.2f ms x%d/s", avgD, nD1s, avgH, nH1s);
+
+    const IText t(11, COL_700(), kFontRegular, EAlign::Near, EVAlign::Bottom);
+    const IRECT plot = mRECT.GetReducedFromRight(kMeterStripW);
+    IRECT r1, r2;
+    g.MeasureText(t, l1, r1);
+    g.MeasureText(t, l2, r2);
+    const float wBox = std::max(r1.W(), r2.W()) + 8.f;
+    const IRECT box(plot.L + 4.f, plot.B - 38.f, plot.L + 4.f + wBox, plot.B - 4.f);
+    g.FillRect(IColor(190, COL_100().R, COL_100().G, COL_100().B), box);
+    g.DrawText(t, l1, IRECT(box.L + 4.f, box.T + 2.f, box.R, box.T + 19.f));
+    g.DrawText(t, l2, IRECT(box.L + 4.f, box.T + 19.f, box.R, box.B - 2.f));
+  }
+
   // 静态背景网格绘制进离屏 Layer 缓存:
   // 内容只依赖 Range 底限与主题三值, 任一变化才重建, 平时每帧 1 次纹理 blit。
   // dB/频率刻度不在此层 (动态绘制, 供 hover 准线重叠隐藏), 见 DrawDbGrid/DrawFreqGrid。
@@ -982,11 +1042,9 @@ private:
   // 单点弹道: 攻击 dB 域单极点; 回落按模式:
   //   LOG  = 显示域差距等比收缩 (与范围/斜率无关, 先快后慢)
   //   UNIF = 恒定屏高比例速率 (2·τ 跨一屏, 恒像素速度), 不低于目标
-  // instAttack = true 时上升瞬时到位 (MAX 档: 零延迟峰值式, 回落仍走释放)
-  float StepSmoothed(float prevDb, float targetDb, float aCoef, float rCoef, float unifStepDb,
-                     bool instAttack = false) const {
+  float StepSmoothed(float prevDb, float targetDb, float aCoef, float rCoef, float unifStepDb) const {
     if (targetDb > prevDb)
-      return instAttack ? targetDb : aCoef * prevDb + (1.f - aCoef) * targetDb;
+      return aCoef * prevDb + (1.f - aCoef) * targetDb;
     if (mReleaseMode == 1)
       return std::max(targetDb, prevDb - unifStepDb);
     return rCoef * prevDb + (1.f - rCoef) * targetDb;
@@ -1071,27 +1129,15 @@ private:
       mBandUsed[0] = true;
     }
 
-    // 显示域弹道 (含斜率); STD = 攻放单极点, MAX = 上升瞬时到位, AVG = 功率域指数平均
+    // 显示域弹道 (含斜率)
     const bool hasTilt = !mSlopeDb.empty();
-    const bool doAvg = (mBallistic == 2);
-    const bool instAttack = (mBallistic == 1);
-    for (int c = 0; c < 3; ++c) {
-      if (mAvgP[c].size() != (size_t)kSpectrumBands)
-        mAvgP[c].assign(kSpectrumBands, 0.f);
+    for (int c = 0; c < 3; ++c)
       for (int b = 0; b < kSpectrumBands; ++b) {
-        float rawDb;
-        if (doAvg) {
-          float &p = mAvgP[c][b];
-          const float amp = bandMax[c][b];
-          p += mAvgAlpha * (amp * amp - p);
-          rawDb = (p > 1e-30f) ? 3.01029995664f * orm::FastLog2(p) : -150.f;
-        } else {
-          rawDb = (bandMax[c][b] > 1e-30f) ? 6.02059991328f * orm::FastLog2(bandMax[c][b]) : -150.f;
-        }
+        const float rawDb =
+            (bandMax[c][b] > 1e-30f) ? 6.02059991328f * orm::FastLog2(bandMax[c][b]) : -150.f;
         const float target = SmoothTarget(rawDb, hasTilt ? mSlopeDb[b] : 0.f);
-        mSpectrum[c][b] = doAvg ? target : StepSmoothed(mSpectrum[c][b], target, a, r, unifStepDb, instAttack);
+        mSpectrum[c][b] = StepSmoothed(mSpectrum[c][b], target, a, r, unifStepDb);
       }
-    }
   }
 
   // 频谱峰值保持: 开关/时长与电平表 hold 共用 (mHoldSec 随电平表数据帧透传, 0 = 关,
@@ -1415,12 +1461,8 @@ private:
   float mAttackCoeff = 0.2f;
   float mReleaseCoeff = 0.9f;
   int mReleaseMode = 0;      // 释放回落模式: 0=对数域(显示域差距等比收缩), 1=匀速(恒定屏高比例速率)
-  int mBallistic = 0;        // 频谱弹道类型: 0=STD 标准, 1=MAX 最大 (瞬时上升), 2=AVG 平均 (功率域指数平均)
-  float mAvgAlpha = 0.f;     // AVG 档功率平均系数 (每帧按 updatePeriod 计算)
-  std::array<std::vector<float>, 3> mAvgP; // AVG 档各通道功率平均状态 (与 mSpectrum 同长)
-  static constexpr float kAvgTauSec = 0.1f; // AVG 档平均时间常数 (s)
-  float mAttackSec = 0.05f; // 上升时间常数 (s), 由插件 Attack 参数下发
-  float mReleaseSec = 0.2f; // 释放时间常数 (s), 由插件 Release 参数下发
+  float mAttackSec = 0.05f; // 上升时间常数 (s), 由插件下发 (固定 0.05s)
+  float mReleaseSec = 0.2f; // 释放时间常数 (s), 由插件按速度档×释放模式派生下发
   float mBottomDb = -100.f; // 频谱显示下限 (dBFS), 由插件 Range 参数下发 (-80/-100/-120); 初始与参数默认一致
   int mNumBins = 2048;
   double mSampleRate = 48000.0;
@@ -1450,6 +1492,16 @@ private:
   int mGridHue = -1;
   int mGridSat = -1;
   int mGridMode = -1;
+
+  // ---- 方案0 绘制耗时测量 (快捷键 P 开关 HUD; F 开关 iPlug2 帧间耗时显示, 绑定见 Analyzer) ----
+  static constexpr int kHudN = 120; // 滚动窗口: 最近 120 次 pad 绘制 (~2 s @60fps)
+  float mHudMs[kHudN] = {};         // 每次 pad 绘制的 CPU 毫秒
+  uint8_t mHudIsData[kHudN] = {};   // 该帧是否伴随数据包 (data/hover 帧分类)
+  double mHudT[kHudN] = {};         // 采样时间戳 (steady_clock 纪元秒)
+  int mHudPos = 0;
+  int mHudFill = 0;
+  uint32_t mDataPkts = 0; // 上次绘制以来收到的数据包计数 (帧分类用)
+  bool mHudOn = false;
 };
 
 END_IGRAPHICS_NAMESPACE

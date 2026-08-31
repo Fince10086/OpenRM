@@ -103,11 +103,11 @@ private:
   // 频谱配置缓存（用于在 OnIdle 中防抖去重）
   double mSentSampleRate = 0.0;
   int mSentFFTSize = 0;
-  double mSentRelease = -1.0;
+  double mSentRelease = -1.0; // 速度档×释放模式派生的释放时间 (s)
   int mSentReleaseMode = -1; // 释放回落模式 (0/1), 用于 OnIdle 增量去重
-  int mSentBallistic = -1; // 频谱弹道类型 (0=STD,1=MAX,2=AVG), 用于 OnIdle 增量去重
+  int mSentSpeed = -1; // 频谱响应速度预设档位 (0=MIN..4=MAX), 用于 OnIdle 增量去重
   double mSentRange = -1.0;
-  double mSentAttack = -1.0;
+  double mSentAttack = -1.0; // 固定 0.05s
   double mSentLfRes = -1.0;
   double mSentSlope = -1e9; // 当前模式生效斜率 (dB/oct), 用于 OnIdle 增量去重
   int mSentChanMode = -1; // 存储三态值 (0=LR,1=PWR,2=SUM), 用于 OnIdle 增量去重
@@ -123,9 +123,7 @@ private:
   FlatCycleButton *mRangeBtn = nullptr;    // 动态范围循环按钮 (刻度底部 80/100/120)
   FlatCycleButton *mSlopeBtn = nullptr;    // 频谱斜率循环按钮 (刻度底部左缘, 档值随引擎)
   FlatCycleButton *mReleaseModeBtn = nullptr; // 释放回落模式循环按钮 (LOG 对数域 / UNIF 匀速)
-  FlatCycleButton *mBallisticBtn = nullptr;   // 频谱弹道类型循环按钮 (STD 标准 / MAX 最大 / AVG 平均)
-  ORMSlider *mAttackSlider = nullptr;
-  ORMSlider *mReleaseSlider = nullptr;
+  FlatCycleButton *mSpeedBtn = nullptr;       // 频谱响应速度预设循环按钮 (MIN 最慢..MAX 最快)
   CpuMeterControl *mCpuMeter = nullptr;
   FlatCycleButton *mModeBtn = nullptr;
   FlatCycleButton *mChanModeBtn = nullptr;

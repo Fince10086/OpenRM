@@ -1,21 +1,27 @@
 #pragma once
 
-// StereoFieldControl — 立体声声像显示 (PAZ Position 式极坐标电平扇形)
+// StereoFieldControl — 立体声声像显示 (PAZ Position 式极坐标矢量线)
 //
 // 位于频谱下方空闲区 (布局 20,336 → 752,604)。数据管线与频谱同构:
 // StereoScope 引擎在音频线程只攒 1024 样本 hop 原始包 → ISender 队列 →
-// OnIdle TransmitData → 本控件 OnMsgFromDelegate; 方位角/能量分桶/弹道/相关性
-// 全部在 UI 线程完成 (重活不过音频线程, 与 SpectrumSTFT 的 UI 侧 FFT 同策略)。
+// OnIdle TransmitData → 本控件 OnMsgFromDelegate; FFT/分带/弹道全部在 UI
+// 线程完成 (重活不过音频线程)。
 //
-// 模型 (逐样本): θ = atan2(R²−L², 2·L·R) —— 0 = 正上 = 居中, ±90° = 极右/极左,
-// |θ| > 90° = 反相 (等价 2·atan2(S,M) 的方位角倍频, 振幅声像位置在上半圆线性摊开);
-// 能量 E = L²+R² 按角度分 180 桶累积, 桶平均功率转 dB (满幅单声道正弦 = 0 dB 标定)
-// 后逐桶走显示域弹道 —— 与频谱共用 Attack/Release/STD·MAX·AVG/LOG·LIN 参数。
-// 包络画成自底部圆心张开的扇形: 上半区 (同相) 主题 M 色填充; 下半区 (反相) 半径
-// 压缩到独立短带内、红色语义 —— PAZ 的反相区几乎不可见, 这里改为始终可见且不占
-// 穹顶空间 (两种半径刻度, dB 圆环只对上半区有效)。
-// HOLD 开启时叠加逐桶峰值轮廓 (刷新清计时, 超时 20 dB/s 回落, RESET 按钮清除;
-// 计龄用音频时钟 hop 时长, 冻结回放按回放帧推进, 保持确定性语义)。
+// 显示制式对齐 Waves PAZ Position (SPD): 极坐标矢量图 —— 每个显示元素是
+// 一条从圆心发出的射线, 长度 = 响度 (dB 半径刻度), 角度 = 声像位置; 显示
+// 角度 = 模型方位角折半 (δ=θ/2): 同相 |θ|≤90° → 中央 ±45°, 反相 → 侧翼
+// 45°..90°, 硬反相 → 基线两端, 整幅正好 180° 半扇 (网格与读数栏沿用)。
+//
+// 每 hop 对 L/R 做 1024 点 FFT, 按 5 个对数频带聚合 (Σ|L|², Σ|R|²,
+// ΣRe(L·conj R)) → 每带一条主射线 (帧级方位 + 电平弹道); 去相关成分
+// (相关低且居中) 或反相成分在 ±90° 补两条侧翼射线 —— 复现 PAZ 观感:
+// 静态单音一条线, 90° 相位差音正中 + ±90° 三条线, 双频双方位两条线,
+// 反相谐波 ±90° 两条线, 噪声三段区域持续跳动 (中间快、两侧慢)。
+//
+// 电平弹道攻击基本直跳 (3ms, 快速扫过的线不丢电平, 噪声线长自然"跳动",
+// 对应 PAZ Peak 响度观感), 释放沿用 LOG/LIN 档位; 主射线角度 30ms 平滑、
+// 侧翼比例 100ms 平滑 (侧翼跳动略慢, 对应参考观感)。HOLD/峰值保持与
+// hover 在矢量制式下不再有意义, 已移除 (消息接口保留, RESET 仍清空显示状态)。
 // 右栏为相关性/宽度/平衡读数 (64 hop ≈1.4s 滑窗 + 150ms 显示平滑)。
 
 #include "IControls.h"
@@ -43,39 +49,15 @@ public:
     kMsgTagAttack,
     kMsgTagRelease,
     kMsgTagReleaseMode,
-    kMsgTagBallistic,
     kMsgTagRange, // 显示 dB 底限 (float, 负值)
-    kMsgTagHold,  // 峰值保持时长 (s, 0 = 关; 与电平表 hold 共用开关/档位)
-    kMsgTagReset, // 清空桶状态/峰值保持/相关性窗口 (配置重建/冻结回放前)
+    kMsgTagHold,  // 峰值保持时长 (s, 0 = 关) —— 矢量制式下保留接口, 不再绘制
+    kMsgTagReset, // 清空带状态/相关性窗口 (配置重建/冻结回放前)
   };
 
-  explicit StereoFieldControl(const IRECT &bounds) : IControl(bounds) {
-    mDispDb.fill(mFloorDb);
-    mHoldDb.fill(-1000.f);
-    // 桶区间划分: [0, mMidLo) 左反相 / [mMidLo, mMidHi) 同相 / [mMidHi, kBins) 右反相
-    for (int b = 0; b < kBins; ++b) {
-      if (BinAngle(b) >= -0.5f * PI) {
-        mMidLo = b;
-        break;
-      }
-    }
-    for (int b = mMidLo; b < kBins; ++b) {
-      if (BinAngle(b) >= 0.5f * PI) {
-        mMidHi = b;
-        break;
-      }
-    }
-    if (mMidHi <= mMidLo)
-      mMidHi = kBins;
-  }
+  explicit StereoFieldControl(const IRECT &bounds) : IControl(bounds) {}
 
-  // RESET 按钮联动: 清除峰值保持轮廓
-  void ClearPeakHold() {
-    mHoldDb.fill(-1000.f);
-    mHoldAge.fill(0.f);
-    mHoldSignal = false;
-    SetDirty(false);
-  }
+  // RESET 按钮联动: 清空矢量线与相关性窗口
+  void ClearPeakHold() { ResetDisplay(); }
 
   // 翻译文字 (ApplyLanguage 绑定; Tr() 返回静态表指针, 可直接暂存)
   void SetTitleText(const char *s) { mTitle = s; SetDirty(false); }
@@ -102,48 +84,21 @@ public:
     } else if (msgTag == kMsgTagRelease) {
       float v;
       stream.Get(&v, 0);
-      mReleaseSec = std::clamp(v, 0.01f, 2.f);
+      mReleaseSec = std::clamp(v, 0.01f, 8.f); // LIN 最慢档释放达 4.8s
     } else if (msgTag == kMsgTagReleaseMode) {
       int v;
       stream.Get(&v, 0);
       mReleaseMode = std::clamp(v, 0, 1);
-    } else if (msgTag == kMsgTagBallistic) {
-      int v;
-      stream.Get(&v, 0);
-      mBallistic = std::clamp(v, 0, 2);
     } else if (msgTag == kMsgTagRange) {
       float v;
       stream.Get(&v, 0);
       mFloorDb = std::clamp(v, -120.f, -30.f);
     } else if (msgTag == kMsgTagHold) {
-      stream.Get(&mHoldSec, 0);
-      if (mHoldSec <= 0.f) {
-        if (mHoldWasActive) {
-          ClearPeakHold();
-          mHoldWasActive = false;
-        }
-      } else {
-        mHoldWasActive = true;
-      }
+      float v;
+      stream.Get(&v, 0);
+      mHoldSec = v; // 保留接口 (无视觉)
     } else if (msgTag == kMsgTagReset) {
       ResetDisplay();
-    }
-  }
-
-  // hover 读数: 光标处方位角 + 半径对应 dB (IControl 每次鼠标移动回调)
-  void OnMouseOver(float x, float y, const IMouseMod &mod) override {
-    if (!mHoverActive || mHoverX != x || mHoverY != y) {
-      mHoverX = x;
-      mHoverY = y;
-      mHoverActive = true;
-      SetDirty(false);
-    }
-  }
-
-  void OnMouseOut() override {
-    if (mHoverActive) {
-      mHoverActive = false;
-      SetDirty(false);
     }
   }
 
@@ -151,52 +106,73 @@ public:
     g.FillRect(COL_100(), mRECT);
     const IRECT cv = Canvas();
     DrawGridLayer(g, cv);
-    DrawEnvelope(g, cv);
+    DrawVectors(g, cv);
     DrawReadouts(g, cv);
-    DrawHover(g, cv);
   }
 
 private:
   // ── 常量 ──────────────────────────────────────────────────────────────
-  static constexpr int kBins = 180;          // 全圆角度桶数 (2°/桶, PAZ 式棱角分辨率)
-  static constexpr int kCorrWin = 64;        // 相关性滑窗 hop 数 (~1.4s @48k, 2 的幂)
-  static constexpr float kHeadH = 22.f;      // 顶部标题行高
-  static constexpr float kAntiBandH = 34.f;  // 反相区 (水平轴以下) 高度
-  static constexpr float kDomePad = 8.f;     // 穹顶距画布上/左右边缘留白
-  static constexpr float kHoldFallDb = 20.f; // 峰值保持超时回落速率 (dB/s, 与频谱一致)
-  static constexpr float kAvgTauSec = 0.1f;  // AVG 档平均时间常数 (与频谱一致)
-  static constexpr int kHoldLineAlpha = 75;  // 峰值保持轮廓不透明度 (与频谱 hold 线一致)
+  static constexpr int kFftN = 1024;          // hop = 1024 样本, 每包一次 FFT
+  static constexpr int kScopeBands = 16;      // 对数频带数 (≈0.56 倍频程/带, 见 bin 表)
+  static constexpr int kCorrWin = 64;         // 相关性滑窗 hop 数 (~1.4s @48k, 2 的幂)
+  static constexpr float kFftAttackSec = 0.003f; // 电平攻击 (基本直跳, PAZ Peak 响度观感)
+  static constexpr float kAngSmoothSec = 0.030f; // 主射线角度平滑
+  static constexpr float kWingSmoothSec = 0.100f;// 侧翼比例平滑 (略慢 → 两侧跳动缓于中间)
+  static constexpr float kDecorrTol = 0.15f;  // 去相关歧义阈值: |bal|,|corr| 均低于它 → 居中
+  static constexpr float kHeadH = 22.f;       // 顶部标题行高
+  static constexpr float kBasePad = 20.f;     // 基线距画布底缘留白 (L/R 标注带)
+  static constexpr float kDomePad = 8.f;      // 穹顶距画布上/左右边缘留白
+
+  // 16 个对数频带的分 bin 表 (含两端; FFT 1024 @48k 时 bin ≈ 46.875 Hz, 逐带
+  // 约 ×1.477 ≈ 0.56 倍频程): 47 Hz..23.9 kHz 对数铺开, 足以分开相差一个
+  // 倍频程的成分 (如 440/880 谐波对, 对齐 PAZ 的分带观感)。
+  static constexpr int kBandBins[kScopeBands][2] = {
+      {1, 1},   {2, 2},   {3, 3},   {4, 4},   {5, 7},   {8, 10},   {11, 15},  {16, 22},
+      {23, 33}, {34, 49}, {50, 72}, {73, 107}, {108, 158}, {159, 234}, {235, 345}, {346, 510}};
 
   // ── 数据处理 ──────────────────────────────────────────────────────────
-  // 每 hop 包: 方位角分桶 + 相关性滑窗 + 逐桶显示域弹道 + 峰值保持
+  // 每 hop 包: L/R FFT → 分带聚合 → 每带方位/电平弹道 + 相关性滑窗
   void ProcessPacket(const ISenderData<2, TDataPacket> &d) {
     const double hopSec = 1024.0 / std::max(mSampleRate, 1.0);
-    // 弹道系数每包按帧进给周期重算 (与 pad 同式, 时间常数与引擎同步)
-    mAttackCoeff = (float)std::exp(-hopSec / std::max(mAttackSec, 1e-3f));
-    mReleaseCoeff = (float)std::exp(-hopSec / std::max(mReleaseSec, 1e-3f));
-    // 匀速档: 每帧固定"半径满幅比例"下落 (2·τ 秒跨全幅, 恒像素速度)
-    mUnifStepDb = (float)(hopSec / (2.0 * std::max(mReleaseSec, 1e-3f)) * -mFloorDb);
-    mAvgAlpha = (float)(1.0 - std::exp(-hopSec / kAvgTauSec));
+    // 弹道系数: 电平攻击近直跳 (3ms, 快扫不丢), 释放沿用 LOG/LIN 档位参数
+    const float aCoef = (float)std::exp(-hopSec / kFftAttackSec);
+    const float rCoef = (float)std::exp(-hopSec / std::max(mReleaseSec, 1e-3f));
+    const float unifStep = (float)(hopSec / (2.0 * std::max(mReleaseSec, 1e-3f)) * -mFloorDb);
+    const float angK = (float)(1.0 - std::exp(-hopSec / kAngSmoothSec));
+    const float wingK = (float)(1.0 - std::exp(-hopSec / kWingSmoothSec));
 
-    // 逐样本: θ = atan2(R²−L², 2·L·R) 分桶 + 相关性滑窗标量
-    mBinE.fill(0.0);
-    double lr = 0.0, l2 = 0.0, r2 = 0.0;
+    // L/R → 1024 点 FFT (Hann 窗, 抑制谱泄漏: 无窗时单音会漏进相邻所有带)
+    std::array<float, kFftN> reL, imL, reR, imR;
     const float *inL = d.vals[0].data();
     const float *inR = d.vals[1].data();
-    for (int i = 0; i < 1024; ++i) {
-      const double l = inL[i], r = inR[i];
-      const double ll = l * l, rr = r * r;
-      lr += l * r;
-      l2 += ll;
-      r2 += rr;
-      const double e = ll + rr;
-      if (e < 1e-12)
-        continue; // -120 dBFS 以下不计 (静音不造方位)
-      const int b = (int)((std::atan2(rr - ll, 2.0 * l * r) + PI) * (0.5 * kBins / PI));
-      mBinE[b >= kBins ? kBins - 1 : b] += e;
+    for (int i = 0; i < kFftN; ++i) {
+      const float w = 0.5f - 0.5f * std::cos(2.f * (float)PI * i / (float)kFftN);
+      reL[i] = inL[i] * w; imL[i] = 0.f;
+      reR[i] = inR[i] * w; imR[i] = 0.f;
+    }
+    FftRadix2(reL.data(), imL.data(), kFftN);
+    FftRadix2(reR.data(), imR.data(), kFftN);
+
+    // 分带帧级聚合: E = Σ(|L|²+|R|²), DL = Σ(|R|²−|L|²), LRC = ΣRe(L·conj R)
+    double eB[kScopeBands] = {}, dlB[kScopeBands] = {}, rcB[kScopeBands] = {};
+    for (int b = 0; b < kScopeBands; ++b) {
+      for (int k = kBandBins[b][0]; k <= kBandBins[b][1]; ++k) {
+        const double l2 = reL[k] * reL[k] + imL[k] * imL[k];
+        const double r2 = reR[k] * reR[k] + imR[k] * imR[k];
+        eB[b] += l2 + r2;
+        dlB[b] += r2 - l2;
+        rcB[b] += reL[k] * reR[k] + imL[k] * imR[k];
+      }
     }
 
-    // 相关性/宽度/平衡: kCorrWin hop 滑窗 (比值之和再作商, 等效 1.4s 线性积分) + 150ms 显示平滑
+    // 相关性/宽度/平衡: kCorrWin hop 滑窗 (全带时域聚合) + 150ms 显示平滑
+    double lr = 0.0, l2 = 0.0, r2 = 0.0;
+    for (int i = 0; i < kFftN; ++i) {
+      const double l = inL[i], r = inR[i];
+      lr += l * r;
+      l2 += l * l;
+      r2 += r * r;
+    }
     const HopSum &old = mCorrRing[mCorrHead];
     mSumLR += lr - old.lr;
     mSumL2 += l2 - old.l2;
@@ -220,75 +196,61 @@ private:
       mCorrValid = false;
     }
 
-    // 逐桶显示域弹道 (与频谱同一弹道学: STD 攻放单极点 / MAX 瞬时上升 / AVG 功率平均)。
-    // 桶平均功率按"满幅单声道正弦 = 0 dB"标定 (E/1024 = 逐样本平均功率)。
-    const float over = 0.1f * -mFloorDb; // 屏底 overshoot 缓冲 (与频谱同式, 回落不拖尾)
-    const bool doAvg = (mBallistic == 2);
-    const bool instAttack = (mBallistic == 1);
-    for (int b = 0; b < kBins; ++b) {
-      float rawDb;
-      if (doAvg) {
-        float &p = mAvgP[b];
-        p += mAvgAlpha * ((float)mBinE[b] * (1.f / 1024.f) - p);
-        rawDb = orm::FastPwrToDb(p, -120.f);
-      } else {
-        rawDb = orm::FastPwrToDb((float)mBinE[b] * (1.f / 1024.f), -120.f);
-      }
-      const float target = std::clamp(rawDb, mFloorDb - over, 0.f);
-      mDispDb[b] = doAvg ? target
-                         : StepSmoothed(mDispDb[b], target, mAttackCoeff, mReleaseCoeff, mUnifStepDb,
-                                        instAttack);
-    }
+    // 每带: 电平弹道 + 主射线方位 + 侧翼比例
+    // 标定: Hann 窗 (Σw² ≈ 0.375·N) + Parseval → Σ_bins|X|² = N·Σ(w·x)²,
+    // 满幅单声道正弦 = 0 dB
+    const double kCal = 0.375 * (double)kFftN * (double)kFftN;
+    for (int b = 0; b < kScopeBands; ++b) {
+      const double e = eB[b];
+      const float rawDb = (e > 1e-12) ? orm::FastPwrToDb((float)(e / kCal), -120.f) : -120.f;
+      const float target = std::clamp(rawDb, mFloorDb - 0.1f * -mFloorDb, 0.f);
+      mBand[b].db = StepSmoothed(mBand[b].db, target, aCoef, rCoef, unifStep);
 
-    UpdatePeakHold(hopSec);
+      if (e > 1e-12) {
+        const float bal = (float)(dlB[b] / e);
+        const float corr = (float)(rcB[b] / (0.5 * e)); // 能量加权相关 (ΣLR/½E)
+        // 主角度 = ½·atan2(Σ|R|²−Σ|L|², 2ΣRe(L·conj R)); 去相关歧义 (两者都≈0)
+        // 时无确定方位 → 居中 (0°), 能量交给侧翼 ±90° (PAZ 三线观感)
+        float ang;
+        if (std::fabs(bal) < kDecorrTol && std::fabs(corr) < kDecorrTol)
+          ang = 0.f;
+        else
+          ang = 0.5f * (float)std::atan2(dlB[b], 2.0 * rcB[b]);
+        // 角度平滑用单位向量 (cos, sin) 一阶平均: 平均结果恒在单位圆附近,
+        // 数学上不可能累积出界或产生 NaN (旧的角度标量平滑带半扇回绕分支,
+        // 曾观察到指向半扇之外 (≈250°/270°) 的异常线, 已整体替换)
+        const float cA = std::cos(ang), sA = std::sin(ang);
+        mBand[b].vecX += angK * (cA - mBand[b].vecX);
+        mBand[b].vecY += angK * (sA - mBand[b].vecY);
+        mBand[b].anti = (corr < 0.f);
+        // 侧翼比例: 反相 → 满; 去相关 (相关低且居中) → 按 (1−corr)(1−2.2|bal|);
+        // 硬声像 (|bal| 大) 或强相关 → 0 (单线, 与 PAZ 硬声像观感一致)
+        const float wing =
+            (corr < 0.f) ? 1.f
+                         : std::max(0.f, (1.f - corr)) * std::max(0.f, (1.f - 2.2f * std::fabs(bal)));
+        mBand[b].wing += wingK * (wing - mBand[b].wing);
+      } else {
+        mBand[b].vecX = 0.f;
+        mBand[b].vecY = 1.f; // 无能量: 复位为"正上"方向
+        mBand[b].anti = false;
+        mBand[b].wing *= (1.f - wingK); // 无能量时侧翼回落
+      }
+    }
     SetDirty(false);
   }
 
-  // 峰值保持 (与频谱 hold 曲线同规则): 刷新即清计时, 超时后 20 dB/s 回落, 下限为当前显示值。
-  // 计龄用音频时钟 (hop 时长) 而非墙钟: 冻结回放时随回放帧推进, 与确定性回放语义一致。
-  void UpdatePeakHold(double hopSec) {
-    if (mHoldSec <= 0.f) {
-      if (mHoldWasActive) {
-        ClearPeakHold();
-        mHoldWasActive = false;
-      }
-      return;
-    }
-    mHoldWasActive = true;
-    const float fallDb = (mHoldSec < 1e8f) ? kHoldFallDb * (float)hopSec : 0.f; // ∞ 档恒不回落
-    for (int b = 0; b < kBins; ++b) {
-      const float cur = mDispDb[b];
-      float &hold = mHoldDb[b];
-      if (cur > hold) {
-        hold = cur;
-        mHoldAge[b] = 0.f;
-        if (cur > mFloorDb + 0.5f)
-          mHoldSignal = true;
-      } else {
-        mHoldAge[b] += (float)hopSec;
-        if (mHoldAge[b] > mHoldSec)
-          hold = std::max(cur, hold - fallDb);
-      }
-    }
-  }
-
-  // 单点弹道 (与 SpectrumPad::StepSmoothed 同式): 攻击 dB 域单极点; 回落按模式
-  //   LOG = 显示域差距等比收缩, UNIF = 恒定屏幅比例速率; instAttack = 上升瞬时到位
-  float StepSmoothed(float prevDb, float targetDb, float aCoef, float rCoef, float unifStepDb,
-                     bool instAttack) const {
+  // 单点弹道 (与频谱同式): 攻击 dB 域单极点; 回落按模式
+  //   LOG = 显示域差距等比收缩, UNIF = 恒定屏幅比例速率
+  float StepSmoothed(float prevDb, float targetDb, float aCoef, float rCoef, float unifStepDb) const {
     if (targetDb > prevDb)
-      return instAttack ? targetDb : aCoef * prevDb + (1.f - aCoef) * targetDb;
+      return aCoef * prevDb + (1.f - aCoef) * targetDb;
     if (mReleaseMode == 1)
       return std::max(targetDb, prevDb - unifStepDb);
     return rCoef * prevDb + (1.f - rCoef) * targetDb;
   }
 
   void ResetDisplay() {
-    mDispDb.fill(mFloorDb);
-    mHoldDb.fill(-1000.f);
-    mHoldAge.fill(0.f);
-    mAvgP.fill(0.f);
-    mHoldSignal = false;
+    mBand = {};
     mCorrRing.fill(HopSum{});
     mCorrHead = 0;
     mSumLR = mSumL2 = mSumR2 = 0.0;
@@ -301,21 +263,16 @@ private:
   // 画布: 标题行以下全部
   IRECT Canvas() const { return IRECT(mRECT.L, mRECT.T + kHeadH, mRECT.R, mRECT.B); }
 
-  // 扇形几何: 圆心在画布底部中央 (反相带顶边), 穹顶半径取高/宽较窄者
+  // 扇形几何: 圆心在画布底部中央 (基线上方留 L/R 标注带), 半径取高/宽较窄者
   void FanGeom(const IRECT &cv, float &cx, float &cy, float &rMax) const {
     cx = cv.L + cv.W() * 0.5f;
-    cy = cv.B - kAntiBandH;
+    cy = cv.B - kBasePad;
     rMax = std::max(std::min(cv.W() * 0.5f - kDomePad, (cy - cv.T) - kDomePad), 12.f);
   }
 
-  // 桶 b 的中心方位角 (弧度): 0 = 正上 (居中), +π/2 = 极右, ±π = 正下 (反相)
-  static float BinAngle(int b) { return -PI + (2.f * PI * (b + 0.5f)) / (float)kBins; }
-
-  // 显示 dB → 半径比例: 同相区用穹顶全幅; 反相区 (|θ|>90°) 压缩到反相带内。
-  // f: db=0 → 1 (外环), db=底限 → 0 (圆心)。
-  float RadiusFor(float th, float db, float rMax) const {
-    const float f = std::clamp((db - mFloorDb) / (0.f - mFloorDb), 0.f, 1.f);
-    return (std::fabs(th) > 0.5f * PI ? (kAntiBandH - 6.f) : rMax) * f;
+  // 显示 dB → 半径比例 (全扇同一刻度): db=0 → 外环, db=底限 → 圆心。
+  float RadiusFor(float db, float rMax) const {
+    return rMax * std::clamp((db - mFloorDb) / (0.f - mFloorDb), 0.f, 1.f);
   }
 
   // ── 绘制 ──────────────────────────────────────────────────────────────
@@ -341,11 +298,28 @@ private:
     IColor cL, cR, cM;
     GetChannelColors(cL, cR, cM);
 
-    // 反相带淡红染色 + 基线 (±90° = 极左/极右方向)
-    g.FillRect(IColor(12, MeterRed().R, MeterRed().G, MeterRed().B), IRECT(cv.L, cy, cv.R, cv.B));
+    // 基线 (半扇直径; 两端 = 硬反相方位)
     g.DrawLine(COL_500(), cx - rMax - 10.f, cy, cx + rMax + 10.f, cy, nullptr, 1.f);
 
-    // dB 同心圆环 (上半圆弧, 多段子路径一次描边)
+    // 反相红区背景 (PAZ 手册: >60° 两侧区域为红色): 基线两端 ±60°..±90°
+    // 楔形 —— 侧翼/反相射线落在红区内, 视觉上属于显示区而非"跑出扇外"
+    const IColor redZone(14, MeterRed().R, MeterRed().G, MeterRed().B);
+    for (int k = 0; k < 2; ++k) {
+      const float th0 = (k ? 1.f : -1.f) * (1.f / 3.f) * PI; // ±60°
+      const float th1 = (k ? 1.f : -1.f) * 0.5f * PI;         // ±90° (基线端)
+      g.PathClear();
+      g.PathMoveTo(cx, cy);
+      constexpr int kSegs = 16;
+      for (int i = 0; i <= kSegs; ++i) {
+        const float th = th0 + (th1 - th0) * (float)i / (float)kSegs;
+        g.PathLineTo(cx + std::sin(th) * rMax, cy - std::cos(th) * rMax);
+      }
+      g.PathLineTo(cx, cy);
+      g.PathClose();
+      g.PathFill(IPattern(redZone));
+    }
+
+    // dB 同心圆环 (全扇上半圆弧, 多段子路径一次描边)
     g.PathClear();
     const int floorInt = (int)mFloorDb;
     for (int db = 0; db >= floorInt; db -= 20) {
@@ -355,40 +329,42 @@ private:
     }
     g.PathStroke(IPattern(WarmGray(135)), 1.f);
 
-    // 刻度文字 (基线上方, 环与基线交点居中; 底限环 r=0 只留中央一个)
+    // 刻度文字 (基线两端交点上方居中; 底限环 r=0 只留中央一个)
     const IText t(14, COL_700(), kFontRegular, EAlign::Center, EVAlign::Bottom);
     for (int db = 0; db >= floorInt; db -= 20) {
       const float r = rMax * (float)(db - floorInt) / (float)-floorInt;
       char buf[8];
       std::snprintf(buf, sizeof(buf), "%d", db);
       if (r > 20.f) {
-        g.DrawText(t, buf, IRECT(cx - r - 20.f, cy - 17.f, cx - r + 20.f, cy - 1.f));
-        g.DrawText(t, buf, IRECT(cx + r - 20.f, cy - 17.f, cx + r + 20.f, cy - 1.f));
+        g.DrawText(t, buf, IRECT(cx - r - 20.f, cy - 17.f, cx - r + 20.f, cy - 2.f));
+        g.DrawText(t, buf, IRECT(cx + r - 20.f, cy - 17.f, cx + r + 20.f, cy - 2.f));
       } else {
-        g.DrawText(t, buf, IRECT(cx - 24.f, cy - 17.f, cx + 24.f, cy - 1.f));
+        g.DrawText(t, buf, IRECT(cx - 24.f, cy - 17.f, cx + 24.f, cy - 2.f));
       }
     }
 
-    // ±45° 辐条 (声像 ±50% 参考线)
+    // ±45° 辐条: 同相 (中央 90°) 与左/右反相 (侧翼各 45°) 的分界
     for (int k = 0; k < 2; ++k) {
       const float th = (k ? 1.f : -1.f) * 0.25f * PI;
       g.DrawLine(WarmGray(165), cx, cy, cx + std::sin(th) * rMax, cy - std::cos(th) * rMax, nullptr, 1.f);
     }
 
+    // 反相角标 (侧翼楔形内, 红字; 硬反相在基线两端)
+    if (mAntiLabel) {
+      const IText aT(11, MeterRed(), kFontSemiBold, EAlign::Center, EVAlign::Middle);
+      for (int k = 0; k < 2; ++k) {
+        const float th = (k ? 1.f : -1.f) * 0.375f * PI; // 侧翼 45° 区间中点 ±67.5°
+        const float lx = cx + std::sin(th) * (rMax * 0.62f);
+        const float ly = cy - std::cos(th) * (rMax * 0.62f);
+        g.DrawText(aT, mAntiLabel, IRECT(lx - 50.f, ly - 9.f, lx + 50.f, ly + 9.f));
+      }
+    }
+
     // L / R 标注 (基线两端下方, 通道色, 与图例色块呼应)
     const IText lT(14, cL, kFontSemiBold, EAlign::Center, EVAlign::Top);
     const IText rT(14, cR, kFontSemiBold, EAlign::Center, EVAlign::Top);
-    g.DrawText(lT, "L", IRECT(cx - rMax - 28.f, cy + 3.f, cx - rMax - 8.f, cy + 19.f));
-    g.DrawText(rT, "R", IRECT(cx + rMax + 8.f, cy + 3.f, cx + rMax + 28.f, cy + 19.f));
-
-    // 反相角标 (带内两角, 红字; 射线可达范围只到圆心 ±反相带宽, 角落恒为空)
-    if (mAntiLabel) {
-      const float bandMidY = cy + kAntiBandH * 0.5f;
-      const IText aTL(11, MeterRed(), kFontSemiBold, EAlign::Near, EVAlign::Middle);
-      g.DrawText(aTL, mAntiLabel, IRECT(cv.L + 4.f, bandMidY - 8.f, cx - rMax - 32.f, bandMidY + 8.f));
-      const IText aTR(11, MeterRed(), kFontSemiBold, EAlign::Far, EVAlign::Middle);
-      g.DrawText(aTR, mAntiLabel, IRECT(cx + rMax + 32.f, bandMidY - 8.f, cv.R - 4.f, bandMidY + 8.f));
-    }
+    g.DrawText(lT, "L", IRECT(cx - rMax - 28.f, cy + 2.f, cx - rMax - 8.f, cy + 18.f));
+    g.DrawText(rT, "R", IRECT(cx + rMax + 8.f, cy + 2.f, cx + rMax + 28.f, cy + 18.f));
   }
 
   // 上半圆弧路径子段 (方位角 -90°..+90° 采样折线逼近, 多段子路径共存一条路径)
@@ -405,69 +381,51 @@ private:
     }
   }
 
-  void DrawEnvelope(IGraphics &g, const IRECT &cv) {
+  // PAZ 式矢量线: 每带一条主射线 + 去相关/反相的 ±90° 侧翼射线
+  void DrawVectors(IGraphics &g, const IRECT &cv) {
     float cx, cy, rMax;
     FanGeom(cv, cx, cy, rMax);
     IColor cL, cR, cM;
     GetChannelColors(cL, cR, cM);
+    const IColor mainCol(235, cM.R, cM.G, cM.B);
+    const IColor wingCol(140, cM.R, cM.G, cM.B);
+    const IColor antiCol(235, MeterRed().R, MeterRed().G, MeterRed().B);
 
-    // 全空判定: 任一桶高于底限 +0.5 才绘制 (静音时圆心无残迹)
-    bool any = false;
-    for (int b = 0; b < kBins && !any; ++b)
-      any = mDispDb[b] > mFloorDb + 0.5f;
+    // 静音/阈值判定: 只画全局峰值带以下 35 dB 内的带 (滤掉窗旁瓣泄漏的短线,
+    //   单音只留 1-2 条线, 宽带内容仍全部可见)
+    float maxDb = mFloorDb;
+    for (int b = 0; b < kScopeBands; ++b)
+      maxDb = std::max(maxDb, mBand[b].db);
+    const float thr = std::max(maxDb - 35.f, mFloorDb + 0.5f);
+    if (maxDb <= mFloorDb + 0.5f)
+      return; // 静音: 圆心无残迹
 
-    if (any) {
-      // 同相扇形 (上半区, 主题 M 色: 填充 + 亮描边)
-      BuildFanPath(g, cx, cy, rMax, mMidLo, mMidHi);
-      g.PathFill(IPattern(IColor(105, cM.R, cM.G, cM.B)));
-      g.PathStroke(IPattern(IColor(230, cM.R, cM.G, cM.B)), 1.f);
-      // 反相扇形 (左右两段, 红色语义 = 朝轴下张开的反相能量)
-      const IColor antiFill(80, MeterRed().R, MeterRed().G, MeterRed().B);
-      const IColor antiLine(190, MeterRed().R, MeterRed().G, MeterRed().B);
-      BuildFanPath(g, cx, cy, rMax, 0, mMidLo);
-      g.PathFill(IPattern(antiFill));
-      g.PathStroke(IPattern(antiLine), 1.f);
-      BuildFanPath(g, cx, cy, rMax, mMidHi, kBins);
-      g.PathFill(IPattern(antiFill));
-      g.PathStroke(IPattern(antiLine), 1.f);
-    }
-
-    if (mHoldSec > 0.f && mHoldSignal)
-      DrawHoldOutline(g, cx, cy, rMax);
-  }
-
-  // 扇形路径: 圆心 → 桶 [b0,b1) 中心角各一点 → 闭合 (星形多边形, 填充与描边共用)
-  void BuildFanPath(IGraphics &g, float cx, float cy, float rMax, int b0, int b1) {
-    g.PathClear();
-    g.PathMoveTo(cx, cy);
-    for (int b = b0; b < b1; ++b) {
-      const float th = BinAngle(b);
-      const float r = RadiusFor(th, mDispDb[b], rMax);
-      g.PathLineTo(cx + std::sin(th) * r, cy - std::cos(th) * r);
-    }
-    g.PathClose();
-  }
-
-  // 峰值保持轮廓: 连续有效段折线 (半透明极细线, 与频谱 hold 曲线同色同规则)
-  void DrawHoldOutline(IGraphics &g, float cx, float cy, float rMax) {
-    const IColor col(kHoldLineAlpha, COL_900().R, COL_900().G, COL_900().B);
-    g.PathClear();
-    bool inRun = false;
-    for (int b = 0; b < kBins; ++b) {
-      if (mHoldDb[b] <= mFloorDb + 0.5f) {
-        inRun = false;
+    for (int b = 0; b < kScopeBands; ++b) {
+      const float db = mBand[b].db;
+      if (db < thr)
+        continue;
+      // 反相带: 不画主射线, 只画 ±90° 两条等长侧翼 (谐波反相 → 左右 90° 两线)
+      if (mBand[b].anti) {
+        const float rw = RadiusFor(db, rMax);
+        if (rw > 1.5f) {
+          g.DrawLine(antiCol, cx, cy, cx + rw, cy, nullptr, 2.f);
+          g.DrawLine(antiCol, cx, cy, cx - rw, cy, nullptr, 2.f);
+        }
         continue;
       }
-      const float th = BinAngle(b);
-      const float r = RadiusFor(th, mHoldDb[b], rMax);
-      const float x = cx + std::sin(th) * r, y = cy - std::cos(th) * r;
-      if (inRun)
-        g.PathLineTo(x, y);
-      else
-        g.PathMoveTo(x, y);
-      inRun = true;
+      // 主射线 (长度 = 电平, 角度 = 平滑后方位; 向量解码出的角度
+      //   数学上被限制在半扇 [−90°, +90°], 绘制前再钳一次作双重防御)
+      const float th = std::clamp(std::atan2(mBand[b].vecY, mBand[b].vecX),
+                                  -0.5f * (float)PI, 0.5f * (float)PI);
+      const float r = RadiusFor(db, rMax);
+      g.DrawLine(mainCol, cx, cy, cx + std::sin(th) * r, cy - std::cos(th) * r, nullptr, 2.f);
+      // 侧翼 ±90° (去相关/居中内容): 长度 = 主长 × wing
+      const float rw = r * mBand[b].wing;
+      if (rw > 1.5f) {
+        g.DrawLine(wingCol, cx, cy, cx + rw, cy, nullptr, 1.f);
+        g.DrawLine(wingCol, cx, cy, cx - rw, cy, nullptr, 1.f);
+      }
     }
-    g.PathStroke(IPattern(col), 1.f);
   }
 
   // 右栏读数: 相关性 (读数 + 分段色条) / 宽度 / 平衡。滑窗静音时显示 "—"
@@ -533,56 +491,49 @@ private:
     g.DrawText(valT, buf, IRECT(x0, y, x1, y + 22.f));
   }
 
-  // 悬停读数: 光标方位角 + 半径对应 dB (反相带内带 AP 前缀), 径向辅助线提示所读射线
-  void DrawHover(IGraphics &g, const IRECT &cv) {
-    if (!mHoverActive)
-      return;
-    float cx, cy, rMax;
-    FanGeom(cv, cx, cy, rMax);
-    const float dx = mHoverX - cx, dy = mHoverY - cy;
-    const float r = std::sqrt(dx * dx + dy * dy);
-    const float antiR = kAntiBandH - 6.f;
-    float rRef;
-    if (dy <= 0.f && r <= rMax + 2.f)
-      rRef = rMax;
-    else if (dy > 0.f && r <= antiR + 2.f)
-      rRef = antiR;
-    else
-      return;
-    const float db = mFloorDb * std::clamp(r / rRef, 0.f, 1.f);
-    const float th = std::atan2(dx, -dy); // 0 = 正上, ±π (反相区 |θ| > 90°)
-    const float deg = th * 180.f / PI;
-    const float inv = (r > 0.5f) ? rRef / r : 0.f;
-    g.DrawLine(IColor(70, COL_700().R, COL_700().G, COL_700().B), cx, cy, cx + dx * inv, cy + dy * inv,
-               nullptr, 1.f);
-
-    char buf[40];
-    if (std::fabs(deg) > 90.f)
-      std::snprintf(buf, sizeof(buf), "AP %s %.0f°  %.1f dB", (deg < 0.f) ? "L" : "R",
-                    180.f - std::fabs(deg), db);
-    else {
-      const char *side = (deg > 1.f) ? "R" : (deg < -1.f) ? "L" : "C";
-      std::snprintf(buf, sizeof(buf), "%s %.0f°  %.1f dB", side, std::fabs(deg), db);
+  // 1024 点基 2 FFT (迭代, bit 反转 + 蝶形), 正变换无缩放; UI 线程每 hop 一次
+  static void FftRadix2(float *re, float *im, int n) {
+    for (int i = 1, j = 0; i < n; ++i) {
+      int bit = n >> 1;
+      for (; j & bit; bit >>= 1)
+        j ^= bit;
+      j ^= bit;
+      if (i < j) {
+        std::swap(re[i], re[j]);
+        std::swap(im[i], im[j]);
+      }
     }
-    // 标签在光标右上, 右缘/顶缘放不下时翻转
-    const IText t(14, COL_700(), kFontRegular, EAlign::Near, EVAlign::Bottom);
-    IRECT labelR(mHoverX + 8.f, mHoverY - 18.f, mRECT.R - 2.f, mHoverY - 2.f);
-    g.MeasureText(t, buf, labelR);
-    if (labelR.R > mRECT.R - 2.f)
-      labelR = IRECT(mHoverX - 8.f - labelR.W(), mHoverY - 18.f, mHoverX - 8.f, mHoverY - 2.f);
-    if (labelR.T < mRECT.T)
-      labelR = IRECT(labelR.L, mHoverY + 4.f, labelR.L + labelR.W(), mHoverY + 20.f);
-    g.DrawText(t, buf, labelR);
+    for (int len = 2; len <= n; len <<= 1) {
+      const float ang = -2.f * (float)PI / (float)len;
+      const float wRe = std::cos(ang), wIm = std::sin(ang);
+      const int half = len >> 1;
+      for (int i = 0; i < n; i += len) {
+        float cRe = 1.f, cIm = 0.f;
+        for (int k = 0; k < half; ++k) {
+          const float uRe = re[i + k], uIm = im[i + k];
+          const float vRe = re[i + k + half] * cRe - im[i + k + half] * cIm;
+          const float vIm = re[i + k + half] * cIm + im[i + k + half] * cRe;
+          re[i + k] = uRe + vRe;
+          im[i + k] = uIm + vIm;
+          re[i + k + half] = uRe - vRe;
+          im[i + k + half] = uIm - vIm;
+          const float nRe = cRe * wRe - cIm * wIm;
+          cIm = cRe * wIm + cIm * wRe;
+          cRe = nRe;
+        }
+      }
+    }
   }
 
   // ── 状态 ──────────────────────────────────────────────────────────────
-  std::array<float, kBins> mDispDb{};  // 逐桶显示域弹道 dB
-  std::array<float, kBins> mHoldDb{};  // 逐桶峰值保持 (显示 dB, -1000 = 无效)
-  std::array<float, kBins> mHoldAge{}; // 逐桶距上次刷新峰值的时间 (音频时钟, s)
-  std::array<float, kBins> mAvgP{};    // AVG 档逐桶功率平均状态
-  std::array<double, kBins> mBinE{};   // 本包角度能量累积
-  bool mHoldSignal = false;            // 已有有效峰值 (全无效不画轮廓)
-  bool mHoldWasActive = false;         // hold 开关边沿检测 (关闭时清一次积累)
+  struct Band {
+    float db = -120.f;    // 主射线电平 (显示域弹道 dB)
+    float vecX = 0.f;     // 主射线方位向量 (cos θ, 平滑)
+    float vecY = 1.f;     // 主射线方位向量 (sin θ, 平滑; θ = 显示半扇角)
+    float wing = 0.f;     // ±90° 侧翼长度比例 (0..1, 平滑)
+    bool anti = false;    // 反相带: 只画 ±90° 两条等长侧翼 (红色)
+  };
+  std::array<Band, kScopeBands> mBand{};
 
   struct HopSum {
     double lr, l2, r2;
@@ -594,17 +545,11 @@ private:
   float mCorrDisp = 0.f, mWidthDisp = 0.f, mBalDisp = 0.f; // 显示平滑值
 
   double mSampleRate = 48000.0;
-  float mAttackSec = 0.05f, mReleaseSec = 0.2f; // 与频谱 Attack/Release 参数同源
-  int mReleaseMode = 0;                         // 0=LOG 对数域, 1=LIN 匀速
-  int mBallistic = 0;                           // 0=STD, 1=MAX, 2=AVG
-  float mFloorDb = -80.f;                       // 半径 dB 底限 (外环 = 0 dB)
-  float mHoldSec = 2.f;                         // 峰值保持时长 (s, 0 = 关)
-  float mAttackCoeff = 0.2f, mReleaseCoeff = 0.9f, mUnifStepDb = 1.f, mAvgAlpha = 0.f;
-
-  int mMidLo = 45, mMidHi = 135; // 桶区间: [0,mMidLo) 左反相 / [mMidLo,mMidHi) 同相 / [mMidHi,kBins) 右反相
-
-  bool mHoverActive = false;
-  float mHoverX = 0.f, mHoverY = 0.f;
+  float mAttackSec = 0.05f;          // 接收保留 (电平攻击固定 10ms, 此值仅存档)
+  float mReleaseSec = 0.2f;          // 释放时间常数 (LOG/LIN 档位, 与频谱同源)
+  int mReleaseMode = 0;              // 0=LOG 对数域, 1=LIN 匀速
+  float mFloorDb = -80.f;            // 半径 dB 底限 (外环 = 0 dB)
+  float mHoldSec = 2.f;              // 峰值保持时长 (s, 接口保留, 矢量制式不绘制)
 
   const char *mTitle = nullptr, *mCorrLabel = nullptr, *mWidthLabel = nullptr;
   const char *mBalanceLabel = nullptr, *mAntiLabel = nullptr;

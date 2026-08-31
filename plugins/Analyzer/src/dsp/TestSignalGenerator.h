@@ -7,13 +7,17 @@
 //   1) 样本级确定性: 固定 seed 的 PRNG, 逐样本可复现。
 //   2) 时间对齐精确: 与引擎共用同一 nFrames, 脉冲落在第几个样本完全可控 ——
 //      这是测量瞬态响应 (上升沿帧数) 的前提, 宿主路由下的外部音源做不到。
-//   3) 交叠点可控: 正弦可精确吸附到 FFT bin 中心或两 bin 正中,
-//      从而把 scalloping loss (Hann 窗理论 -1.42 dB) 变成可测量的量。
+//   3) 对比基准确定: 固定 seed、固定起点的信号段 → "冻结 + 切算法/切参数"
+//      重算的永远是同一段信号, 这是外部音源给不了的公平对比。
 //
 // 纯 header, 零依赖 (仅标准库), 便于 tests/ 下的离线基准直接复用同一份信号定义。
 // 编译开关: ORM_ENABLE_TEST_GEN (发布包设为 0 即可完全裁掉)。
 //
 // 注: 状态只能在音频线程上推进 (Fill)。UI 侧改配置走 SetConfig, 不做跨线程共享。
+//
+// 立体声诊断信号 (SINE L/R/90°, PAN/PHASE SWEEP, NOISE/PINK C): 用于对比声像
+// 显示 (StereoFieldControl) 与参考插件 (Waves PAZ / Ozone Imager) 的观感差异,
+// 见 kNumGenSignals 各条目注释。摆动类信号的周期复用 Config::sweepSec。
 
 #include <algorithm>
 #include <array>
@@ -25,25 +29,32 @@ namespace orm {
 
 enum ETestSignal {
   kGenOff = 0,
-  kGenSineBinCenter,  // 正弦吸附到最近 bin 中心 (泄漏最小 → 用于幅度校准)
-  kGenSineBinBetween, // 正弦吸附到最近两 bin 正中 (泄漏最坏 → 用于 scalloping loss)
-  kGenSine,           // 正弦, 自由频率
+  kGenSine,           // 双路同相正弦 (单声道, 声像正上)
+  kGenSineL,          // 仅左路正弦 (硬左声像, 显示 -45° 分界)
+  kGenSineR,          // 仅右路正弦 (硬右声像)
+  kGenSine90,         // 右路超前 90° (相关性 = 0 的极限去相关纯音)
+  kGenSinePanSweep,   // 同相正弦, 声像左极↔右极往返摆动 (周期 = sweepSec)
+  kGenSinePhaseSweep, // 右路相对相位 ±180° 往返摆动 (逐样本方位扫遍全扇)
+  kGenDualAzimuth,    // 双频双方位: 两个同相正弦, 各自固定偏左/偏右方位
+  kGenHarmonicAnti,   // 基波同相 + 二次谐波反相 (频带分离诊断)
   kGenSweepLog,       // 对数扫频 (频响平坦度 / 金字塔交叠台阶)
-  kGenWhiteNoise,     // 白噪 (统计平坦度)
-  kGenPinkNoise,      // 粉噪 -3 dB/oct (斜率正确性)
+  kGenWhiteNoise,     // 白噪, 左右独立 (统计平坦度)
+  kGenPinkNoise,      // 粉噪 -3 dB/oct, 左右独立 (斜率正确性)
+  kGenNoiseC,         // 双路同源白噪 (完全相关, 声像恒为正中)
+  kGenPinkC,          // 双路同源粉噪 (完全相关)
   kGenImpulseTrain,   // 周期脉冲 (时间分辨率 / 上升沿)
-  kGenDirac,          // 单次冲激 (窗泄漏形状 / 时间对齐)
   kGenTwoTone,        // 双音 (相邻频带分辨与掩蔽)
   kGenSquare,         // 带限方波 (奇次谐波分辨)
   kGenSilence,        // 静音 (底噪 / 数值下限)
-  kGenDC,             // 直流 (DC 泄漏)
   kNumGenSignals
 };
 
 inline const char *TestSignalName(int type) {
   static const char *const kNames[kNumGenSignals] = {
-      "OFF",     "SINE BIN CTR", "SINE BIN MID", "SINE",    "LOG SWEEP", "WHITE", "PINK",
-      "IMPULSE", "DIRAC",        "TWO TONE",     "SQUARE",  "SILENCE",   "DC"};
+      "OFF",        "SINE",       "SINE L",     "SINE R",      "SINE 90°",
+      "PAN SWEEP",  "PHASE SWEEP", "DUAL AZ",   "HARM ANTI",   "LOG SWEEP",
+      "WHITE",      "PINK",       "NOISE C",    "PINK C",      "IMPULSE",
+      "TWO TONE",   "SQUARE",     "SILENCE"};
   return kNames[(unsigned)type < (unsigned)kNumGenSignals ? type : 0];
 }
 
@@ -54,7 +65,7 @@ public:
     double freqHz = 1000.0; // 正弦/方波/双音基频, 或脉冲串速率 (Hz)
     double levelDb = -12.0; // 输出电平 (dBFS 峰值)
     int fftSize = 4096;     // bin 吸附用的 FFT 网格尺寸 (bin = sr / fftSize)
-    double sweepSec = 4.0;  // 对数扫频周期 (s)
+    double sweepSec = 4.0;  // 对数扫频周期 / 摆动信号往返周期 (s)
     double sweepF0 = 20.0;
     double sweepF1 = 20000.0;
   };
@@ -87,19 +98,14 @@ public:
   // 得到的就是"从 t=0 起的确定性信号段", 换引擎重算可严格对比。
   void Restart() {
     mIndex = 0;
-    mDiracFired = false;
     mImpulseIdx = (uint64_t)-1; // 使 t=0 处立即触发第一次脉冲
     mPinkL.fill(0.0);
     mPinkR.fill(0.0);
     Reseed();
   }
 
-  // 当前信号在给定采样率下的实际频率 (用于 UI 显示吸附后的结果)
-  double EffectiveFreqHz(double sr) const {
-    if (mCfg.type == kGenSineBinCenter || mCfg.type == kGenSineBinBetween)
-      return SnapFreq(mCfg.type, mCfg.freqHz, sr, mCfg.fftSize);
-    return mCfg.freqHz;
-  }
+  // 当前信号实际频率 (用于 UI 显示; 正弦类 = freqHz, 噪声类不适用)
+  double EffectiveFreqHz(double) const { return mCfg.freqHz; }
 
   template <typename T> void Fill(T *dstL, T *dstR, int n, double sr, bool advance = true) {
     if (!Active() || n <= 0 || sr <= 0.0)
@@ -109,8 +115,7 @@ public:
     const double invSr = 1.0 / sr;
     const double nyq = 0.5 * sr;
 
-    // 频率吸附: bin 中心 = k·sr/N, bin 之间 = (k+0.5)·sr/N
-    const double f = std::clamp(SnapFreq(mCfg.type, mCfg.freqHz, sr, mCfg.fftSize), 0.0, nyq * 0.95);
+    const double f = std::clamp(mCfg.freqHz, 0.0, nyq * 0.95);
     const double w = kTwoPi * f;
 
     for (int i = 0; i < n; ++i) {
@@ -118,10 +123,71 @@ public:
       double l = 0.0, r = 0.0;
 
       switch (mCfg.type) {
-        case kGenSineBinCenter:
-        case kGenSineBinBetween:
         case kGenSine: {
           l = r = amp * std::sin(w * t);
+          break;
+        }
+        case kGenSineL: {
+          l = amp * std::sin(w * t);
+          r = 0.0;
+          break;
+        }
+        case kGenSineR: {
+          l = 0.0;
+          r = amp * std::sin(w * t);
+          break;
+        }
+        case kGenSine90: {
+          // 右路超前 90°: 相关性 = 0, 逐样本方位以 2 倍频绕全周旋转 → 显示在
+          // 两侧翼往返摊开 (极限去相关纯音的形态对比点)
+          l = amp * std::sin(w * t);
+          r = amp * std::cos(w * t);
+          break;
+        }
+        case kGenSinePanSweep: {
+          // 同相恒功率摆: α = (π/4)(1−cos 2πt/T) ∈ [0, π/2] 往返
+          // (l = cos α·s, r = sin α·s) → 模型方位 θ = 2α−π/2 ∈ [−90°, +90°],
+          // 光束在中央 ±45° 分界间连续往返。
+          const double period = std::max(mCfg.sweepSec, 0.05);
+          const double alpha = 0.25 * kPi * (1.0 - std::cos(kTwoPi * std::fmod(t, period) / period));
+          const double s = std::sin(w * t);
+          l = amp * std::cos(alpha) * s;
+          r = amp * std::sin(alpha) * s;
+          break;
+        }
+        case kGenSinePhaseSweep: {
+          // 右路相对相位 φ = (1−cos 2πt/T)·π − π ∈ [−π, π] 往返: 同相 →
+          // 硬反相 (φ=±π) → 同相, 逐样本方位扫遍全扇两个侧翼 (反相带行为对比点)
+          const double period = std::max(mCfg.sweepSec, 0.05);
+          const double phi = (1.0 - std::cos(kTwoPi * std::fmod(t, period) / period)) * kPi - kPi;
+          l = amp * std::sin(w * t);
+          r = amp * std::sin(w * t + phi);
+          break;
+        }
+        case kGenDualAzimuth: {
+          // 双频双方位: f 与 3.5f 两个同相正弦, 幅度权重 0.9/0.4 (归一化峰值 1)。
+          // 两音分量各自固定在模型方位 ±42° (显示 ±21°); 混合后逐样本瞬时方位
+          // 随拍频在两音间摆动, 且 l·r 变号的瞬间必然扫进反相区 (双频混合的
+          // 数学必然) → 我们画成覆盖 ±21° 并向反相区延伸的不均匀大片;
+          // 频带级参考 (每带一个元素) 应只在同相区画两条分离线 —— 粒度判据。
+          const double f2 = std::min(f * 3.5, nyq * 0.95);
+          const double w2 = kTwoPi * f2;
+          constexpr double a1 = 0.9 / 1.3, a2 = 0.4 / 1.3;
+          const double s1 = std::sin(w * t), s2 = std::sin(w2 * t);
+          l = amp * (a1 * s1 + a2 * s2);
+          r = amp * (a2 * s1 + a1 * s2);
+          break;
+        }
+        case kGenHarmonicAnti: {
+          // 基波同相同幅 + 二次谐波反相 (0.588/0.412 加权, 峰值不超 1):
+          // 谐波分量反相 → 模型方位 ±180° (显示基线两端), 基波 → 0°。逐样本
+          // 瞬时方位随两音相对幅度在 0° 与 ±180° 间连续扫动 → 我们画成从竖束
+          // 到两侧的大片; 频带级参考应画成正中竖线 + 侧翼反相线。
+          const double w2 = 2.0 * w;
+          constexpr double a1 = 1.0 / 1.7, a2 = 0.7 / 1.7;
+          const double s1 = std::sin(w * t), s2 = std::sin(w2 * t);
+          l = amp * (a1 * s1 + a2 * s2);
+          r = amp * (a1 * s1 - a2 * s2);
           break;
         }
         case kGenSweepLog: {
@@ -145,19 +211,24 @@ public:
           r = amp * Pink(mPinkR, White(mRngR));
           break;
         }
+        case kGenNoiseC: {
+          // 同源白噪: L = R 完全相关, 逐样本方位恒为 0 → 正中竖束
+          // (与 WHITE 的"独立流全扇铺开"成对比)
+          const double n = White(mRngL);
+          l = r = amp * n;
+          break;
+        }
+        case kGenPinkC: {
+          const double n = Pink(mPinkL, White(mRngL));
+          l = r = amp * n;
+          break;
+        }
         case kGenImpulseTrain: {
           const double rate = std::clamp(mCfg.freqHz, 0.5, 50.0);
           const uint64_t idx = (uint64_t)(t * rate);
           const bool fire = (idx != mImpulseIdx);
           if (fire)
             mImpulseIdx = idx;
-          l = r = fire ? amp : 0.0;
-          break;
-        }
-        case kGenDirac: {
-          const bool fire = !mDiracFired;
-          if (fire)
-            mDiracFired = true;
           l = r = fire ? amp : 0.0;
           break;
         }
@@ -175,9 +246,6 @@ public:
         case kGenSilence:
           l = r = 0.0;
           break;
-        case kGenDC:
-          l = r = amp;
-          break;
         default:
           l = r = 0.0;
           break;
@@ -191,16 +259,9 @@ public:
   }
 
 private:
+  static constexpr double kPi = 3.14159265358979323846;
   static constexpr double kTwoPi = 6.283185307179586476925286766559;
   static constexpr double kFourOverPi = 1.2732395447351626861510701069801;
-
-  static double SnapFreq(int type, double freqHz, double sr, int fftSize) {
-    if (type != kGenSineBinCenter && type != kGenSineBinBetween)
-      return freqHz;
-    const double binHz = sr / (double)std::max(fftSize, 16);
-    const double k = std::floor(freqHz / binHz + 0.5);
-    return (type == kGenSineBinCenter ? k : k + 0.5) * binHz;
-  }
 
   static inline uint32_t Splitmix32(uint32_t x) {
     x += 0x9E3779B9u;
@@ -270,7 +331,6 @@ private:
   std::array<double, 7> mPinkR{};
   uint64_t mIndex = 0;
   uint64_t mImpulseIdx = (uint64_t)-1;
-  bool mDiracFired = false;
 };
 
 } // namespace orm
