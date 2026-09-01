@@ -52,9 +52,15 @@ add_executable(narrator_test tests/narrator_test.cpp
   plugins/Narrator/src/dsp/SamEngine.cpp
   plugins/Narrator/src/dsp/Tms5220Engine.cpp
   plugins/Narrator/src/dsp/Tms5110Engine.cpp
+  plugins/Narrator/src/dsp/TsiS14001Engine.cpp
+  plugins/Narrator/src/dsp/Sp0256Engine.cpp
+  plugins/Narrator/src/dsp/Cts256aEngine.cpp
+  plugins/Narrator/src/dsp/cts256a/Tms7000Cpu.cpp
+  plugins/Narrator/src/dsp/DectalkEngine.cpp
   plugins/Narrator/src/dsp/sam/sam.c
   plugins/Narrator/src/dsp/sam/render.c
   plugins/Narrator/src/dsp/sam/reciter.c)
+target_sources(narrator_test PRIVATE $<TARGET_OBJECTS:orm_dectalk_core>)
 target_include_directories(narrator_test PRIVATE plugins/Narrator/src/dsp)
 target_compile_features(narrator_test PRIVATE cxx_std_17)
 add_test(NAME narrator_test COMMAND narrator_test)

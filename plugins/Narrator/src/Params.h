@@ -5,7 +5,7 @@
 
 enum EParams
 {
-  kEngine = 0,  // 合成引擎: 0=SAM 1=TMS 2=TSI 3=SP0256
+  kEngine = 0,  // 合成引擎: 0=SAM 1=TMS 2=TSI 3=SP0256 4=DECTALK
   kMapMode,     // 映射模式: 0=PHRASE 单句变调 1=BANK 逐键绑定
   kBaseKey,     // 触发基准键 (PHRASE 模式音高偏移的 0 点)
   // ---- SAM 专属音色参数 (与 TMS 解耦, 各引擎独立存取) ----
@@ -23,10 +23,13 @@ enum EParams
   // ---- SP0256 专属 (与 SAM/TMS/TSI 解耦) ----
   kSp0256Speed, // SP0256 XTAL 时钟缩放 (值/72 = 倍数, 1.0 = 3.12MHz; 越大越快越高)
   kSp0256Voice, // SP0256 语音版本 (见 kSp0256* 常量)
+  // ---- DECTALK 专属 (与 SAM/TMS/TSI/SP0256 解耦) ----
+  kDectalkVoice, // DECtalk 音色 (见 orm::kDectalk* 常量, 0=Paul)
+  kDectalkRate,  // DECtalk 说话速率 (75..600, 引擎原生 ≈ 180)
+  kDectalkPitch, // DECtalk 平均音高 AP (Hz, 0 = 音色原生)
   // ---- 通用 (各引擎共用) ----
   kAttack,      // 触发起音 ms
   kRelease,     // 松键释放 ms
-  kRetrig,      // 重复 note-on 是否从头重放
   kMono,        // 单音 (true) / 复音 (false)
   kGain,        // 输出电平 dB
   kNumParams
@@ -58,11 +61,11 @@ enum
   kNumS14001Sets = 9
 };
 
-// SP0256 语音版本索引 (kSp0256Voice) — 顺序即 SP0256 语音选择段的顺序
+// SP0256 输入模式索引 (kSp0256Voice) — 顺序即 SP0256 选择段的顺序 (与 SAM 控件一致)
 enum
 {
-  kSp0256Al2 = 0,   // AL2 Narrator: 59 allophone + 5 停顿
-  kSp0256Intelliv = 1, // 012 Intellivoice: 43 单词 (数字/短语)
+  kSp0256Text = 0,    // 文本模式: 英文文本经 CTS256A-AL2 规则转写 (原 TTS 档)
+  kSp0256Phoneme = 1, // 音素模式: AL2 allophone 标签 + 012 单词标签 (原 AL2/012 合并, 无数字码)
   kNumSp0256 = 2
 };
 

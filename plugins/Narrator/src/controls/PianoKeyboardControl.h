@@ -14,12 +14,12 @@ BEGIN_IPLUG_NAMESPACE
 BEGIN_IGRAPHICS_NAMESPACE
 
 // 屏幕钢琴键盘: 宿主 MIDI 回显 + 鼠标点击触发 (经 SendMidiMsgFromUI)。
-// 琴键范围固定 C2(36)..C7(96), 与 960 宽窗口匹配。
+// 琴键范围固定 C2(36)..C6(84), 与 960 宽窗口匹配。
 class PianoKeyboardControl : public IControl
 {
 public:
   static constexpr int kLowNoteDefault = 36;  // C2
-  static constexpr int kHighNoteDefault = 96; // C7
+  static constexpr int kHighNoteDefault = 84; // C6
   static constexpr int kMsgTagNoteOn = 1;
   static constexpr int kMsgTagNoteOff = 2;
 

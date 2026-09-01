@@ -6,7 +6,7 @@ Open Realtime Music Tools （开源实时音乐工具），启发自 GRM Tools�
 |---|---|---|
 | BandPass | 效果器 | 双通道带通/带阻，启自 GRM Tools BandPass |
 | Analyzer | 分析器 | 频谱/响度/立体声场测量 |
-| Narrator | 乐器 | 复古 TTS 语音合成器（MIDI 触发说话），首个引擎为 SAM；**GPL 分发** |
+| Narrator | 乐器 | 复古 TTS 语音合成器（MIDI 触发说话）。引擎：SAM 1979/82、TMS5220、TMS5110、TSI S14001A、SP0256-AL2、DECtalk 4.x；**GPL 分发** |
 
 ## 构建
 
@@ -53,7 +53,9 @@ sudo xattr -r -d com.apple.quarantine /Applications/ORMBandPass.app
 | 项目 | 许可 | 用途 |
 |---|---|---|
 | [iPlug2](https://github.com/iPlug2/iPlug2) | MIT | 插件框架（BandPass / Analyzer / 公共 UI） |
-| [s-macke/SAM](https://github.com/s-macke/SAM) | 无许可证| SAM 内核|
+| [s-macke/SAM](https://github.com/s-macke/SAM) | 无许可证 | SAM 内核 |
+| [MAME](https://github.com/mamedev/mame) | GPLv2+ | TMS5220 / TMS5110 / S14001A 合成参数 |
+| [DECtalkMini / DECtalk 4.x](https://github.com/dectalk/DECtalkMini) |  abandonware | DECtalk 4.x |
 
 ### 算法参考
 

@@ -474,12 +474,13 @@ int CodeForLabel(const sp0256::Variant& V, const std::string& upper)
   return -1;
 }
 
-// 连续渲染一段码序列: 词间无停顿 (命令即时重装), 词尾滤波器振铃尾
-bool RenderCodes(const sp0256::Variant& V, const std::vector<int>& codes,
+// 连续渲染一组 (ROM, 码): 同源码连续渲染 (滤波器跨词持续), 换源时重置芯片
+// 起新语音段 (混合 AL2 音素与 012 单词时自然衔接); 词尾滤波器振铃尾。
+bool RenderItems(const std::vector<std::pair<const sp0256::Variant*, int>>& items,
                  std::vector<float>& out)
 {
   Chip chip;
-  chip.rom = V.data;
+  chip.rom = nullptr;
   chip.Reset();
 
   out.clear();
@@ -496,9 +497,16 @@ bool RenderCodes(const sp0256::Variant& V, const std::vector<int>& codes,
 
     if (chip.halted && chip.lrq) // 真正停机 (无挂起命令)
     {
-      if (tok < codes.size())
+      if (tok < items.size())
       {
-        chip.Start((uint8_t) codes[tok++]);
+        const sp0256::Variant* V = items[tok].first;
+        if (chip.rom != V->data)
+        {
+          chip.rom = V->data;
+          chip.Reset(); // 跨 ROM: 新语音段重新起振
+        }
+        chip.Start((uint8_t) items[tok].second);
+        ++tok;
         continue; // 下一轮 micro() 采用命令
       }
       if (!tail)
@@ -543,88 +551,93 @@ bool Sp0256Engine::Render(const std::string& text, int variant, float speedScale
   out.clear();
   // 采样数与时标无关 (芯片周期数以采样计); speedScale 只经 RateFor 影响时长/音高
   (void) speedScale;
-  if (variant < 0 || variant >= sp0256::kNumVariants)
-    return false;
-  const sp0256::Variant& V = sp0256::kVariants[variant];
 
-  // 分词: 标签 / 数字码 (0..63) / (AL2) 预设短语
-  std::vector<int> codes;
-  std::string token;
-  for (size_t i = 0; i <= text.size(); ++i)
+  std::vector<std::pair<const sp0256::Variant*, int>> items;
+
+  if (variant == kPhonemeVariant)
   {
-    const bool sep = (i == text.size()) || std::isspace((unsigned char) text[i]);
-    if (sep)
+    // 音素模式: 标签输入 (AL2 allophone / 012 单词 / 预设短语), 不接受数字码;
+    // 按标签来源记录 (ROM, 码), 未收录 token 与数字码一样跳过。
+    const sp0256::Variant& VAl2 = sp0256::kVariants[kAl2Rom];
+    const sp0256::Variant& V012 = sp0256::kVariants[kIntellivRom];
+
+    std::string token;
+    for (size_t i = 0; i <= text.size(); ++i)
     {
-      if (!token.empty())
+      const bool sep = (i == text.size()) || std::isspace((unsigned char) text[i]);
+      if (sep)
       {
-        std::string up = token;
-        token.clear();
-        for (char& c : up)
-          c = (char) std::toupper((unsigned char) c);
+        if (!token.empty())
+        {
+          std::string up = token;
+          token.clear();
+          for (char& c : up)
+            c = (char) std::toupper((unsigned char) c);
 
-        bool digits = !up.empty();
-        for (char c : up)
-          if (!std::isdigit((unsigned char) c))
+          int code = CodeForLabel(VAl2, up);
+          if (code >= 0)
           {
-            digits = false;
-            break;
+            items.push_back({&VAl2, code});
           }
-
-        if (digits)
-        {
-          const int num = std::atoi(up.c_str());
-          if (num >= 0 && num < 64)
-            codes.push_back(num);
-          continue;
-        }
-
-        const int labelCode = CodeForLabel(V, up);
-        if (labelCode >= 0)
-        {
-          codes.push_back(labelCode);
-          continue;
-        }
-
-        if (variant == 0) // AL2: 预设短语展开
-        {
-          for (int p = 0; p < kNumPhrases; p++)
+          else if ((code = CodeForLabel(V012, up)) >= 0)
           {
-            if (up == kPhrases[p].name)
+            items.push_back({&V012, code});
+          }
+          else
+          {
+            // AL2 预设英语短语展开为 allophone 串 (不覆盖既有标签)
+            for (int p = 0; p < kNumPhrases; p++)
             {
-              std::string ph = kPhrases[p].allophones, sub;
-              for (size_t j = 0; j <= ph.size(); ++j)
+              if (up == kPhrases[p].name)
               {
-                const bool s2 = (j == ph.size()) || std::isspace((unsigned char) ph[j]);
-                if (s2)
+                std::string ph = kPhrases[p].allophones, sub;
+                for (size_t j = 0; j <= ph.size(); ++j)
                 {
-                  if (!sub.empty())
+                  const bool s2 = (j == ph.size()) || std::isspace((unsigned char) ph[j]);
+                  if (s2)
                   {
-                    const int subCode = CodeForLabel(V, sub);
-                    if (subCode >= 0)
-                      codes.push_back(subCode);
-                    sub.clear();
+                    if (!sub.empty())
+                    {
+                      const int subCode = CodeForLabel(VAl2, sub);
+                      if (subCode >= 0)
+                        items.push_back({&VAl2, subCode});
+                      sub.clear();
+                    }
+                  }
+                  else
+                  {
+                    sub.push_back((char) std::toupper((unsigned char) ph[j]));
                   }
                 }
-                else
-                {
-                  sub.push_back((char) std::toupper((unsigned char) ph[j]));
-                }
+                break;
               }
-              break;
             }
           }
         }
-        // 未收录 token: 跳过
+        continue;
       }
-      continue;
+      token.push_back((char) std::toupper((unsigned char) text[i]));
     }
-    token.push_back((char) std::toupper((unsigned char) text[i]));
+    if (items.empty())
+      return false;
   }
-  if (codes.empty())
+  else if (variant == kTextVariant)
+  {
+    // 文本模式: 英文文本 -> CTS256A-AL2 控制器转 allophone 码, 用 AL2 ROM 渲染
+    std::vector<int> codes;
+    if (!Cts256aEngine::Convert(text, codes))
+      return false;
+    const sp0256::Variant& VAl2 = sp0256::kVariants[kAl2Rom];
+    for (int c : codes)
+      items.push_back({&VAl2, c});
+  }
+  else
+  {
     return false;
+  }
 
   std::vector<float> raw;
-  if (!RenderCodes(V, codes, raw) || raw.empty())
+  if (!RenderItems(items, raw) || raw.empty())
     return false;
 
   out.swap(raw);

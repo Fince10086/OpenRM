@@ -87,8 +87,9 @@ public:
 class FlatSegmentControl : public IControl {
 public:
   FlatSegmentControl(const IRECT &bounds, std::vector<std::string> labels,
-                     std::function<void(int)> onPick, int activeIdx)
-      : IControl(bounds), mLabels(std::move(labels)), mOnPick(std::move(onPick)), mActive(activeIdx) {}
+                     std::function<void(int)> onPick, int activeIdx, float fontSize = 20.f)
+      : IControl(bounds), mLabels(std::move(labels)), mOnPick(std::move(onPick)), mActive(activeIdx),
+        mFontSize(fontSize) {}
 
   void SetActive(int idx) {
     if (mActive == idx)
@@ -131,7 +132,7 @@ public:
       const bool hover = GetMouseIsOver() && SegmentHit(i, b, w);
       const IColor fill = active ? COL_900() : hover ? COL_500() : COL_300();
       g.FillRect(fill, seg);
-      IText t(20, active ? COL_100() : COL_900(), kFontSemiBold, EAlign::Center, EVAlign::Middle);
+      IText t(mFontSize, active ? COL_100() : COL_900(), kFontSemiBold, EAlign::Center, EVAlign::Middle);
       g.DrawText(t, mLabels[i].c_str(), seg);
     }
   }
@@ -144,6 +145,7 @@ private:
   std::vector<std::string> mLabels;
   std::function<void(int)> mOnPick;
   int mActive = 0;
+  float mFontSize = 20.f;
   float mMouseX = -1.f;
 
 public:

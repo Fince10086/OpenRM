@@ -64,6 +64,10 @@ enum EText {
   kTxtClickToTalk,   // 点击键盘或按宿主 MIDI 触发
   kTxtEmptyPhrase,   // (空) / (empty)
   kTxtDuration,      // %0.2f s (时长标签)
+  kTxtNative,        // native / 原生 (DECTalk 音高 0 = 音色原生)
+  kTxtTipDectalkVoice,
+  kTxtTipDectalkRate,
+  kTxtTipDectalkPitch,
   kNumTexts
 };
 
@@ -122,6 +126,10 @@ inline const char *Tr(int id, int lang) {
           "Press PLAY or hit a key to hear it",
           "(empty)",
           "%.2f s",
+          "Native",
+          "DECtalk voice (np=Paul nb=Betty nh=Harry nf=Frank nd=Dennis nk=Kit nu=Ursula nr=Rita nw=Wendy)",
+          "DECtalk speaking rate in words per minute (engine native ~180)",
+          "DECtalk average pitch AP in Hz (0 = voice native)",
       },
       {
           // ZH
@@ -176,6 +184,10 @@ inline const char *Tr(int id, int lang) {
           "按试听或任意琴键试听",
           "（空）",
           "%.2f 秒",
+          "原生",
+          "DECtalk 音色 (np=Paul nb=Betty nh=Harry nf=Frank nd=Dennis nk=Kit nu=Ursula nr=Rita nw=Wendy)",
+          "DECtalk 说话速率 (词/分钟, 引擎原生 ≈ 180)",
+          "DECtalk 平均音高 AP (Hz, 0 = 音色原生)",
       },
   };
   return kTable[lang][id];
