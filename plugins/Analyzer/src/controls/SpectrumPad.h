@@ -332,26 +332,38 @@ private:
     const IRECT plot = mRECT.GetReducedFromRight(kMeterStripW)
                            .GetPixelAligned(g.GetScreenScale() * g.GetDrawScale());
 
-    // hover 准线: 竖线 (1px) 在光标 x, 标签位于竖线顶部右侧显示 Hz 值;
-    // 横线 (1px) 在光标 y, 标签位于横线右端上侧显示 dB 值。
-    // 有效区横向放宽到整个控件右缘 (含 L/R 电平表与独立 VU 表): 横线贯穿频谱并延伸,
-    // 光标移到电平表上时准线仍激活; 频率/音高读数只在频谱区内计算和绘制。
-    // dBFS 模式下 L/R 条顶部为 over LED 区 (仅限 L/R 条横向范围), 光标位于其内时
-    // 整组准线不显示; 频谱区域内 0 dB 以上照常显示。
-    // 标签矩形先算好传给刻度绘制 (DrawDbGrid/DrawFreqGrid): 与固定刻度重叠时
-    // 隐藏那一个被重叠的刻度, 让位给准线读数。
+    // hover 准线分三个互不相通的刻度域 (刻度值不互通, 横向准线只贯穿本域):
+    //   频谱 + L/R 电平条 (dBTP/dBFS): 共用同一 dB 映射 —— 横线从频谱左缘贯穿到
+    //     L/R 条右缘, 一份 dB 动态读数 (频谱右缘, 与固定 dB 刻度避让);
+    //   独立 VU 表: 横线只在本域内, 动态读数 = VU 值, 放在条左侧 VU 刻度列内
+    //     (与固定刻度同位置同样式, 顶部放不下翻到线下侧);
+    //   响度 M/S/I 条: 横线只在本域内, 动态读数 = LUFS 值 (目标锚定窗, 与条体
+    //     刻度同一映射), 放在条左侧 LUFS 刻度列内。
+    // VU/LUFS 动态读数比固定刻度宽, 左缘会少量越入邻域条体, 垫一块 COL_100
+    //   芯片 (纯色填充, 无描边) 保证可读; 芯片与本域固定刻度重叠时隐藏该刻度
+    //   让位 (与频谱 dB/Hz 刻度避让同策略)。
+    // 竖线 + 频率/音高读数只在频谱区内; dBFS 模式下 L/R 条顶部 over LED 区内
+    // 整组准线不显示。
+    const float zoneLr = LrZoneR(plot); // 频谱+L/R 域右缘 (L/R 条右缘)
+    const float zoneVu = VuZoneR(plot); // VU 域右缘 (VU 条右缘)
     const bool ledArea = (mMeterMode == 1) && (mHoverX > plot.R) &&
-                         (mHoverX <= plot.R + 2.f * kGainBarW) && (mHoverY < YOf(plot, 0.f) - 3.f);
-    const bool inPlot = mHoverActive && !ledArea && mHoverX >= plot.L && mHoverX <= mRECT.R &&
-                        mHoverY >= plot.T && mHoverY <= plot.B;
-    const bool inSpectrum = inPlot && mHoverX <= plot.R;
-    IRECT hzSkip, dbSkip; // 默认空矩形 = 不跳过任何刻度
+                         (mHoverX <= zoneLr) && (mHoverY < YOf(plot, 0.f) - 3.f);
+    const bool inStrip = mHoverActive && !ledArea && mHoverX >= plot.L && mHoverX <= mRECT.R &&
+                         mHoverY >= plot.T && mHoverY <= plot.B;
+    const bool inSpectrum = inStrip && mHoverX <= plot.R;
+    const bool inZone0 = inStrip && mHoverX <= zoneLr;
+    const bool inZone1 = inStrip && mHoverX > zoneLr && mHoverX <= zoneVu;
+    const bool inZone2 = inStrip && mHoverX > zoneVu;
+    IRECT hzSkip, dbSkip, vuSkip, lufsSkip; // 默认空矩形 = 不跳过任何刻度
     char hzBuf[16] = "", dbBuf[16] = "";
-    char noteBuf[8];   // 音高标签 (C4 等最近音名), inPlot 内计算
-    IText hzText, dbText;
-    IRECT pitchR, freqR; // 音高/频率标签绘制矩形, inPlot 内计算
+    char vuBuf[16] = "", lufsBuf[16] = "";
+    char noteBuf[8];   // 音高标签 (C4 等最近音名), inSpectrum 内计算
+    IText hzText, dbText, vuText, lufsText;
+    IRECT pitchR, freqR;    // 音高/频率标签绘制矩形, inSpectrum 内计算
+    IRECT vuBox, lufsBox;   // VU/LUFS 动态读数文字框 (刻度列内, 刻度样式)
+    IRECT vuChip, lufsChip; // VU/LUFS 动态读数芯片 (文字框外扩 2px)
     float xLine = 0.f, yLine = 0.f;
-    if (inPlot) {
+    if (inStrip) {
       xLine = mHoverX;
       yLine = mHoverY;
 
@@ -365,9 +377,41 @@ private:
           std::snprintf(hzBuf, sizeof(hzBuf), "%.2f kHz", hz / 1000.0);
       }
 
-      // y -> dB (mBottomDb..kTopDb)
-      const float db = mBottomDb + (kTopDb - mBottomDb) * (plot.B - yLine) / plot.H();
-      std::snprintf(dbBuf, sizeof(dbBuf), "%.1f dB", db);
+      if (inZone0) {
+        // y -> dB (mBottomDb..kTopDb, 频谱与 L/R 条共用同一映射)
+        const float db = mBottomDb + (kTopDb - mBottomDb) * (plot.B - yLine) / plot.H();
+        std::snprintf(dbBuf, sizeof(dbBuf), "%.1f dB", db);
+      } else if (inZone1) {
+        // y -> VU (满高 -20..+3 VU, 与 VU 条同一映射); 读数放条左侧刻度列, 刻度样式
+        const float vu = kVuBottomVU + (plot.B - yLine) / plot.H() * (kVuTopDb - kVuBottomVU);
+        std::snprintf(vuBuf, sizeof(vuBuf), "%+.1f", vu);
+        vuText = IText(14, COL_700(), kFontRegular, EAlign::Far, EVAlign::Bottom);
+        const float scaleVu = LrZoneR(plot);
+        if (yLine - kLabelH - 1.f >= plot.T)
+          vuBox = IRECT(scaleVu, yLine - kLabelH - 1.f, scaleVu + kVuScaleW - kTickRight, yLine - 1.f);
+        else
+          vuBox = IRECT(scaleVu, yLine + 1.f, scaleVu + kVuScaleW - kTickRight, yLine + 1.f + kLabelH);
+        g.MeasureText(vuText, vuBuf, vuBox);
+        vuChip = vuBox.GetPadded(2.f);
+        vuSkip = vuChip;
+      } else {
+        // y -> LUFS (目标锚定窗, 与条体刻度同一映射); 读数放条左侧刻度列, 刻度样式
+        float topL, botL;
+        LoudWindow(topL, botL);
+        const float lufs = botL + (plot.B - yLine) / plot.H() * (topL - botL);
+        std::snprintf(lufsBuf, sizeof(lufsBuf), "%+.1f", lufs);
+        lufsText = IText(14, COL_700(), kFontRegular, EAlign::Far, EVAlign::Bottom);
+        const float scaleLufs = VuZoneR(plot);
+        if (yLine - kLabelH - 1.f >= plot.T)
+          lufsBox = IRECT(scaleLufs, yLine - kLabelH - 1.f, scaleLufs + kLufsScaleW - kTickRight,
+                          yLine - 1.f);
+        else
+          lufsBox = IRECT(scaleLufs, yLine + 1.f, scaleLufs + kLufsScaleW - kTickRight,
+                          yLine + 1.f + kLabelH);
+        g.MeasureText(lufsText, lufsBuf, lufsBox);
+        lufsChip = lufsBox.GetPadded(2.f);
+        lufsSkip = lufsChip;
+      }
 
       if (inSpectrum) {
         // Hz/音高标签: 与顶部频率刻度同布局同样式, 正常状态音高在准线左侧、频率在准线右侧,
@@ -399,31 +443,40 @@ private:
         hzSkip = pitchR.Union(freqR); // 与固定频率刻度避让: 两标签取并集矩形
       }
 
-      // dB 标签: 与右侧 dB 刻度同布局同样式 (文字在横线上方, 右对齐);
-      // 顶部放不下时翻转到线下侧。
-      dbText = IText(14, COL_700(), kFontRegular, EAlign::Far, EVAlign::Bottom);
-      if (yLine - kLabelH - 1.f >= plot.T)
-        dbSkip = IRECT(plot.R - 52.f, yLine - kLabelH - 1.f, plot.R - kTickRight, yLine - 1.f);
-      else
-        dbSkip = IRECT(plot.R - 52.f, yLine + 1.f, plot.R - kTickRight, yLine + 1.f + kLabelH);
+      if (inZone0) {
+        // dB 标签: 与右侧 dB 刻度同布局同样式 (文字在线上方, 右对齐);
+        // 顶部放不下时翻转到线下侧。
+        dbText = IText(14, COL_700(), kFontRegular, EAlign::Far, EVAlign::Bottom);
+        if (yLine - kLabelH - 1.f >= plot.T)
+          dbSkip = IRECT(plot.R - 52.f, yLine - kLabelH - 1.f, plot.R - kTickRight, yLine - 1.f);
+        else
+          dbSkip = IRECT(plot.R - 52.f, yLine + 1.f, plot.R - kTickRight, yLine + 1.f + kLabelH);
+      }
     }
 
     DrawGridLayer(g, plot);
     DrawDbGrid(g, plot, dbSkip);
     DrawFreqGrid(g, plot, hzSkip);
     DrawSpectrum(g, plot);
-    DrawLevelMeter(g, plot);
+    DrawLevelMeter(g, plot, vuSkip, lufsSkip);
 
-    if (inPlot) {
-      // 准线颜色与刻度文字一致 (COL_700), 1px 细线; 最上层绘制, 横线贯穿电平条;
-      // 频率/音高读数只在频谱区内显示 (电平条上无频率意义)
+    if (inZone0) {
+      // 准线颜色与刻度文字一致 (COL_700), 1px 细线; 最上层绘制
       if (inSpectrum) {
         g.DrawLine(COL_700(), xLine, plot.T, xLine, plot.B, nullptr, 1.f);
         g.DrawText(hzText, noteBuf, pitchR);
         g.DrawText(hzText, hzBuf, freqR);
       }
-      g.DrawLine(COL_700(), plot.L, yLine, mRECT.R, yLine, nullptr, 1.f);
+      g.DrawLine(COL_700(), plot.L, yLine, zoneLr, yLine, nullptr, 1.f);
       g.DrawText(dbText, dbBuf, dbSkip);
+    } else if (inZone1) {
+      g.DrawLine(COL_700(), zoneLr, yLine, zoneVu, yLine, nullptr, 1.f);
+      g.FillRect(COL_100(), vuChip);
+      g.DrawText(vuText, vuBuf, vuBox);
+    } else if (inZone2) {
+      g.DrawLine(COL_700(), zoneVu, yLine, mRECT.R, yLine, nullptr, 1.f);
+      g.FillRect(COL_100(), lufsChip);
+      g.DrawText(lufsText, lufsBuf, lufsBox);
     }
   }
 
@@ -629,9 +682,52 @@ private:
     return plot.B - (db - mBottomDb) / (kTopDb - mBottomDb) * plot.H();
   }
 
+  // ── hover 三域几何与固定刻度矩形 ──────────────────────────────────────
+  // 电平条带分三个互不相通的刻度域: 频谱+L/R 条 (共用 dB 映射, 相互贯穿) |
+  // 独立 VU 表 | M/S/I 响度条。固定刻度与 hover 动态读数共用同一矩形公式,
+  // 保证避让与位置永远同源。
+  float LrZoneR(const IRECT &plot) const { return plot.R + 2.f * kGainBarW; }
+  float VuZoneR(const IRECT &plot) const { return LrZoneR(plot) + kVuScaleW + 2.f * kVuBarW; }
+
+  // VU 刻度文字矩形 (DrawVuScale 同式; +3 VU 贴条顶翻到线下侧)
+  IRECT VuTickRect(const IRECT &plot, float vu) const {
+    const float scaleL = LrZoneR(plot);
+    if (vu >= kVuTopDb)
+      return IRECT(scaleL, plot.T + 1.f, scaleL + kVuScaleW - kTickRight, plot.T + 1.f + kLabelH);
+    const float y = plot.B - (vu - kVuBottomVU) / (kVuTopDb - kVuBottomVU) * plot.H();
+    return IRECT(scaleL, y - kLabelH - 1.f, scaleL + kVuScaleW - kTickRight, y - 1.f);
+  }
+
+  // 响度条目标锚定刻度窗: 顶/底 LUFS (目标无效退回固定 -60..0 旧制)
+  void LoudWindow(float &topL, float &botL) const {
+    if (mTarget > -100.f) {
+      topL = mTarget + mScaleOff;
+      botL = mTarget - 2.f * mScaleOff;
+    } else {
+      topL = 0.f;
+      botL = -60.f;
+    }
+  }
+  float LoudYOf(const IRECT &plot, float lufs) const {
+    float topL, botL;
+    LoudWindow(topL, botL);
+    return plot.B - std::clamp((lufs - botL) / (topL - botL), 0.f, 1.f) * plot.H();
+  }
+
+  // LUFS 刻度文字矩形 (DrawLoudBars 同式; 顶刻度贴条顶翻到线下侧)
+  IRECT LufsTickRect(const IRECT &plot, float lufs) const {
+    const float scaleL = VuZoneR(plot);
+    float topL, botL;
+    LoudWindow(topL, botL);
+    if (lufs >= topL)
+      return IRECT(scaleL, plot.T + 1.f, scaleL + kLufsScaleW - kTickRight, plot.T + 1.f + kLabelH);
+    const float y = LoudYOf(plot, lufs);
+    return IRECT(scaleL, y - kLabelH - 1.f, scaleL + kLufsScaleW - kTickRight, y - 1.f);
+  }
+
   // L/R 双电平表条 + 独立 VU 表 (VU 刻度文字画在两者之间的间距内) + over 指示
   // (读数在顶部图例行, 由 ChannelLegendControl 绘制)
-  void DrawLevelMeter(IGraphics &g, const IRECT &plot) {
+  void DrawLevelMeter(IGraphics &g, const IRECT &plot, const IRECT &vuSkip, const IRECT &lufsSkip) {
     IColor cL, cR, cM;
     GetChannelColors(cL, cR, cM);
 
@@ -641,16 +737,15 @@ private:
 
     DrawMeterBar(g, plot, barL, cL, 0);
     DrawMeterBar(g, plot, barR, cR, 1);
-    DrawVuScale(g, plot);
+    DrawVuScale(g, plot, vuSkip);
     DrawVuBar(g, plot);
-    DrawLoudBars(g, plot);
+    DrawLoudBars(g, plot, lufsSkip);
   }
 
   // 独立 VU 表刻度文字: -20/-10/0/+3 (VU), 右对齐 VU 表左缘, 画在 L/R 条与 VU 表
   // 之间的间距内。样式与 dB 刻度一致 (文字在线上方); +3 贴条顶放不下, 翻到线下侧。
-  void DrawVuScale(IGraphics &g, const IRECT &plot) {
-    const float scaleL = plot.R + 2.f * kGainBarW;
-    const IRECT barV(scaleL + kVuScaleW, plot.T, scaleL + kVuScaleW + kVuBarW, plot.B);
+  // skipRect 非空时 (hover 动态读数芯片), 重叠的固定刻度隐藏让位。
+  void DrawVuScale(IGraphics &g, const IRECT &plot, const IRECT &skipRect) {
     const IText t(14, COL_700(), kFontRegular, EAlign::Far, EVAlign::Bottom);
     struct VuTick {
       int vu;
@@ -658,10 +753,9 @@ private:
     };
     static const VuTick kTicks[] = {{-20, "-20"}, {-10, "-10"}, {0, "0"}, {3, "+3"}};
     for (const auto &tk : kTicks) {
-      const float y = barV.B - (tk.vu - kVuBottomVU) / (kVuTopDb - kVuBottomVU) * barV.H();
-      IRECT labelR(scaleL, y - kLabelH - 1.f, scaleL + kVuScaleW - kTickRight, y - 1.f);
-      if (tk.vu == 3)
-        labelR = IRECT(scaleL, plot.T + 1.f, scaleL + kVuScaleW - kTickRight, plot.T + 1.f + kLabelH);
+      const IRECT labelR = VuTickRect(plot, (float)tk.vu);
+      if (!skipRect.Empty() && labelR.Intersects(skipRect))
+        continue;
       g.DrawText(t, tk.txt, labelR);
     }
   }
@@ -790,45 +884,33 @@ private:
   //   目标无效时退回固定 -60..0 旧制。顶部刻度贴条顶翻到线下侧 (与旧 0 刻度同处理)。
   // 语义色改为目标相对 (与 Δ 读数同三段式): ≤目标-1 黄 (偏安静) / |Δ|≤1 绿 (达标) /
   //   ≥目标+1 红 (偏响); 颜色走 satScale 降饱和, 纯黑白主题下自动变灰阶。
-  void DrawLoudBars(IGraphics &g, const IRECT &plot) {
-    const float scaleL = plot.R + 2.f * kGainBarW + kVuScaleW + 2.f * kVuBarW;
+  // skipRect 非空时 (hover 动态读数芯片), 重叠的固定刻度隐藏让位。
+  void DrawLoudBars(IGraphics &g, const IRECT &plot, const IRECT &skipRect) {
+    const float scaleL = VuZoneR(plot);
     const float bar0L = scaleL + kLufsScaleW;
     const IRECT barM(bar0L, plot.T, bar0L + kLoudBarW, plot.B);
     const IRECT barS(barM.R, plot.T, barM.R + kLoudBarW, plot.B);
     const IRECT barI(barS.R, plot.T, barS.R + kLoudBarW, plot.B);
 
-    // 目标锚定刻度窗 (顶/1/3/底 三个刻度值; 目标无效退回固定 -60..0)
+    float topL, botL;
+    LoudWindow(topL, botL);
     const bool tgtValid = mTarget > -100.f;
-    const float off = tgtValid ? mScaleOff : 0.f;
-    const float topL = tgtValid ? mTarget + off : 0.f;
-    const float botL = tgtValid ? mTarget - 2.f * off : -60.f;
-    const float span = topL - botL;
-
-    auto yOfL = [&](float lufs) {
-      return plot.B - std::clamp((lufs - botL) / span, 0.f, 1.f) * plot.H();
-    };
 
     // 刻度文字: 底 (目标-2·off) / 1/3 (目标) / 顶 (目标+off, 贴条顶翻到线下侧)
     const IText t(14, COL_700(), kFontRegular, EAlign::Far, EVAlign::Bottom);
-    const IText flipT(14, COL_700(), kFontRegular, EAlign::Far, EVAlign::Top);
-    auto drawTick = [&](float lufs, bool flip) {
+    const float tickVals[3] = {topL, mTarget, botL};
+    for (const float v : tickVals) {
+      const IRECT labelR = LufsTickRect(plot, v);
+      if (!skipRect.Empty() && labelR.Intersects(skipRect))
+        continue;
       char buf[8];
-      std::snprintf(buf, sizeof(buf), "%d", (int)std::lround(lufs));
-      if (flip)
-        g.DrawText(flipT, buf, IRECT(scaleL, plot.T + 1.f, scaleL + kLufsScaleW - kTickRight,
-                                     plot.T + 1.f + kLabelH));
-      else {
-        const float y = yOfL(lufs);
-        g.DrawText(t, buf, IRECT(scaleL, y - kLabelH - 1.f, scaleL + kLufsScaleW - kTickRight, y - 1.f));
-      }
-    };
-    drawTick(topL, true);
-    drawTick(mTarget, false);
-    drawTick(botL, false);
+      std::snprintf(buf, sizeof(buf), "%d", (int)std::lround(v));
+      g.DrawText(t, buf, labelR);
+    }
 
     // 目标线 (跨 M/S/I 三条), 落在 1/3 高度刻度处
     if (tgtValid) {
-      const float yT = yOfL(mTarget);
+      const float yT = LoudYOf(plot, mTarget);
       g.FillRect(COL_900(), IRECT(barM.L, yT - 1.f, barI.R, yT + 1.f));
     }
 
@@ -847,10 +929,10 @@ private:
     auto drawBar = [&](const IRECT &bar, float lufs, const char *label) {
       g.FillRect(COL_300(), bar);
       if (lufs > -99.f) {
-        const float yTop = yOfL(lufs);
+        const float yTop = LoudYOf(plot, lufs);
         for (int i = 0; i + 1 < nStops; ++i) {
-          const float yA = yOfL(stops[i].lufs);
-          const float yB = yOfL(stops[i + 1].lufs);
+          const float yA = LoudYOf(plot, stops[i].lufs);
+          const float yB = LoudYOf(plot, stops[i + 1].lufs);
           if (yB <= yTop)
             continue;
           const float rT = std::max(yA - seamOv, yTop);
