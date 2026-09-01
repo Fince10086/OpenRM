@@ -296,6 +296,11 @@ public:
   // 14px 文字 (右对齐, 右缘/底缘与刻度文字重合), 只是多出一个背景色块。
   void SetScaleLabelStyle(bool b) { mScaleStyle = b; }
 
+  // 幽灵样式 (电平条底部的 dBTP/dBFS 模式按钮): 无背景方块 —— 按钮退成条上的水印标签,
+  // 不遮挡条体; 文字用条轨浅灰 (COL_300, 与电平条轨道同色), hover 时提亮到刻度灰
+  // (COL_700) 提示可点, 不做任何底面色块 (避免叠层染色底下条体)。
+  void SetGhostStyle(bool b) { mGhostStyle = b; }
+
   // 缩小按钮文字: 默认样式 20px 字在受窄的按钮里放不下时使用
   // (如电平条底部的模式覆盖按钮)。<=0 表示沿用样式原字号。
   void SetTextSize(float px) { mTextSize = px; }
@@ -337,6 +342,17 @@ public:
       return;
     }
 
+    if (mGhostStyle) {
+      // 幽灵样式: 只画模式文字, 无背景; 默认条轨灰, hover 提亮成刻度灰
+      if (idx >= 0 && idx < num) {
+        IText t(12, GetMouseIsOver() ? COL_700() : COL_300(), kFontSemiBold, EAlign::Center, EVAlign::Middle);
+        if (mTextSize > 0.f)
+          t.mSize = mTextSize;
+        g.DrawText(t, mLabels[idx], b);
+      }
+      return;
+    }
+
     if (mScaleStyle) {
       // 刻度样式: 加色半透明背景 (EBlend::Add = 线性提亮, 在频谱上形成光晕方块) +
       // 与刻度文字相同的位置/字号/颜色/对齐。文字矩形 = (L+4, T, R-3, B-1):
@@ -369,6 +385,7 @@ private:
   bool mSplitChannels = false;
   int mSplitIdx = -1;   // 分半样式锚点 (标签位置, 见构造注释)
   bool mScaleStyle = false;
+  bool mGhostStyle = false; // 幽灵样式开关 (SetGhostStyle): 无背景 + 条轨灰文字
   float mTextSize = 0.f; // >0 时覆盖样式字号 (窄按钮场景)
 };
 

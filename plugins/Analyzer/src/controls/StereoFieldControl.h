@@ -86,7 +86,7 @@ public:
     } else if (msgTag == kMsgTagRelease) {
       float v;
       stream.Get(&v, 0);
-      mReleaseSec = std::clamp(v, 0.01f, 8.f); // LIN 最慢档释放达 4.8s
+      mReleaseSec = std::clamp(v, 0.01f, 10.f); // LIN 最慢档释放达 9.6s
     } else if (msgTag == kMsgTagReleaseMode) {
       int v;
       stream.Get(&v, 0);

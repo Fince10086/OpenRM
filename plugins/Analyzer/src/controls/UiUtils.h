@@ -15,6 +15,7 @@ BEGIN_IGRAPHICS_NAMESPACE
 
 // 频谱右侧布局 (Analyzer.cpp 图例与 SpectrumPad 共用):
 // - kGainBarW: 电平表竖条单条横向宽度 (px)；L/R 两条紧挨无间隙, 总宽 = 2 × kGainBarW
+//   (与 VU 条同宽 kVuBarW, 模式按钮以幽灵样式浮在条上, 不再需要更宽底座)
 // - 表头区总宽 = 2 × kGainBarW (dB 刻度文字已移入频谱区域内部右侧)
 // - kVuScaleW: 独立 VU 表左侧刻度文字区宽度 (L/R 条与 VU 表之间的间距, 放 VU 刻度文字)
 // - kVuBarW:   独立 VU 表单条宽度 (L/R 两条并排, 总宽 2 × kVuBarW)
@@ -22,7 +23,7 @@ BEGIN_IGRAPHICS_NAMESPACE
 // - kLoudBarW:  响度条宽度 (M/S/I 三条并排, 总宽 3 × kLoudBarW)
 // 电平区总让宽 (kMeterStripW) = 2×kGainBarW + kVuScaleW + 2×kVuBarW
 //                           + kLufsScaleW + 3×kLoudBarW
-constexpr float kGainBarW = 16.f;
+constexpr float kGainBarW = 14.f;
 constexpr float kVuScaleW = 28.f;
 constexpr float kVuBarW = 14.f;
 constexpr float kLufsScaleW = 28.f;

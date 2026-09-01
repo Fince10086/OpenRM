@@ -103,7 +103,7 @@ int orm::DetectSystemLanguage() {
 }
 
 // 速度档 × 释放模式 → 释放时间常数 (s): LOG 0.2~4s (Pro-Q 五档实测),
-// LIN ≈ LOG×1.2 (0.25~4.8s, 可见落屏时长对齐)
+// LIN = LOG×2 (0.5~9.6s, 匀速回落按 2τ 跨一屏, 体感与对数档位对齐)
 static double SpeedReleaseSec(int speedIdx, int releaseMode) {
   const int s = std::clamp(speedIdx, 0, kNumSpeedOptions - 1);
   return (releaseMode == 1) ? kSpeedReleaseLin[s] : kSpeedReleaseLog[s];
@@ -337,7 +337,7 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     pGraphics->AttachControl(mSpeedBtn);
     bindTip(mSpeedBtn, orm::kTxtTipSpeed);
 
-    // 主频谱绘制区域: 右缘 752 (= 频谱区原右缘 594 + 电平表带总宽 kMeterStripW=158)。
+    // 主频谱绘制区域: 右缘 752 (= 频谱区原右缘 598 + 电平表带总宽 kMeterStripW=154)。
     // 电平表带 (L/R 条 + VU 刻度 + VU 双条 + LUFS 刻度 + M/S/I 响度条) 整体位于频谱
     // 右侧腾出的空区, 频谱区宽度与右侧按键下移前的版本一致, 不因电平条增多而变窄。
     mSpectrumPad = new SpectrumPad(IRECT(20, 58, 752, 328));
@@ -446,13 +446,14 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     pGraphics->AttachControl(loadBtn);
 
     // 电平表模式循环按钮 (dBTP <-> dBFS): 移入电平条内部底部, 显示覆盖在两条电平条之上,
-    // 宽度 = 两条电平条总宽 (2 × kGainBarW), 高度与左侧 Range 循环按钮一致 (kRangeBtnH)。
-    // 本按钮 attach 在 SpectrumPad 之后 → 绘制于电平条上方且命中测试优先;
-    // 底座窄, 缩小文字字号以容纳 "dBTP"/"dBFS"。
+    // 宽度 = 两条电平条总宽 (2 × kGainBarW, 与 VU 条同窄), 高度与左侧 Range 循环按钮一致
+    // (kRangeBtnH)。幽灵样式: 无背景方块, 文字用条轨浅灰, 不遮挡条体。
+    // attach 在 SpectrumPad 之后 → 绘制于电平条上方且命中测试优先。
     mLevelModeBtn =
         new FlatCycleButton(IRECT(plotR, plotB - kRangeBtnH, plotR + 2.f * kGainBarW, plotB), kLevelMode,
                             {"dBTP", "dBFS"}, btnStyle);
-    mLevelModeBtn->SetTextSize(12.f);
+    mLevelModeBtn->SetTextSize(11.f);
+    mLevelModeBtn->SetGhostStyle(true);
     pGraphics->AttachControl(mLevelModeBtn);
     bindTip(mLevelModeBtn, orm::kTxtTipLevelMode);
 
@@ -1143,7 +1144,7 @@ void ORMAnalyzer::OnIdle() {
     const int winVQT = CurrentVQTWindow();
     const int speed = (int)GetParam(kSpeed)->Value();
     const int releaseMode = (int)GetParam(kReleaseMode)->Value();
-    const double release = SpeedReleaseSec(speed, releaseMode); // 速度档×模式派生 (LOG 0.2~4s / LIN 0.25~4.8s)
+    const double release = SpeedReleaseSec(speed, releaseMode); // 速度档×模式派生 (LOG 0.2~4s / LIN 0.5~9.6s)
     const int rangeIdx = (int)std::clamp(std::lround(GetParam(kRange)->Value()), 0L, 2L);
     if (GetParam(kRange)->Value() != (double)rangeIdx)
       SetParamFromEditor(kRange, (double)rangeIdx);

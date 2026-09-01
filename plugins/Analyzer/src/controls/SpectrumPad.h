@@ -148,7 +148,7 @@ public:
     } else if (msgTag == kMsgTagRelease) {
       float releaseSec;
       stream.Get(&releaseSec, 0);
-      mReleaseSec = std::clamp(releaseSec, 0.01f, 8.f); // LIN 最慢档释放达 4.8s
+      mReleaseSec = std::clamp(releaseSec, 0.01f, 10.f); // LIN 最慢档释放达 9.6s
     } else if (msgTag == kMsgTagReleaseMode) {
       int mode;
       stream.Get(&mode, 0);
@@ -981,9 +981,14 @@ private:
       return std::clamp((kTopDb - db) / (kTopDb - mBottomDb), 0.f, 1.f);
     };
 
-    const float satScale = (ThemeSatMax() <= 30)
-                               ? ((float)ThemeSatMax() / 30.f)
-                               : (1.f + (float)(ThemeSatMax() - 30) / 55.f);
+    // 条色随主题饱和档位的映射 (L/R 电平条专用, 锚点分段线性):
+    //   低 (0)   → ×0  去饱和灰阶 (原有);
+    //   中 (15)  → ×0.25 (旧 sat≈7.5 观感, 介于旧低与旧中之间);
+    //   高 (50)  → ×0.5 (旧中档观感, 档位拉满也不再艳过默认)。
+    // 沿用旧公式的话中档 ×0.5 已显鲜艳, 此处整体下调一档。
+    const int satClamp = std::min(ThemeSatMax(), 50);
+    const float satScale = (satClamp <= 15) ? ((float)satClamp / 60.f)
+                                            : (0.25f + (float)(satClamp - 15) / 140.f);
 
     // 渐变停止点 (t: 0=顶部 +9 dB, 1=底部), 条体与峰值保持线共用同一组颜色。
     // 饱和度整体下调 (高饱和区段降 0.07~0.08), 低饱和区段 (绿/青/底部) 亮度明显
