@@ -28,6 +28,7 @@ set(IPLUG_DEPLOY_PLUGINS OFF CACHE BOOL "Deploy handled by OpenRMPlugin.cmake" F
 
 add_subdirectory(plugins/BandPass)
 add_subdirectory(plugins/Analyzer)
+add_subdirectory(plugins/Narrator)
 
 # VST3 SDK 缺失时 iPlug2 只会静默跳过目标, 这里给出明确提示
 if(TARGET ORMBandPass-vst3)
@@ -46,3 +47,12 @@ add_test(NAME dsp_test COMMAND dsp_test)
 add_executable(loudness_test tests/loudness_test.cpp)
 target_compile_features(loudness_test PRIVATE cxx_std_17)
 add_test(NAME loudness_test COMMAND loudness_test)
+
+add_executable(narrator_test tests/narrator_test.cpp
+  plugins/Narrator/src/dsp/SamEngine.cpp
+  plugins/Narrator/src/dsp/sam/sam.c
+  plugins/Narrator/src/dsp/sam/render.c
+  plugins/Narrator/src/dsp/sam/reciter.c)
+target_include_directories(narrator_test PRIVATE plugins/Narrator/src/dsp)
+target_compile_features(narrator_test PRIVATE cxx_std_17)
+add_test(NAME narrator_test COMMAND narrator_test)

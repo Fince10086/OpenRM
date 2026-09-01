@@ -1,6 +1,12 @@
-# OpenRM Tools BandPass
+# OpenRM Tools
 
-Open Realtime Music Tools BandPass （开源实时音乐工具 带通效果器）, 启发自GRM Tools BandPass，基于 iPlug2。
+Open Realtime Music Tools （开源实时音乐工具），启发自 GRM Tools，基于 iPlug2。
+
+| 插件 | 类型 | 说明 |
+|---|---|---|
+| BandPass | 效果器 | 双通道带通/带阻，启自 GRM Tools BandPass |
+| Analyzer | 分析器 | 频谱/响度/立体声场测量 |
+| Narrator | 乐器 | 复古 TTS 语音合成器（MIDI 触发说话），首个引擎为 SAM；**GPL 分发** |
 
 ## 构建
 
@@ -44,9 +50,10 @@ sudo xattr -r -d com.apple.quarantine /Applications/ORMBandPass.app
 
 ### 代码复用
 
-| 项目 | 许可 |
+| 项目 | 许可 | 用途 |
 |---|---|---|
-| [iPlug2](https://github.com/iPlug2/iPlug2) | MIT |
+| [iPlug2](https://github.com/iPlug2/iPlug2) | MIT | 插件框架（BandPass / Analyzer / 公共 UI） |
+| [s-macke/SAM](https://github.com/s-macke/SAM) | 无许可证| SAM 内核|
 
 ### 算法参考
 

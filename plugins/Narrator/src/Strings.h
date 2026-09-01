@@ -1,0 +1,175 @@
+#pragma once
+
+namespace orm {
+
+enum ELanguage { kLangEN = 0, kLangZH, kNumLanguages };
+int DetectSystemLanguage();
+
+inline int &UILang() {
+  static int lang = DetectSystemLanguage();
+  return lang;
+}
+
+enum EText {
+  // ---- 设置面板必需的公共条目 (SettingsPanelControl / UiUtils 引用, 保持稳定) ----
+  kTxtLanguage,
+  kTxtDark,
+  kTxtLight,
+  kTxtTheme,
+  kTxtHue,
+  kTxtSaturation,
+  kTxtSatNone,
+  kTxtSatLow,
+  kTxtSatMed,
+  kTxtSatHigh,
+  kTxtChinese,
+  kTxtAudio,
+  kTxtAudioInput,
+  kTxtAudioOutput,
+  kTxtDriver,
+  kTxtRed,
+  kTxtYellow,
+  kTxtBlue,
+  kTxtGreen,
+  // ---- Narrator 专有条目 ----
+  kTxtPhrase,        // PHRASE
+  kTxtText,          // 文本标签
+  kTxtPhonetic,      // 音素
+  kTxtPlay,          // 试听
+  kTxtClear,         // 清空
+  kTxtPitch,         // Pitch
+  kTxtSpeed,         // Speed
+  kTxtMouth,         // Mouth
+  kTxtThroat,        // Throat
+  kTxtAttack,        // Attack
+  kTxtRelease,       // Release
+  kTxtOutput,        // Output
+  kTxtMono,          // MONO
+  kTxtPoly,          // POLY
+  kTxtRetrig,        // RETRIG
+  kTxtBaseKey,       // Base Key
+  kTxtNarratorTitle, // Narrator
+  kTxtEngine,        // SAM (引擎名标签, 当前固定)
+  kTxtTipKeyboard,
+  kTxtTipPhrase,
+  kTxtTipTimeline,
+  kTxtTipPitch,
+  kTxtTipSpeed,
+  kTxtTipMouthThroat,
+  kTxtTipAttackRelease,
+  kTxtTipBaseKey,
+  kTxtClickToTalk,   // 点击键盘或按宿主 MIDI 触发
+  kTxtEmptyPhrase,   // (空) / (empty)
+  kTxtDuration,      // %0.2f s (时长标签)
+  kNumTexts
+};
+
+inline const char *Tr(int id, int lang) {
+  static const char *const kTable[kNumLanguages][kNumTexts] = {
+      {
+          // EN
+          "LANGUAGE",
+          "DARK",
+          "LIGHT",
+          "THEME",
+          "Hue",
+          "Saturation",
+          "NONE",
+          "LOW",
+          "MED",
+          "HIGH",
+          "中文",
+          "AUDIO",
+          "Input",
+          "Output",
+          "Driver",
+          "Red",
+          "Yellow",
+          "Blue",
+          "Green",
+          "PHRASE",
+          "TEXT",
+          "PHONEMES",
+          "PLAY",
+          "CLEAR",
+          "Pitch",
+          "Speed",
+          "Mouth",
+          "Throat",
+          "Attack",
+          "Release",
+          "Output",
+          "MONO",
+          "POLY",
+          "RETRIG",
+          "Base Key",
+          "Narrator",
+          "SAM",
+          "Click keys or play host MIDI to trigger speech",
+          "Click to edit the phrase text (English)",
+          "Rendered phrase waveform and play position",
+          "SAM native pitch (0-255)",
+          "SAM native speed (higher = slower)",
+          "SAM mouth/throat formant shaping",
+          "Gate attack/release per note",
+          "Reference key: played pitch = note offset from this key",
+          "Press PLAY or hit a key to hear it",
+          "(empty)",
+          "%.2f s",
+      },
+      {
+          // ZH
+          "语言",
+          "深色",
+          "浅色",
+          "主题",
+          "色相",
+          "饱和度",
+          "无",
+          "低",
+          "中",
+          "高",
+          "中文",
+          "音频",
+          "输入",
+          "输出",
+          "驱动",
+          "红",
+          "黄",
+          "蓝",
+          "绿",
+          "语句",
+          "文本",
+          "音素",
+          "试听",
+          "清空",
+          "音高",
+          "语速",
+          "口腔",
+          "喉腔",
+          "起音",
+          "释放",
+          "输出",
+          "单音",
+          "复音",
+          "重触发",
+          "基准键",
+          "Narrator",
+          "SAM",
+          "点击键盘或在宿主里弹 MIDI 触发说话",
+          "点击编辑语句文本（仅英文）",
+          "已渲染语句的波形与播放位置",
+          "SAM 原生音高 (0-255)",
+          "SAM 原生语速（值越大越慢）",
+          "SAM 口腔/喉腔共振峰塑形",
+          "每音符的门限起音/释放",
+          "基准键：演奏音高相对此键的半音偏移",
+          "按试听或任意琴键试听",
+          "（空）",
+          "%.2f 秒",
+      },
+  };
+  return kTable[lang][id];
+}
+
+} // namespace orm
