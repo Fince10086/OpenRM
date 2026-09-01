@@ -726,7 +726,7 @@ private:
   }
 
   // L/R 双电平表条 + 独立 VU 表 (VU 刻度文字画在两者之间的间距内) + over 指示
-  // (读数在顶部图例行, 由 ChannelLegendControl 绘制)
+  // (dBTP 锁存数字直接绘制在条上, 见 DrawMeterBar)
   void DrawLevelMeter(IGraphics &g, const IRECT &plot, const IRECT &vuSkip, const IRECT &lufsSkip) {
     IColor cL, cR, cM;
     GetChannelColors(cL, cR, cM);
@@ -962,12 +962,10 @@ private:
     const float top = MeterTopDb();
     float val, hold = -1000.f;
     float rmsVal = -999.f;
-    float persist = -120.f;
     bool over = false;
     if (mMeterMode == 0) {
       val = ch ? mTrueR : mTrueL;
       hold = ch ? mHoldR : mHoldL;
-      persist = ch ? mPersistR : mPersistL;
       over = ch ? mOverR : mOverL;
     } else {
       val = ch ? mPeakR : mPeakL;
@@ -1081,10 +1079,24 @@ private:
       g.FillRect(hc, IRECT(bar.L, yH - 1.f, bar.R, yH + 1.f));
     }
 
-    // dBTP 持久锁存线: 真峰值越过 0 dBFS 后锁存的最大位置 (只增不减, 点击条重置)
-    if (mMeterMode == 0 && mHoldSec > 0.f && persist > 0.f && persist > mBottomDb) {
-      const float yP = YOf(plot, std::clamp(persist, mBottomDb, top));
-      g.FillRect(MeterOverLed(), IRECT(bar.L, yP - 1.5f, bar.R, yP + 1.5f));
+    // dBTP 持久锁存显示 (两声道合并的总最大值): 真峰值越过 0 dBFS 后锁存, 只增不减,
+    // 点击条重置; 取代旧的长久保持红色横条与图例行 dBTP 读数 (原 ChannelLegendControl)。
+    // 以条顶同色 (同饱和度) 的单个小数字标注在锁存值对应高度 (0~+6 dB 顶部区),
+    // 水平居中于两条之上; 个位数带一位小数, 两位数只显示整数。只在 L 条通道绘制一次。
+    if (ch == 0 && mMeterMode == 0 && mHoldSec > 0.f) {
+      const float persistMax = std::max(mPersistL, mPersistR);
+      if (persistMax > 0.f && persistMax > mBottomDb) {
+        const float yP = YOf(plot, std::clamp(persistMax, mBottomDb, top));
+        char pbuf[8];
+        if (std::fabs(persistMax) >= 10.f)
+          std::snprintf(pbuf, sizeof(pbuf), "%d", (int)std::lround(persistMax));
+        else
+          std::snprintf(pbuf, sizeof(pbuf), "%.1f", persistMax);
+        const IText pt(14, meterColorAt(kTopDb, 255), kFontSemiBold, EAlign::Center, EVAlign::Middle);
+        constexpr float kPersistLblH = 17.f; // 14px 字行高 (标签中点锚在锁存高度)
+        const float prT = std::max(yP - kPersistLblH * 0.5f, plot.T);
+        g.DrawText(pt, pbuf, IRECT(bar.L, prT, bar.R + kGainBarW, prT + kPersistLblH));
+      }
     }
 
     // over 指示 (仅 dBFS)

@@ -100,4 +100,4 @@ enum EChannelMode { kChanModePWR = 0, kChanModeLR = 1, kChanModeSUM = 2, kNumCha
 enum ELevelMode { kLevelModeDBTP = 0, kLevelModeDBFS = 1, kNumLevelModes = 2 };
 
 // UI 控件消息标签
-enum EControlTags { kCtrlTagPad = 100, kCtrlTagCpu = 101, kCtrlTagLegend = 102, kCtrlTagLoudness = 103, kCtrlTagScope = 104 };
+enum EControlTags { kCtrlTagPad = 100, kCtrlTagCpu = 101, kCtrlTagLoudness = 103, kCtrlTagScope = 104 };

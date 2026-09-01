@@ -456,18 +456,20 @@ private:
     }
   }
 
-  // PAZ 式矢量线: 每带一条主射线 + 去相关的 ±90° 侧翼杆 (2px 实心内容线)
+  // 主题渐变扇面 (频谱 DrawFill 的径向映射): 相邻活跃带共享边界中点, 密集处无
+  // 缝成扇; 邻带缺失时钳最小张角, 底边架在圆心周基圆上 (单带也有面积, PAZ 式),
+  // 尖端略收窄 (Ozone 式鼓度)。填充 = 以圆心为心的径向渐变, 锚定最响带半径:
+  // 峰值半径处近实色, 向内按频谱同款 exp(-3.5) 衰减到底部最小不透明度。
+  // 反相带不另配色, 几何上仍取 ±90° 帧方位, 独立细楔避免大幅扇区随帧闪变。
   void DrawVectors(IGraphics &g, const IRECT &cv) {
     float cx, cy, rMax;
     FanGeom(cv, cx, cy, rMax);
     IColor cL, cR, cM;
     GetChannelColors(cL, cR, cM);
-    const IColor mainCol(cM.R, cM.G, cM.B);
     const IColor wingCol = COL_700();
-    const IColor antiCol = COL_900();
 
     // 静音/阈值判定: 只画全局峰值带以下 35 dB 内的带 (滤掉窗旁瓣泄漏的短线,
-    //   单音只留 1-2 条线, 宽带内容仍全部可见)
+    //   单音只留 1-2 个楔, 宽带内容仍全部可见)
     float maxDb = mFloorDb;
     for (int b = 0; b < kScopeBands; ++b)
       maxDb = std::max(maxDb, mBand[b].db);
@@ -475,26 +477,109 @@ private:
     if (maxDb <= mFloorDb + 0.5f)
       return; // 静音: 圆心无残迹
 
+    constexpr float kMinHalf = 0.032f;             // 最小张角半宽 ≈ 1.8°
+    constexpr float kTipKeep = 0.6f;               // 尖端保留的底宽比例 (水滴鼓度)
+    const float r0 = std::max(3.f, rMax * 0.025f); // 基圆半径 (楔形底边架设处)
+
+    // 预解算每带角度/半径 (反相带直跳: 当前帧方位, ±90° 帧间交替 → 两侧都点亮;
+    //   非反相带用平滑值。绘制前钳到半扇角域作双重防御)
+    bool active[kScopeBands];
+    float th[kScopeBands] = {};
+    float r[kScopeBands] = {};
+    float rPeak = 0.f;
     for (int b = 0; b < kScopeBands; ++b) {
-      const float db = mBand[b].db;
-      if (db < thr)
+      active[b] = mBand[b].db >= thr;
+      if (!active[b])
         continue;
-      // 角度: 反相带直跳 (当前帧方位, ±90° 帧间交替 → 时间上两侧都点亮),
-      //   非反相带用平滑值。绘制前钳到半扇角域作双重防御。
-      const float thRaw = mBand[b].curAng;
-      const float thSmooth = mBand[b].ang;
-      const float th = std::clamp(mBand[b].anti ? thRaw : thSmooth, -0.5f * (float)PI,
-                                  0.5f * (float)PI);
-      const IColor col = mBand[b].anti ? antiCol : mainCol;
-      const float r = RadiusFor(db, rMax);
-      g.DrawLine(col, cx, cy, cx + std::sin(th) * r, cy - std::cos(th) * r, nullptr, 2.f);
-      // 侧翼 ±90°: 只属于非反相的去相关内容 (反相带的连续方位由主射线本身呈现)
-      if (!mBand[b].anti) {
-        const float rw = r * mBand[b].wing;
-        if (rw > 2.f) {
-          g.FillRect(wingCol, IRECT(cx - rw, cy - 1.f, cx - 1.f, cy + 1.f));
-          g.FillRect(wingCol, IRECT(cx + 1.f, cy - 1.f, cx + rw, cy + 1.f));
-        }
+      th[b] = std::clamp(mBand[b].anti ? mBand[b].curAng : mBand[b].ang,
+                         -0.5f * (float)PI, 0.5f * (float)PI);
+      r[b] = std::max(RadiusFor(mBand[b].db, rMax), r0 + 1.f);
+      rPeak = std::max(rPeak, r[b]);
+    }
+    rPeak = std::max(rPeak, r0 + 1.f);
+
+    // 径向渐变 (频谱 DrawFill 同源): 停靠点铺在 [基圆, 最响带半径] 区间,
+    //   alpha = minA + (255-minA)·exp(-3.5·(1-s)), 基圆处最透, 峰值半径处实色。
+    IPattern fill = IPattern::CreateRadialGradient(cx, cy, rPeak);
+    {
+      constexpr int kN = 8;
+      constexpr float kMinA = 15.f; // 同频谱 kGradientMinAlpha
+      for (int i = 0; i < kN; ++i) {
+        const float s = (float)i / (float)(kN - 1);
+        const float w = std::exp(-3.5f * (1.f - s));
+        const int a = (int)std::lround(kMinA + (255.f - kMinA) * w);
+        fill.AddStop(IColor(a, cM.R, cM.G, cM.B), (r0 + (rPeak - r0) * s) / rPeak);
+      }
+    }
+
+    // 单个楔形: 基圆上 [aL, aR] 弦为底, 端点处收窄到 kTipKeep 的短弦为尖
+    auto wedge = [&](float thB, float aL, float aR, float rb) {
+      const float tipHalf = std::max(0.5f * (aR - aL) * kTipKeep, 0.004f);
+      g.PathMoveTo(cx + std::sin(aL) * r0, cy - std::cos(aL) * r0);
+      g.PathLineTo(cx + std::sin(aR) * r0, cy - std::cos(aR) * r0);
+      g.PathLineTo(cx + std::sin(thB + tipHalf) * rb, cy - std::cos(thB + tipHalf) * rb);
+      g.PathLineTo(cx + std::sin(thB - tipHalf) * rb, cy - std::cos(thB - tipHalf) * rb);
+      g.PathClose();
+    };
+    // 边界角: 与活跃邻带取中点 (共享边无缝); 邻带缺失或角度交叉压扁时退最小张角
+    auto edge = [&](int b, int nb) {
+      const float side = (nb < b) ? -kMinHalf : kMinHalf;
+      if (nb < 0 || nb >= kScopeBands || !active[nb])
+        return th[b] + side;
+      const float mid = 0.5f * (th[b] + th[nb]);
+      return (std::fabs(mid - th[b]) < kMinHalf) ? th[b] + side : mid;
+    };
+
+    // 非反相楔形: 共享边界连成整扇, 单条 path 一次填充 (避免邻接缝双重混色)
+    g.PathClear();
+    for (int b = 0; b < kScopeBands; ++b) {
+      if (!active[b] || mBand[b].anti)
+        continue;
+      wedge(th[b], edge(b, b - 1), edge(b, b + 1), r[b]);
+    }
+    g.PathFill(fill);
+
+    // 反相带: 独立最小张角细楔 (同色, 只以几何形态标出 ±90° 帧方位)
+    g.PathClear();
+    for (int b = 0; b < kScopeBands; ++b) {
+      if (!active[b] || !mBand[b].anti)
+        continue;
+      wedge(th[b], th[b] - kMinHalf, th[b] + kMinHalf, r[b]);
+    }
+    g.PathFill(fill);
+
+    // 端点轮廓线: 1.5px 实色折线定义扇面外缘 (按角度序连接, 频带序可能交叉)。
+    // 只在共享边界的相邻楔之间连线 (角度序相邻 + 频带索引相邻 + 均为非反相带,
+    // 反相带是独立最小张角细楔, 不与任何带共享边界); 否则另起一段, 防止跨空隙
+    // 把分离的楔簇桥接起来 (如 DUAL AZ 的两簇之间出现横穿中央的错线)。
+    int order[kScopeBands];
+    int nAct = 0;
+    for (int b = 0; b < kScopeBands; ++b)
+      if (active[b])
+        order[nAct++] = b;
+    std::sort(order, order + nAct, [&](int a, int b) { return th[a] < th[b]; });
+    g.PathClear();
+    for (int i = 0; i < nAct; ++i) {
+      const int b = order[i];
+      const bool linked = (i > 0) && std::abs(b - order[i - 1]) == 1 &&
+                          !mBand[b].anti && !mBand[order[i - 1]].anti;
+      const float x = cx + std::sin(th[b]) * r[b];
+      const float y = cy - std::cos(th[b]) * r[b];
+      if (!linked)
+        g.PathMoveTo(x, y);
+      else
+        g.PathLineTo(x, y);
+    }
+    g.PathStroke(IPattern(cM), 1.5f);
+
+    // 侧翼 ±90°: 只属于非反相的去相关内容
+    for (int b = 0; b < kScopeBands; ++b) {
+      if (!active[b] || mBand[b].anti)
+        continue;
+      const float rw = r[b] * mBand[b].wing;
+      if (rw > 2.f) {
+        g.FillRect(wingCol, IRECT(cx - rw, cy - 1.f, cx - 1.f, cy + 1.f));
+        g.FillRect(wingCol, IRECT(cx + 1.f, cy - 1.f, cx + rw, cy + 1.f));
       }
     }
   }

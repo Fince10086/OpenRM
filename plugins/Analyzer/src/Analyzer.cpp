@@ -11,7 +11,6 @@
 #include "controls/SettingsPanelControl.h"
 #include "controls/SpectrumPad.h"
 #include "controls/StereoFieldControl.h"
-#include "controls/ChannelLegendControl.h"
 #include "controls/CpuMeterControl.h"
 #include "controls/LoudnessMeterControl.h"
 #include "StateFileIO.h"
@@ -249,9 +248,7 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     constexpr float kTopBtnY = 22.f;
     constexpr float kTopBtnGap = 6.f; // LR 与 FFT 之间留空隙, FFT 与 RES 紧贴
 
-    // 三通道色块图例 (L / R / M, 颜色跟随主题) + True Peak 读数, 与频谱图形区左缘对齐。
-    // 右缘延伸到电平表带右端 (x=752): 读取数右对齐在电平条上方 (右侧空间已由按键下移腾出)。
-    pGraphics->AttachControl(new ChannelLegendControl(IRECT(20, 32, 752, 54)), kCtrlTagLegend);
+    // 电平表带顶部的图例行已移除 (原 True Peak 读数合并进 dBTP 条的锁存数字显示)
 
     // 声道显示模式循环按钮 (三态: PWR / L/R / SUM).
     // L/R 样式: 左半 L 色右半 R 色; PWR/SUM 样式: 整块 M 色 (Merge 色) + 居中标签。
@@ -1257,9 +1254,6 @@ void ORMAnalyzer::OnIdle() {
     d.overL = mOverL.load(std::memory_order_relaxed);
     d.overR = mOverR.load(std::memory_order_relaxed);
     SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagLevelMeter, sizeof(d), &d);
-    // 图例行: True Peak 最高值 (响度链锁存, 原响度计横条读数移入此处)
-    const float tpMax = mLoudTp.load(std::memory_order_relaxed);
-    SendControlMsgFromDelegate(kCtrlTagLegend, ChannelLegendControl::kMsgTagTpMax, sizeof(float), &tpMax);
     // 声像面板: 峰值保持时长透传 (与电平表 hold 共用开关/档位, 每 tick 随帧下发)
     const float scopeHoldSec = (float)CurrentHoldSec();
     SendControlMsgFromDelegate(kCtrlTagScope, StereoFieldControl::kMsgTagHold, sizeof(float), &scopeHoldSec);
