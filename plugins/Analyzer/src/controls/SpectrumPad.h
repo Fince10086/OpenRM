@@ -930,13 +930,16 @@ private:
       g.FillRect(COL_300(), bar);
       if (lufs > -99.f) {
         const float yTop = LoudYOf(plot, lufs);
+        // stops 按 lufs 从底 (目标-2·off) 到顶 (目标+off) 排列,
+        // 因此 yA = 段的下缘 (大 y), yB = 段的上缘 (小 y);
+        // 只在信号电平以下绘制: 段整体在信号之上 (下缘 ≤ yTop) 时跳过。
         for (int i = 0; i + 1 < nStops; ++i) {
           const float yA = LoudYOf(plot, stops[i].lufs);
           const float yB = LoudYOf(plot, stops[i + 1].lufs);
-          if (yB <= yTop)
+          if (yA <= yTop)
             continue;
-          const float rT = std::max(yA - seamOv, yTop);
-          const float rB = std::min(yB + seamOv, bar.B);
+          const float rT = std::max(yB - seamOv, yTop);
+          const float rB = std::min(yA + seamOv, bar.B);
           if (rB - rT <= 0.f)
             continue;
           IPattern grad = IPattern::CreateLinearGradient(bar.L, yA, bar.L, yB);
