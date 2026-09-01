@@ -43,3 +43,15 @@ openrm_add_plugin(${PROJECT_NAME}
   DEFINES SAMPLE_TYPE_FLOAT
   FONTS Mixed-Regular.ttf Mixed-SemiBold.ttf Mixed-Bold.ttf
 )
+
+# macOS 渲染节拍改由 CVDisplayLink (vsync) 驱动 (与 Analyzer 对齐):
+# 默认自由运行的 60Hz NSTimer 与 CAMetalLayer 的 vsync present 双钟漂移,
+# 拖拽缩放时鼠标事件持续踢相位导致帧间隔震荡, 窗口服务器拉伸旧帧 → 文字发糊。
+# 宏使用处 IGraphicsMac_view.mm 直接编进各格式目标, 因此逐目标注入。
+if(APPLE)
+  foreach(_bp_fmt_tgt ${PROJECT_NAME}-app ${PROJECT_NAME}-vst3 ${PROJECT_NAME}-au)
+    if(TARGET ${_bp_fmt_tgt})
+      target_compile_definitions(${_bp_fmt_tgt} PRIVATE IGRAPHICS_CVDISPLAYLINK)
+    endif()
+  endforeach()
+endif()
