@@ -27,6 +27,11 @@ enum EParams {
   kLoudPreset,    // 响度目标预设档位 (0: -9, 1: -14, 2: -23, 3: -24 LUFS)
   kLoudScale,     // 响度条刻度窗偏移档位 (顶 = 目标+偏移, 1/3 = 目标, 底 = 目标-2×偏移; 0: +9, 1: +18 LU)
   kScopeRange,    // 声像显示范围档位 (极坐标电平半径 dB 底限: 0: -60, 1: -80, 2: -100)
+  kScopeAntiThresh,   // 声像测试: 反相带相关阈值 (相关低于此判反相带)
+  kScopeImgBins,     // 声像测试: 方位直方图 bin 数
+  kScopeImgKernel,   // 声像测试: 注入核半宽 (bin)
+  kScopeImgDecay,    // 声像测试: 直方图时间衰减 (s)
+  kScopeImgDome,     // 声像测试: 穹顶半径占 rMax 比例
   kNumParams
 };
 

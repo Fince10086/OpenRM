@@ -156,6 +156,11 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
   GetParam(kLoudPreset)->InitInt("LoudPreset", 1, 0, kNumLoudPresets - 1, ""); // 响度目标预设, 默认 -14 (索引 1)
   GetParam(kLoudScale)->InitInt("LoudScale", 0, 0, kNumLoudScaleOptions - 1, ""); // 响度条刻度窗偏移, 默认 +9
   GetParam(kScopeRange)->InitInt("ScopeRange", 1, 0, 2, ""); // 声像显示范围档位: 0=-60, 1=-80, 2=-100 (默认 -80)
+  GetParam(kScopeAntiThresh)->InitDouble("ScopeAntiThresh", -0.2, -1.0, 0.0, 0.01, ""); // 声像测试: 反相带阈值
+  GetParam(kScopeImgBins)->InitInt("ScopeImgBins", 192, 16, 512, ""); // 声像测试: 直方图 bin 数
+  GetParam(kScopeImgKernel)->InitDouble("ScopeImgKernel", 6.0, 1.0, 24.0, 0.5, ""); // 声像测试: 核半宽 (bin)
+  GetParam(kScopeImgDecay)->InitDouble("ScopeImgDecay", 0.4, 0.05, 3.0, 0.01, ""); // 声像测试: 衰减 (s)
+  GetParam(kScopeImgDome)->InitDouble("ScopeImgDome", 0.08, 0.0, 0.30, 0.01, ""); // 声像测试: 穹顶比例
   mDefaultSnapshot = Snapshot();
   mStableSnapshot = Snapshot();
 
@@ -369,6 +374,21 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     mScopeRangeBtn->SetScaleLabelStyle(true);
     pGraphics->AttachControl(mScopeRangeBtn);
     bindTip(mScopeRangeBtn, orm::kTxtTipScopeRange);
+
+    // 声像直方图测试滑块 (弧缘右侧空白区; 参数经 OnIdle 防抖下发, 见 SendSpectrumConfig)
+    {
+      static const struct { int param; const char *label; } kScopeTestS[5] = {
+          {kScopeAntiThresh, "AntiPh"}, {kScopeImgBins, "Bins"}, {kScopeImgKernel, "Kernel"},
+          {kScopeImgDecay, "Decay"},    {kScopeImgDome, "Dome"},
+      };
+      constexpr float kSX0 = 446.f, kSX1 = 750.f, kSY0 = 348.f, kSH = 42.f;
+      for (int i = 0; i < 5; ++i) {
+        ORMSlider *sl = new ORMSlider(IRECT(kSX0, kSY0 + i * kSH, kSX1, kSY0 + (i + 1) * kSH),
+                                      kScopeTestS[i].param, kScopeTestS[i].label, style,
+                                      EDirection::Horizontal);
+        pGraphics->AttachControl(sl);
+      }
+    }
 
     // ── 响度计读数 (右栏上方, 无词标数字仪表面板) ──────────────────────────
     // I 大读数 + 目标差 Δ (±10 LU 迷你刻度条, 中心=目标) + LRA (0..20 条) + M/S 行;
@@ -944,6 +964,18 @@ void ORMAnalyzer::SendSpectrumConfig() {
   SendControlMsgFromDelegate(kCtrlTagScope, StereoFieldControl::kMsgTagReleaseMode, sizeof(int), &releaseMode);
   const float scopeFloor = CurrentScopeFloorDb();
   SendControlMsgFromDelegate(kCtrlTagScope, StereoFieldControl::kMsgTagRange, sizeof(float), &scopeFloor);
+
+  // 声像测试滑块参数 (直方图渲染调参)
+  const float scopeAntiThresh = (float)GetParam(kScopeAntiThresh)->Value();
+  SendControlMsgFromDelegate(kCtrlTagScope, StereoFieldControl::kMsgTagAntiThresh, sizeof(float), &scopeAntiThresh);
+  const int scopeImgBins = (int)std::lround(GetParam(kScopeImgBins)->Value());
+  SendControlMsgFromDelegate(kCtrlTagScope, StereoFieldControl::kMsgTagImgBins, sizeof(int), &scopeImgBins);
+  const float scopeImgKernel = (float)GetParam(kScopeImgKernel)->Value();
+  SendControlMsgFromDelegate(kCtrlTagScope, StereoFieldControl::kMsgTagImgKernel, sizeof(float), &scopeImgKernel);
+  const float scopeImgDecay = (float)GetParam(kScopeImgDecay)->Value();
+  SendControlMsgFromDelegate(kCtrlTagScope, StereoFieldControl::kMsgTagImgDecay, sizeof(float), &scopeImgDecay);
+  const float scopeImgDome = (float)GetParam(kScopeImgDome)->Value();
+  SendControlMsgFromDelegate(kCtrlTagScope, StereoFieldControl::kMsgTagImgDome, sizeof(float), &scopeImgDome);
 }
 
 void ORMAnalyzer::SendVQTBandFreqs() {
@@ -1151,11 +1183,19 @@ void ORMAnalyzer::OnIdle() {
     const double slope = EffectiveSlopeDb(); // 斜率档位变化时重发 (冻结中照常: 纯显示参数)
     const int rtaOct = CurrentRtaOctave();
     const double scopeRange = (double)std::clamp(std::lround(GetParam(kScopeRange)->Value()), 0L, 2L);
+    const double scopeAntiThresh = GetParam(kScopeAntiThresh)->Value();
+    const double scopeImgBins = GetParam(kScopeImgBins)->Value();
+    const double scopeImgKernel = GetParam(kScopeImgKernel)->Value();
+    const double scopeImgDecay = GetParam(kScopeImgDecay)->Value();
+    const double scopeImgDome = GetParam(kScopeImgDome)->Value();
     if (sr != mSentSampleRate || fftSize != mSentFFTSize || winFFT != mSentWindowFFT || winVQT != mSentWindowVQT ||
         speed != mSentSpeed || releaseMode != mSentReleaseMode || release != mSentRelease ||
         range != mSentRange || attack != mSentAttack ||
         lfRes != mSentLfRes || slope != mSentSlope || rtaOct != mSentRtaOct ||
-        scopeRange != mSentScopeRange) {
+        scopeRange != mSentScopeRange || scopeAntiThresh != mSentScopeAntiThresh ||
+        scopeImgBins != mSentScopeImgBins ||
+        scopeImgKernel != mSentScopeImgKernel || scopeImgDecay != mSentScopeImgDecay ||
+        scopeImgDome != mSentScopeImgDome) {
       mSpectrum.SetWindowType(winFFT);
       mVQT.SetWindowType(winVQT);
       // 冻结中 release 派生变化 (速度档/释放模式) 或采样率/窗函数变化需重启回放, 保证确定性;
@@ -1177,6 +1217,11 @@ void ORMAnalyzer::OnIdle() {
       mSentSlope = slope;
       mSentRtaOct = rtaOct;
       mSentScopeRange = (int)scopeRange;
+      mSentScopeAntiThresh = scopeAntiThresh;
+      mSentScopeImgBins = scopeImgBins;
+      mSentScopeImgKernel = scopeImgKernel;
+      mSentScopeImgDecay = scopeImgDecay;
+      mSentScopeImgDome = scopeImgDome;
       SendSpectrumConfig();
       if (restartReplay)
         StartFreezeReplay();
@@ -1364,6 +1409,11 @@ void ORMAnalyzer::OnUIClose() {
   mSentChanMode = -1;
   mSentRtaOct = -1;
   mSentScopeRange = -1;
+  mSentScopeAntiThresh = 1e9;
+  mSentScopeImgBins = -1;
+  mSentScopeImgKernel = 1e9;
+  mSentScopeImgDecay = 1e9;
+  mSentScopeImgDome = 1e9;
   // 冻结档位快照复位: 重开 UI 后冻结画面与档位重算按新控件状态重新建立
   mFreezeOn = false;
   mFreezeRes = mFreezeWindowFFT = mFreezeWindowVQT = mFreezeLf = mFreezeRtaOct = -1;
