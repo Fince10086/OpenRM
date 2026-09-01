@@ -69,7 +69,7 @@ ORMNarrator::ORMNarrator(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     }
   }
 
-  GetParam(kEngine)->InitEnum("Engine", 0, {"SAM", "TMS"});
+  GetParam(kEngine)->InitEnum("Engine", 0, {"SAM", "TMS", "TSI", "SP0256"});
   GetParam(kMapMode)->InitEnum("Map Mode", 0, {"PHRASE", "BANK"});
   GetParam(kBaseKey)->InitDouble("Base Key", 48., 0., 127., 1., "");
   // SAM 专属音色参数 (与 TMS 解耦)
@@ -82,6 +82,13 @@ ORMNarrator::ORMNarrator(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
   GetParam(kTmsPitch)->InitDouble("TMS Pitch", 64., 0., 255., 1., "");
   GetParam(kTmsBank)->InitEnum("Voice", 0,
                                {"MIL", "TI99", "ACORN", "S&S", "CLOCK"});
+  // TSI 专属 (与 SAM/TMS 解耦)
+  GetParam(kTsiSpeed)->InitDouble("TSI Rate", 72., 1., 255., 1., "");
+  GetParam(kTsiBank)->InitEnum("TSI Voice", 0,
+                               {"BZ", "F2", "C0", "C1", "C2", "C3", "C4", "C5", "C6"});
+  // SP0256 专属 (与 SAM/TMS/TSI 解耦)
+  GetParam(kSp0256Speed)->InitDouble("SP0256 Rate", 72., 1., 255., 1., "");
+  GetParam(kSp0256Voice)->InitEnum("SP0256 Voice", 0, {"AL2", "012"});
   // 通用
   GetParam(kAttack)->InitDouble("Attack", 5., 1., 500., 1., "ms");
   GetParam(kRelease)->InitDouble("Release", 120., 1., 2000., 1., "ms");
@@ -250,7 +257,7 @@ ORMNarrator::ORMNarrator(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     // ---- 引擎选择 + 参数列 (右列) ----
     mEngineSegment = new FlatSegmentControl(
         IRECT(kRightL, 16, kRightR, 40),
-        std::vector<std::string>{"SAM", "TMS"},
+        std::vector<std::string>{"SAM", "TMS", "TSI", "SP0256"},
         [this](int idx) { SetEngineFromUI(idx); },
         GetParam(kEngine)->Int());
     pGraphics->AttachControl(mEngineSegment);
@@ -262,6 +269,22 @@ ORMNarrator::ORMNarrator(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
         [this](int idx) { SetVoiceFromUI(idx); },
         GetParam(kTmsBank)->Int());
     pGraphics->AttachControl(mVoiceSegment);
+
+    // TSI 子集选择 (仅 TSI 引擎显示; 9 段宽度有限用短标签)
+    mTsiVoiceSegment = new FlatSegmentControl(
+        IRECT(kRightL, 44, kRightR, 72),
+        std::vector<std::string>{"BZ", "F2", "C0", "C1", "C2", "C3", "C4", "C5", "C6"},
+        [this](int idx) { SetTsiVoiceFromUI(idx); },
+        GetParam(kTsiBank)->Int());
+    pGraphics->AttachControl(mTsiVoiceSegment);
+
+    // SP0256 语音版本选择 (仅 SP0256 引擎显示; AL2 allophone / 012 Intellivoice 单词)
+    mSp0256VoiceSegment = new FlatSegmentControl(
+        IRECT(kRightL, 44, kRightR, 72),
+        std::vector<std::string>{"AL2", "012"},
+        [this](int idx) { SetSp0256VoiceFromUI(idx); },
+        GetParam(kSp0256Voice)->Int());
+    pGraphics->AttachControl(mSp0256VoiceSegment);
 
     struct SliderDef {
       int param;
@@ -519,7 +542,7 @@ void ORMNarrator::SetPhoneticMode(bool phonetic) {
 }
 
 void ORMNarrator::SetEngineFromUI(int idx) {
-  const int v = std::clamp(idx, 0, 1);
+  const int v = std::clamp(idx, 0, 3);
   GetParam(kEngine)->Set((double) v);
   InformHostOfParamChange(kEngine, GetParam(kEngine)->GetNormalized());
   mRenderDirty = true;
@@ -566,6 +589,52 @@ void ORMNarrator::SetVoiceFromUI(int idx) {
 #endif
 }
 
+void ORMNarrator::SetTsiVoiceFromUI(int idx) {
+  const int v = std::clamp(idx, 0, kNumS14001Sets - 1);
+  GetParam(kTsiBank)->Set((double) v);
+  InformHostOfParamChange(kTsiBank, GetParam(kTsiBank)->GetNormalized());
+  mRenderDirty = true; // 分段控件不走参数联动, 必须显式置脏才会重渲染
+  {
+    std::lock_guard<std::mutex> lock(mTextMutex);
+    if (GetParam(kMapMode)->Int() == 1 && mUISelected >= 0) {
+      auto it = mBank.find(mUISelected);
+      if (it != mBank.end()) {
+        it->second.tsi.bank = v;
+        it->second.dirty = true;
+      }
+    }
+  }
+  if (mTsiVoiceSegment)
+    mTsiVoiceSegment->SetActive(v);
+#if IPLUG_EDITOR
+  if (GetUI())
+    GetUI()->SetAllControlsDirty();
+#endif
+}
+
+void ORMNarrator::SetSp0256VoiceFromUI(int idx) {
+  const int v = std::clamp(idx, 0, kNumSp0256 - 1);
+  GetParam(kSp0256Voice)->Set((double) v);
+  InformHostOfParamChange(kSp0256Voice, GetParam(kSp0256Voice)->GetNormalized());
+  mRenderDirty = true; // 分段控件不走参数联动, 必须显式置脏才会重渲染
+  {
+    std::lock_guard<std::mutex> lock(mTextMutex);
+    if (GetParam(kMapMode)->Int() == 1 && mUISelected >= 0) {
+      auto it = mBank.find(mUISelected);
+      if (it != mBank.end()) {
+        it->second.sp0256.variant = v;
+        it->second.dirty = true;
+      }
+    }
+  }
+  if (mSp0256VoiceSegment)
+    mSp0256VoiceSegment->SetActive(v);
+#if IPLUG_EDITOR
+  if (GetUI())
+    GetUI()->SetAllControlsDirty();
+#endif
+}
+
 void ORMNarrator::SetMapModeFromUI(int idx) {
   const int v = std::clamp(idx, 0, 1);
   GetParam(kMapMode)->Set((double) v);
@@ -595,6 +664,8 @@ void ORMNarrator::ApplyLanguage() {
     mModeSegment->SetLabels({orm::Tr(orm::kTxtText, orm::UILang()),
                              orm::Tr(orm::kTxtPhonetic, orm::UILang())});
   }
+  // 语言切换后重刷滑杆槽绑定 (TSI 槽 0 的头部标签是动态的)
+  RebindVoiceSliders((int) GetParam(kEngine)->Int());
   if (GetUI()) {
     GetUI()->SetAllControlsDirty();
     GetUI()->UpdateTooltips();
@@ -658,19 +729,42 @@ void ORMNarrator::OnIdle() {
   }
 
   // 引擎/音色参数已由 RebindVoiceSliders 管理绑定的滑块; 宿主侧改引擎时同步重绑
-  const bool tmsNow = GetParam(kEngine)->Int() == 1;
-  const bool tmsBound = mParamSliders[0] ? (mParamSliders[0]->GetParamIdx() == kTmsPitch) : false;
-  if (tmsNow != tmsBound)
-    RebindVoiceSliders(tmsNow ? 1 : 0);
+  const int eng = (int) GetParam(kEngine)->Int();
+  const int expectIdx = (eng == 1) ? kTmsPitch : (eng == 2) ? kTsiSpeed
+                                                           : (eng == 3) ? kSp0256Speed : kSamPitch;
+  const bool bound = mParamSliders[0] ? (mParamSliders[0]->GetParamIdx() == expectIdx) : false;
+  if (!bound)
+    RebindVoiceSliders(eng);
   // 宿主自动化改引擎/音色/模式时, 分段控件高亮跟随
   if (mEngineSegment)
     mEngineSegment->SetActive((int) GetParam(kEngine)->Int());
   if (mVoiceSegment)
     mVoiceSegment->SetActive((int) GetParam(kTmsBank)->Int());
+  if (mTsiVoiceSegment)
+    mTsiVoiceSegment->SetActive((int) GetParam(kTsiBank)->Int());
+  if (mSp0256VoiceSegment)
+    mSp0256VoiceSegment->SetActive((int) GetParam(kSp0256Voice)->Int());
   if (mMapSegment)
     mMapSegment->SetActive((int) GetParam(kMapMode)->Int());
 }
 #endif
+
+// 拖拽 App 窗口/宿主缩放视图时, 保持布局逻辑尺寸不变, 按两轴较大比例等比缩放 UI
+// (edge-crop, 与 Analyzer/BandPass 一致)。needsPlatformResize=false 避免在 live
+// resize 中反向改动窗口尺寸形成回路; 窗口宽高比由 ConstrainEditorResize 锁定。
+// 不重写本函数会落到 IGEditorDelegate 的默认实现, 它会把 drawScale 重置为 1 并把
+// 逻辑尺寸改成窗口尺寸, 拖拽中缩放被宿主回声反复打回, 表现为跳动/不跟手。
+void ORMNarrator::OnParentWindowResize(int width, int height) {
+  if (auto *pGraphics = GetUI()) {
+    const float platformScale = pGraphics->GetPlatformWindowScale();
+    const float targetW = std::ceil(static_cast<float>(width) / platformScale);
+    const float targetH = std::ceil(static_cast<float>(height) / platformScale);
+    const float sx = targetW / static_cast<float>(pGraphics->Width());
+    const float sy = targetH / static_cast<float>(pGraphics->Height());
+    const float scale = std::max(sx, sy) * (1.f + 1e-4f);
+    pGraphics->Resize(pGraphics->Width(), pGraphics->Height(), scale, false);
+  }
+}
 
 bool ORMNarrator::ConstrainEditorResize(int &w, int &h) const {
   constexpr double kMinScale = DEFAULT_MIN_DRAW_SCALE;
@@ -766,6 +860,10 @@ void ORMNarrator::OnParamChange(int paramIdx, EParamSource source, int sampleOff
     case kTmsSpeed:
     case kTmsPitch:
     case kTmsBank:
+    case kTsiSpeed:
+    case kTsiBank:
+    case kSp0256Speed:
+    case kSp0256Voice:
       mRenderDirty = true; // 音色参数变化 -> 下次触发前重渲染
       // BANK 模式: 音色滑杆/音色段直接编辑选中键的绑定 (按参数所属引擎写入)
       if (GetParam(kMapMode)->Int() == 1 && mUISelected >= 0) {
@@ -780,6 +878,10 @@ void ORMNarrator::OnParamChange(int paramIdx, EParamSource source, int sampleOff
             case kTmsSpeed: it->second.tms.speed = (int) GetParam(kTmsSpeed)->Value(); break;
             case kTmsPitch: it->second.tms.pitch = (int) GetParam(kTmsPitch)->Value(); break;
             case kTmsBank: it->second.tms.bank = (int) GetParam(kTmsBank)->Int(); break;
+            case kTsiSpeed: it->second.tsi.speed = (int) GetParam(kTsiSpeed)->Value(); break;
+            case kTsiBank: it->second.tsi.bank = (int) GetParam(kTsiBank)->Int(); break;
+            case kSp0256Speed: it->second.sp0256.speed = (int) GetParam(kSp0256Speed)->Value(); break;
+            case kSp0256Voice: it->second.sp0256.variant = (int) GetParam(kSp0256Voice)->Int(); break;
             default: break;
           }
           it->second.dirty = true;
@@ -797,8 +899,9 @@ bool ORMNarrator::SerializeState(IByteChunk &chunk) const {
     chunk.PutStr(mPhraseText.c_str());
     const int ph = mPhonetic ? 1 : 0;
     chunk.Put(&ph);
-    // BANK 绑定表: 版本 + 数量 + 每项 (引擎, SAM 4 参, TMS 3 参, 文本, 音素标记)
-    const int ver = 2;
+    // BANK 绑定表: 版本 + 数量 + 每项 (引擎, SAM 4 参, TMS 3 参, TSI 2 参, SP0256 2 参,
+    // 文本, 音素标记)
+    const int ver = 4;
     chunk.Put(&ver);
     const int count = (int) mBank.size();
     chunk.Put(&count);
@@ -812,6 +915,10 @@ bool ORMNarrator::SerializeState(IByteChunk &chunk) const {
       const int tSpd = kv.second.tms.speed;
       const int tPit = kv.second.tms.pitch;
       const int tBnk = kv.second.tms.bank;
+      const int rSpd = kv.second.tsi.speed;
+      const int rBnk = kv.second.tsi.bank;
+      const int nSpd = kv.second.sp0256.speed;
+      const int nVoi = kv.second.sp0256.variant;
       const int phn = kv.second.phonetic ? 1 : 0;
       chunk.Put(&note);
       chunk.Put(&eng);
@@ -822,6 +929,10 @@ bool ORMNarrator::SerializeState(IByteChunk &chunk) const {
       chunk.Put(&tSpd);
       chunk.Put(&tPit);
       chunk.Put(&tBnk);
+      chunk.Put(&rSpd);
+      chunk.Put(&rBnk);
+      chunk.Put(&nSpd);
+      chunk.Put(&nVoi);
       chunk.Put(&phn);
       chunk.PutStr(kv.second.text.c_str());
     }
@@ -847,6 +958,8 @@ int ORMNarrator::UnserializeState(const IByteChunk &chunk, int startPos) {
       if (ver >= 2) {
         int note = 0, eng = 0, sPit = 0, sSpd = 0, sMou = 0, sThr = 0;
         int tSpd = 0, tPit = 0, tBnk = 0, phn = 0;
+        int rSpd = 72, rBnk = 0;
+        int nSpd = 72, nVoi = 0;
         startPos = chunk.Get(&note, startPos);
         startPos = chunk.Get(&eng, startPos);
         startPos = chunk.Get(&sPit, startPos);
@@ -856,6 +969,14 @@ int ORMNarrator::UnserializeState(const IByteChunk &chunk, int startPos) {
         startPos = chunk.Get(&tSpd, startPos);
         startPos = chunk.Get(&tPit, startPos);
         startPos = chunk.Get(&tBnk, startPos);
+        if (ver >= 3) {
+          startPos = chunk.Get(&rSpd, startPos);
+          startPos = chunk.Get(&rBnk, startPos);
+        }
+        if (ver >= 4) {
+          startPos = chunk.Get(&nSpd, startPos);
+          startPos = chunk.Get(&nVoi, startPos);
+        }
         startPos = chunk.Get(&phn, startPos);
         startPos = chunk.GetStr(str, startPos);
         if (startPos < 0)
@@ -863,7 +984,7 @@ int ORMNarrator::UnserializeState(const IByteChunk &chunk, int startPos) {
         BankEntry e;
         e.text = str.Get();
         e.phonetic = phn != 0;
-        e.engine = std::clamp(eng, 0, 1);
+        e.engine = std::clamp(eng, 0, 3);
         e.sam.pitch = std::clamp(sPit, 0, 255);
         e.sam.speed = std::clamp(sSpd, 1, 255);
         e.sam.mouth = std::clamp(sMou, 0, 255);
@@ -871,6 +992,10 @@ int ORMNarrator::UnserializeState(const IByteChunk &chunk, int startPos) {
         e.tms.speed = std::clamp(tSpd, 1, 255);
         e.tms.pitch = std::clamp(tPit, 0, 255);
         e.tms.bank = std::clamp(tBnk, 0, kNumBanks - 1);
+        e.tsi.speed = std::clamp(rSpd, 1, 255);
+        e.tsi.bank = std::clamp(rBnk, 0, kNumS14001Sets - 1);
+        e.sp0256.speed = std::clamp(nSpd, 1, 255);
+        e.sp0256.variant = std::clamp(nVoi, 0, kNumSp0256 - 1);
         e.dirty = true;
         mBank[note] = std::move(e);
       } else {
@@ -923,21 +1048,34 @@ void ORMNarrator::EnsureRendered() {
 
   const int engine = (int) GetParam(kEngine)->Int();
   const int bank = (int) GetParam(kTmsBank)->Int();
+  const int tsiBank = (int) GetParam(kTsiBank)->Int();
+  const int spVariant = (int) GetParam(kSp0256Voice)->Int();
   const float tmsScale = (float)(GetParam(kTmsSpeed)->Value() / 72.0);
+  const float tsiScale = (float)(GetParam(kTsiSpeed)->Value() / 72.0);
+  const float spScale = (float)(GetParam(kSp0256Speed)->Value() / 72.0);
   bool ok = false;
+  double rate = 0.0;
   if (engine == 0) {
     ok = orm::SamEngine::Render(text, phon, s, mPhraseBuffer);
+    rate = orm::SamEngine::kSampleRate;
+  } else if (engine == 2) {
+    // TSI S14001A: 文本 = 词索引 (Wnn / n), rateScale 缩放芯片时钟
+    ok = orm::TsiS14001Engine::Render(text, tsiBank, tsiScale, mPhraseBuffer);
+    rate = orm::TsiS14001Engine::RateForSet(tsiBank, tsiScale);
+  } else if (engine == 3) {
+    // SP0256: 文本 = allophone/单词标签或数字码, speedScale 缩放 XTAL
+    ok = orm::Sp0256Engine::Render(text, spVariant, spScale, mPhraseBuffer);
+    rate = orm::Sp0256Engine::RateFor(spScale);
   } else if (bank == kBankSspell) {
     ok = orm::Tms5110Engine::Render(text, tmsScale, mPhraseBuffer);
+    rate = orm::Tms5110Engine::kSampleRate;
   } else {
     // TMS5220 家族: 文本 = 词库词名 (大写), speed 缩放帧时长
     ok = orm::Tms5220Engine::Render(text, bank, tmsScale, mPhraseBuffer);
+    rate = orm::Tms5220Engine::kSampleRate;
   }
 
   if (ok) {
-    const double rate = (engine == 0) ? orm::SamEngine::kSampleRate
-                       : (bank == kBankSspell) ? orm::Tms5110Engine::kSampleRate
-                                               : orm::Tms5220Engine::kSampleRate;
     mPhraseDuration = (double) mPhraseBuffer.size() / rate;
     PushPhraseToUI();
   } else {
@@ -951,6 +1089,10 @@ void ORMNarrator::RenderBankEntry(BankEntry &e) {
   e.rendered.clear();
   if (e.engine == 0) {
     orm::SamEngine::Render(e.text, e.phonetic, e.sam, e.rendered);
+  } else if (e.engine == 2) {
+    orm::TsiS14001Engine::Render(e.text, e.tsi.bank, (float)(e.tsi.speed / 72.0), e.rendered);
+  } else if (e.engine == 3) {
+    orm::Sp0256Engine::Render(e.text, e.sp0256.variant, (float)(e.sp0256.speed / 72.0), e.rendered);
   } else if (e.tms.bank == kBankSspell) {
     orm::Tms5110Engine::Render(e.text, (float)(e.tms.speed / 72.0), e.rendered);
   } else {
@@ -989,6 +1131,8 @@ void ORMNarrator::ApplySelectionFromIdle() {
   int engine = 0;
   orm::SamSettings sam;
   orm::TmsSettings tms;
+  orm::TsiSettings tsi;
+  orm::Sp0256Settings sp0256;
   {
     std::lock_guard<std::mutex> lock(mTextMutex);
     auto it = mBank.find(mUISelected);
@@ -998,6 +1142,8 @@ void ORMNarrator::ApplySelectionFromIdle() {
       engine = it->second.engine;
       sam = it->second.sam;
       tms = it->second.tms;
+      tsi = it->second.tsi;
+      sp0256 = it->second.sp0256;
     } else {
       mBank[mUISelected] = BankEntry{}; // 建空绑定, 编辑即生效
       text = "";
@@ -1009,12 +1155,18 @@ void ORMNarrator::ApplySelectionFromIdle() {
       tms.speed = (int) GetParam(kTmsSpeed)->Value();
       tms.pitch = (int) GetParam(kTmsPitch)->Value();
       tms.bank = (int) GetParam(kTmsBank)->Int();
+      tsi.speed = (int) GetParam(kTsiSpeed)->Value();
+      tsi.bank = (int) GetParam(kTsiBank)->Int();
+      sp0256.speed = (int) GetParam(kSp0256Speed)->Value();
+      sp0256.variant = (int) GetParam(kSp0256Voice)->Int();
       mBank[mUISelected].sam = sam;
       mBank[mUISelected].tms = tms;
+      mBank[mUISelected].tsi = tsi;
+      mBank[mUISelected].sp0256 = sp0256;
       mBank[mUISelected].engine = engine;
     }
   }
-  // 载入该绑定的引擎参数 (SAM 与 TMS 各载各的, 切引擎互不影响)
+  // 载入该绑定的引擎参数 (各引擎各载各的, 切引擎互不影响)
   GetParam(kEngine)->Set((double) engine);
   GetParam(kSamPitch)->Set((double) sam.pitch);
   GetParam(kSamSpeed)->Set((double) sam.speed);
@@ -1023,6 +1175,10 @@ void ORMNarrator::ApplySelectionFromIdle() {
   GetParam(kTmsSpeed)->Set((double) tms.speed);
   GetParam(kTmsPitch)->Set((double) tms.pitch);
   GetParam(kTmsBank)->Set((double) tms.bank);
+  GetParam(kTsiSpeed)->Set((double) tsi.speed);
+  GetParam(kTsiBank)->Set((double) tsi.bank);
+  GetParam(kSp0256Speed)->Set((double) sp0256.speed);
+  GetParam(kSp0256Voice)->Set((double) sp0256.variant);
   {
     std::lock_guard<std::mutex> lock(mTextMutex);
     mPhonetic = phonetic;
@@ -1031,6 +1187,10 @@ void ORMNarrator::ApplySelectionFromIdle() {
     mEngineSegment->SetActive(engine);
   if (mVoiceSegment)
     mVoiceSegment->SetActive(tms.bank);
+  if (mTsiVoiceSegment)
+    mTsiVoiceSegment->SetActive(tsi.bank);
+  if (mSp0256VoiceSegment)
+    mSp0256VoiceSegment->SetActive(sp0256.variant);
   RebindVoiceSliders(engine);
 #if IPLUG_EDITOR
   if (GetUI()) {
@@ -1041,7 +1201,8 @@ void ORMNarrator::ApplySelectionFromIdle() {
 }
 
 void ORMNarrator::RebindVoiceSliders(int engine) {
-  // 槽 0/1 = Pitch/Speed 两种引擎都有效; 槽 2/3 = Mouth/Throat 仅 SAM (TMS 置灰断开)
+  // 槽 0..3 = Pitch/Speed/Mouth/Throat (SAM); TMS 槽 2/3 置灰;
+  // TSI/SP0256 仅槽 0 有效 (时钟/速率), 槽 1..3 置灰
   if (engine == 1) {
     const int tmsIdx[2] = {kTmsPitch, kTmsSpeed};
     for (int i = 0; i < 2; ++i) {
@@ -1057,7 +1218,36 @@ void ORMNarrator::RebindVoiceSliders(int engine) {
         mParamSliders[i]->SetGhost(true);
       }
     }
+    if (mParamSliders[0])
+      mParamSliders[0]->SetHeaderLabel(orm::Tr(orm::kTxtPitch, orm::UILang()));
+  } else if (engine == 2) {
+    if (mParamSliders[0]) {
+      mParamSliders[0]->SetParamIdx(kTsiSpeed);
+      mParamSliders[0]->SetValueFromDelegate(GetParam(kTsiSpeed)->GetNormalized());
+      mParamSliders[0]->SetGhost(false);
+      mParamSliders[0]->SetHeaderLabel(orm::Tr(orm::kTxtTsiRate, orm::UILang()));
+    }
+    for (int i = 1; i < 4; ++i) {
+      if (mParamSliders[i]) {
+        mParamSliders[i]->SetParamIdx(kNoParameter);
+        mParamSliders[i]->SetGhost(true);
+      }
+    }
+  } else if (engine == 3) {
+    if (mParamSliders[0]) {
+      mParamSliders[0]->SetParamIdx(kSp0256Speed);
+      mParamSliders[0]->SetValueFromDelegate(GetParam(kSp0256Speed)->GetNormalized());
+      mParamSliders[0]->SetGhost(false);
+      mParamSliders[0]->SetHeaderLabel(orm::Tr(orm::kTxtSp0256Rate, orm::UILang()));
+    }
+    for (int i = 1; i < 4; ++i) {
+      if (mParamSliders[i]) {
+        mParamSliders[i]->SetParamIdx(kNoParameter);
+        mParamSliders[i]->SetGhost(true);
+      }
+    }
   } else {
+    // SAM
     const int samIdx[4] = {kSamPitch, kSamSpeed, kSamMouth, kSamThroat};
     for (int i = 0; i < 4; ++i) {
       if (mParamSliders[i]) {
@@ -1066,9 +1256,15 @@ void ORMNarrator::RebindVoiceSliders(int engine) {
         mParamSliders[i]->SetGhost(false);
       }
     }
+    if (mParamSliders[0])
+      mParamSliders[0]->SetHeaderLabel(orm::Tr(orm::kTxtPitch, orm::UILang()));
   }
   if (mVoiceSegment)
     mVoiceSegment->Hide(engine != 1);
+  if (mTsiVoiceSegment)
+    mTsiVoiceSegment->Hide(engine != 2);
+  if (mSp0256VoiceSegment)
+    mSp0256VoiceSegment->Hide(engine != 3);
 }
 
 void ORMNarrator::PushPhraseToUI() {
@@ -1141,6 +1337,8 @@ void ORMNarrator::TriggerVoice(int note) {
     v.note = note;
     v.renderer.SetEnvelope(GetParam(kAttack)->Value(), GetParam(kRelease)->Value());
     const double bankRate = e->engine == 0 ? orm::SamEngine::kSampleRate
+                           : e->engine == 2 ? orm::TsiS14001Engine::RateForSet(e->tsi.bank, (float)(e->tsi.speed / 72.0))
+                           : e->engine == 3 ? orm::Sp0256Engine::RateFor((float)(e->sp0256.speed / 72.0))
                            : (e->tms.bank == kBankSspell) ? orm::Tms5110Engine::kSampleRate
                                                           : orm::Tms5220Engine::kSampleRate;
     v.renderer.SetPhrase(e->rendered.data(), (int) e->rendered.size(), bankRate, GetSampleRate());
@@ -1184,9 +1382,13 @@ void ORMNarrator::TriggerVoice(int note) {
   v.renderer.SetEnvelope(GetParam(kAttack)->Value(), GetParam(kRelease)->Value());
   const int engine = (int) GetParam(kEngine)->Int();
   const int bankIdx = (int) GetParam(kTmsBank)->Int();
-  const double phraseRate = (engine == 0) ? orm::SamEngine::kSampleRate
-                            : (bankIdx == kBankSspell) ? orm::Tms5110Engine::kSampleRate
-                                                       : orm::Tms5220Engine::kSampleRate;
+  const int tsiBank = (int) GetParam(kTsiBank)->Int();
+  const double phraseRate =
+      (engine == 0) ? orm::SamEngine::kSampleRate
+      : (engine == 2) ? orm::TsiS14001Engine::RateForSet(tsiBank, (float)(GetParam(kTsiSpeed)->Value() / 72.0))
+      : (engine == 3) ? orm::Sp0256Engine::RateFor((float)(GetParam(kSp0256Speed)->Value() / 72.0))
+      : (bankIdx == kBankSspell) ? orm::Tms5110Engine::kSampleRate
+                                 : orm::Tms5220Engine::kSampleRate;
   v.renderer.SetPhrase(mPhraseBuffer.data(), (int) mPhraseBuffer.size(), phraseRate,
                        GetSampleRate());
   double ratio = PitchRatioForNote(note);

@@ -28,6 +28,12 @@ openrm_add_plugin(${PROJECT_NAME}
     src/dsp/Tms5220Engine.cpp
     src/dsp/Tms5110Engine.h
     src/dsp/Tms5110Engine.cpp
+    src/dsp/TsiS14001Engine.h
+    src/dsp/TsiS14001Engine.cpp
+    src/dsp/Sp0256Engine.h
+    src/dsp/Sp0256Engine.cpp
+    src/dsp/s14001/S14001Roms.h
+    src/dsp/sp0256/Sp0256Roms.h
     src/dsp/tms/TmsWords.h
     src/dsp/tms/TmsVocab.h
     src/dsp/tms/VocabTI99.h
@@ -59,3 +65,15 @@ openrm_add_plugin(${PROJECT_NAME}
   DEFINES SAMPLE_TYPE_FLOAT
   FONTS Mixed-Regular.ttf Mixed-SemiBold.ttf Mixed-Bold.ttf
 )
+
+# macOS 渲染节拍改由 CVDisplayLink (vsync) 驱动 (与 Analyzer 对齐):
+# 默认自由运行的 60Hz NSTimer 与 CAMetalLayer 的 vsync present 双钟漂移,
+# 拖拽缩放时鼠标事件持续踢相位导致帧间隔震荡, 窗口服务器拉伸旧帧 → 文字发糊。
+# 宏使用处 IGraphicsMac_view.mm 直接编进各格式目标, 因此逐目标注入。
+if(APPLE)
+  foreach(_nr_fmt_tgt ${PROJECT_NAME}-app ${PROJECT_NAME}-vst3 ${PROJECT_NAME}-au)
+    if(TARGET ${_nr_fmt_tgt})
+      target_compile_definitions(${_nr_fmt_tgt} PRIVATE IGRAPHICS_CVDISPLAYLINK)
+    endif()
+  endforeach()
+endif()

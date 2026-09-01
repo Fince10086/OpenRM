@@ -5,7 +5,7 @@
 
 enum EParams
 {
-  kEngine = 0,  // 合成引擎: 0=SAM 1=TMS
+  kEngine = 0,  // 合成引擎: 0=SAM 1=TMS 2=TSI 3=SP0256
   kMapMode,     // 映射模式: 0=PHRASE 单句变调 1=BANK 逐键绑定
   kBaseKey,     // 触发基准键 (PHRASE 模式音高偏移的 0 点)
   // ---- SAM 专属音色参数 (与 TMS 解耦, 各引擎独立存取) ----
@@ -17,7 +17,13 @@ enum EParams
   kTmsSpeed,    // TMS 帧时长缩放 (值/72 = 速率倍数, 1.0 原速)
   kTmsPitch,    // TMS PHRASE 模式附加变调量 (varispeed)
   kTmsBank,     // TMS 音色/词库 (见 kBank* 常量)
-  // ---- 通用 (两种引擎共用) ----
+  // ---- TSI S14001A 专属 (与 SAM/TMS 解耦) ----
+  kTsiSpeed,    // TSI 芯片时钟缩放 (值/72 = 倍数, 1.0 原生时钟; 越大越快越高)
+  kTsiBank,     // TSI 子集 (见 kS14001* 常量)
+  // ---- SP0256 专属 (与 SAM/TMS/TSI 解耦) ----
+  kSp0256Speed, // SP0256 XTAL 时钟缩放 (值/72 = 倍数, 1.0 = 3.12MHz; 越大越快越高)
+  kSp0256Voice, // SP0256 语音版本 (见 kSp0256* 常量)
+  // ---- 通用 (各引擎共用) ----
   kAttack,      // 触发起音 ms
   kRelease,     // 松键释放 ms
   kRetrig,      // 重复 note-on 是否从头重放
@@ -35,6 +41,29 @@ enum
   kBankSspell = 3,   // TMS5110 / TMC0281 — Speak & Spell (1978)
   kBankClock = 4,    // VM61002 衍生女声时钟短语
   kNumBanks = 5
+};
+
+// TSI S14001A 子集索引 (kTsiBank) — 顺序即 TSI 音色选择段的顺序
+enum
+{
+  kS14001Bzk = 0,  // Stern Berzerk 街机 (VSU-1000 语音板)
+  kS14001F2k = 1,  // Stern Flight 2000 弹球 (MP-200)
+  kS14001Csc0 = 2, // Fidelity CSC 语音棋 BIOS0 (101-32107)
+  kS14001Csc1 = 3, // 64101 低半区
+  kS14001Csc2 = 4, // 64101 高半区
+  kS14001Csc3 = 5, // 64105 低半区
+  kS14001Csc4 = 6, // 64105 高半区
+  kS14001Csc5 = 7, // 64106 低半区
+  kS14001Csc6 = 8, // 64106 高半区
+  kNumS14001Sets = 9
+};
+
+// SP0256 语音版本索引 (kSp0256Voice) — 顺序即 SP0256 语音选择段的顺序
+enum
+{
+  kSp0256Al2 = 0,   // AL2 Narrator: 59 allophone + 5 停顿
+  kSp0256Intelliv = 1, // 012 Intellivoice: 43 单词 (数字/短语)
+  kNumSp0256 = 2
 };
 
 // 跨线程数据绑定用的控件 tag (AttachControl 第二参)

@@ -7,6 +7,8 @@
 #include "dsp/SamEngine.h"
 #include "dsp/Tms5220Engine.h"
 #include "dsp/Tms5110Engine.h"
+#include "dsp/TsiS14001Engine.h"
+#include "dsp/Sp0256Engine.h"
 #include "dsp/VoiceRenderer.h"
 
 #include <array>
@@ -50,6 +52,7 @@ public:
 #endif
 
   void OnIdle() override;
+  void OnParentWindowResize(int width, int height) override;
   bool ConstrainEditorResize(int &w, int &h) const override;
 
   // ---- 编辑器侧入口 (控件回调经 delegate 调用) ----
@@ -57,8 +60,10 @@ public:
   void OnNoteOffFromUI(int note);
   void SetPhraseText(const std::string &text); // 文本框提交 (PHRASE: 全局语句; BANK: 选中键的绑定)
   void SetPhoneticMode(bool phonetic);         // TEXT/PHONEMES 切换
-  void SetEngineFromUI(int idx);               // SAM|TMS 分段选择
+  void SetEngineFromUI(int idx);               // SAM|TMS|TSI|SP0256 分段选择
   void SetVoiceFromUI(int idx);                // TMS 音色/词库选择
+  void SetTsiVoiceFromUI(int idx);             // TSI 子集选择
+  void SetSp0256VoiceFromUI(int idx);          // SP0256 语音版本选择
   void SetMapModeFromUI(int idx);              // PHRASE|BANK 分段选择
 
 private:
@@ -69,9 +74,11 @@ private:
   {
     std::string text;
     bool phonetic = false;
-    int engine = 0; // 0=SAM 1=TMS5220
-    orm::SamSettings sam; // SAM 参数 (与 TMS 解耦)
-    orm::TmsSettings tms; // TMS 参数 (与 SAM 解耦)
+    int engine = 0; // 0=SAM 1=TMS5220 2=TSI S14001A 3=SP0256
+    orm::SamSettings sam;      // SAM 参数 (与其他引擎解耦)
+    orm::TmsSettings tms;      // TMS 参数 (与 SAM/TSI/SP0256 解耦)
+    orm::TsiSettings tsi;      // TSI 参数 (与 SAM/TMS/SP0256 解耦)
+    orm::Sp0256Settings sp0256; // SP0256 参数 (与 SAM/TMS/TSI 解耦)
     std::vector<float> rendered; // 惰性渲染缓存 (仅音频线程读写)
     bool dirty = true;
   };
@@ -81,7 +88,9 @@ private:
   int mUISelected = -1;                // 主线程当前选中键
   FlatSegmentControl *mMapSegment = nullptr;
   FlatSegmentControl *mEngineSegment = nullptr;
-  FlatSegmentControl *mVoiceSegment = nullptr; // TMS 音色/词库选择 (SAM 时隐藏)
+  FlatSegmentControl *mVoiceSegment = nullptr;    // TMS 音色/词库选择 (仅 TMS 显示)
+  FlatSegmentControl *mTsiVoiceSegment = nullptr; // TSI 子集选择 (仅 TSI 显示)
+  FlatSegmentControl *mSp0256VoiceSegment = nullptr; // SP0256 语音版本选择 (仅 SP0256 显示)
   // ---- 渲染与回放 ----
   struct Voice
   {
