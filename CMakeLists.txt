@@ -50,6 +50,8 @@ add_test(NAME loudness_test COMMAND loudness_test)
 
 add_executable(narrator_test tests/narrator_test.cpp
   plugins/Narrator/src/dsp/SamEngine.cpp
+  plugins/Narrator/src/dsp/Tms5220Engine.cpp
+  plugins/Narrator/src/dsp/Tms5110Engine.cpp
   plugins/Narrator/src/dsp/sam/sam.c
   plugins/Narrator/src/dsp/sam/render.c
   plugins/Narrator/src/dsp/sam/reciter.c)

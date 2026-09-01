@@ -24,6 +24,16 @@ openrm_add_plugin(${PROJECT_NAME}
     src/Strings.h
     src/dsp/SamEngine.h
     src/dsp/SamEngine.cpp
+    src/dsp/Tms5220Engine.h
+    src/dsp/Tms5220Engine.cpp
+    src/dsp/Tms5110Engine.h
+    src/dsp/Tms5110Engine.cpp
+    src/dsp/tms/TmsWords.h
+    src/dsp/tms/TmsVocab.h
+    src/dsp/tms/VocabTI99.h
+    src/dsp/tms/VocabAcorn.h
+    src/dsp/tms/VocabClock.h
+    src/dsp/tms/VocabSspell.h
     src/dsp/sam/sam.c
     src/dsp/sam/render.c
     src/dsp/sam/reciter.c

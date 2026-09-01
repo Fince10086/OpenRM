@@ -156,6 +156,25 @@ public:
       const float cx = KeyCenterX(mBaseKey, whiteW, b.L);
       g.FillTriangle(COL_900(), cx - 5.f, b.B, cx + 5.f, b.B, cx, b.B - 9.f);
     }
+
+    // 选中键标记 (高亮描边)
+    if (mSelectedNote >= mLowNote && mSelectedNote <= mHighNote)
+    {
+      if (IsBlack(mSelectedNote))
+      {
+        const float cx = KeyCenterX(mSelectedNote, whiteW, b.L);
+        const float blackW = whiteW * 0.62f;
+        const float blackH = b.H() * 0.62f;
+        g.DrawRect(IColor(255, 80, 190, 96),
+                   IRECT(cx - blackW * 0.5f, b.T, cx + blackW * 0.5f, b.T + blackH), &mBlend, 2.f);
+      }
+      else
+      {
+        const int wIdx = WhiteIndex(mSelectedNote);
+        g.DrawRect(IColor(255, 80, 190, 96),
+                   IRECT(b.L + wIdx * whiteW, b.T, b.L + (wIdx + 1) * whiteW, b.B), &mBlend, 2.f);
+      }
+    }
   }
 
   void SetNoteActive(int note, bool on)
@@ -165,6 +184,15 @@ public:
     if (mActive[(size_t)note] == on)
       return;
     mActive[(size_t)note] = on;
+    SetDirty(false);
+  }
+
+  // BANK 模式: 当前选中 (正在编辑) 的键, 画高亮框
+  void SetSelectedNote(int note)
+  {
+    if (mSelectedNote == note)
+      return;
+    mSelectedNote = note;
     SetDirty(false);
   }
 
@@ -178,14 +206,11 @@ private:
     return idx;
   }
 
-  // 该半音的视觉中心 (黑键贴在两个白键交界; 白键取键中心)
+  // 黑键中心 = 其左侧白键与右侧白键的交界, 即第 WhiteIndex(note) 个白键的右边缘。
+  // 之前多加 1 导致 C# 画在 D 右边、D# 画在 E 右边。
   float KeyCenterX(int note, float whiteW, float left) const
   {
-    // 向左找到最近的白键边界
-    int wIdx = WhiteIndex(note);
-    if (IsBlack(note))
-      wIdx += 1; // 黑键中心 = 与右侧白键的左边界
-    return left + wIdx * whiteW;
+    return left + WhiteIndex(note) * whiteW;
   }
 
   int NoteAt(float x, float y) const
@@ -227,6 +252,7 @@ private:
   int mHighNote;
   int mBaseKey = 48;
   int mPressedNote = -1;
+  int mSelectedNote = -1;
   std::array<bool, 128> mActive{};
 };
 

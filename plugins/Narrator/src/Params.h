@@ -5,17 +5,36 @@
 
 enum EParams
 {
-  kBaseKey = 0, // 触发基准键 (音高偏移的 0 点)
-  kPitch,       // SAM 原生音高
-  kSpeed,       // SAM 原生语速 (值越大越慢)
-  kMouth,       // SAM 口腔形变
-  kThroat,      // SAM 喉腔形变
+  kEngine = 0,  // 合成引擎: 0=SAM 1=TMS
+  kMapMode,     // 映射模式: 0=PHRASE 单句变调 1=BANK 逐键绑定
+  kBaseKey,     // 触发基准键 (PHRASE 模式音高偏移的 0 点)
+  // ---- SAM 专属音色参数 (与 TMS 解耦, 各引擎独立存取) ----
+  kSamPitch,    // SAM 原生音高 (0..255)
+  kSamSpeed,    // SAM 原生语速 (值越大越慢)
+  kSamMouth,    // SAM 口腔形变
+  kSamThroat,   // SAM 喉腔形变
+  // ---- TMS 专属 (与 SAM 解耦) ----
+  kTmsSpeed,    // TMS 帧时长缩放 (值/72 = 速率倍数, 1.0 原速)
+  kTmsPitch,    // TMS PHRASE 模式附加变调量 (varispeed)
+  kTmsBank,     // TMS 音色/词库 (见 kBank* 常量)
+  // ---- 通用 (两种引擎共用) ----
   kAttack,      // 触发起音 ms
   kRelease,     // 松键释放 ms
   kRetrig,      // 重复 note-on 是否从头重放
   kMono,        // 单音 (true) / 复音 (false)
   kGain,        // 输出电平 dB
   kNumParams
+};
+
+// TMS 音色/词库索引 (kTmsBank) — 顺序即 UI 音色选择段的顺序
+enum
+{
+  kBankMilitary = 0, // VM61002/3/4/5 官方/军事
+  kBankTi99 = 1,     // TI-99/4A 语音模块 (1979)
+  kBankAcorn = 2,    // Acorn BBC 语音系统 (1983)
+  kBankSspell = 3,   // TMS5110 / TMC0281 — Speak & Spell (1978)
+  kBankClock = 4,    // VM61002 衍生女声时钟短语
+  kNumBanks = 5
 };
 
 // 跨线程数据绑定用的控件 tag (AttachControl 第二参)

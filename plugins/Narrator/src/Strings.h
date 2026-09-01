@@ -50,6 +50,7 @@ enum EText {
   kTxtBaseKey,       // Base Key
   kTxtNarratorTitle, // Narrator
   kTxtEngine,        // SAM (引擎名标签, 当前固定)
+  kTxtVoice,         // VOICE (TMS 音色选择标签)
   kTxtTipKeyboard,
   kTxtTipPhrase,
   kTxtTipTimeline,
@@ -105,6 +106,7 @@ inline const char *Tr(int id, int lang) {
           "Base Key",
           "Narrator",
           "SAM",
+          "VOICE",
           "Click keys or play host MIDI to trigger speech",
           "Click to edit the phrase text (English)",
           "Rendered phrase waveform and play position",
@@ -156,6 +158,7 @@ inline const char *Tr(int id, int lang) {
           "基准键",
           "Narrator",
           "SAM",
+          "音色",
           "点击键盘或在宿主里弹 MIDI 触发说话",
           "点击编辑语句文本（仅英文）",
           "已渲染语句的波形与播放位置",

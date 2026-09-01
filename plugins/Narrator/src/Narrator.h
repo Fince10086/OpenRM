@@ -5,11 +5,14 @@
 #include "Strings.h"
 #include "IPlugQueue.h"
 #include "dsp/SamEngine.h"
+#include "dsp/Tms5220Engine.h"
+#include "dsp/Tms5110Engine.h"
 #include "dsp/VoiceRenderer.h"
 
 #include <array>
 #include <atomic>
 #include <functional>
+#include <map>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -52,10 +55,33 @@ public:
   // ---- 编辑器侧入口 (控件回调经 delegate 调用) ----
   void OnNoteOnFromUI(int note);   // 屏幕键盘/试听按钮触发
   void OnNoteOffFromUI(int note);
-  void SetPhraseText(const std::string &text); // 文本框提交
+  void SetPhraseText(const std::string &text); // 文本框提交 (PHRASE: 全局语句; BANK: 选中键的绑定)
   void SetPhoneticMode(bool phonetic);         // TEXT/PHONEMES 切换
+  void SetEngineFromUI(int idx);               // SAM|TMS 分段选择
+  void SetVoiceFromUI(int idx);                // TMS 音色/词库选择
+  void SetMapModeFromUI(int idx);              // PHRASE|BANK 分段选择
 
 private:
+  // ---- BANK 模式: 逐键绑定 ----
+  // 每个琴键可绑定独立的 词语/音素串 + 引擎 + 音色参数; 绑定后按该键即以
+  // 该组参数原速播放 (varispeed 只在 PHRASE 模式使用)。
+  struct BankEntry
+  {
+    std::string text;
+    bool phonetic = false;
+    int engine = 0; // 0=SAM 1=TMS5220
+    orm::SamSettings sam; // SAM 参数 (与 TMS 解耦)
+    orm::TmsSettings tms; // TMS 参数 (与 SAM 解耦)
+    std::vector<float> rendered; // 惰性渲染缓存 (仅音频线程读写)
+    bool dirty = true;
+  };
+  std::map<int, BankEntry> mBank;     // note → entry (mTextMutex 保护)
+  std::atomic<int> mPendingSelect{-1}; // 音频线程请求选中键
+  std::atomic<bool> mSelectChanged{false};
+  int mUISelected = -1;                // 主线程当前选中键
+  FlatSegmentControl *mMapSegment = nullptr;
+  FlatSegmentControl *mEngineSegment = nullptr;
+  FlatSegmentControl *mVoiceSegment = nullptr; // TMS 音色/词库选择 (SAM 时隐藏)
   // ---- 渲染与回放 ----
   struct Voice
   {
@@ -101,6 +127,10 @@ private:
   void RenderSegment(sample *out, int from, int to);
   void PushPhraseToUI();          // 渲染后向时间线控件推送包络
   void PushNoteStateToUI(bool on, int note);
+  void RenderBankEntry(BankEntry &e); // 引擎分派渲染绑定项 (音频线程)
+  void PushBankPhraseToUI(const BankEntry &e); // 绑定项渲染后推送时间线包络
+  void ApplySelectionFromIdle();      // 主线程: 把选中绑定的参数载入参数面板
+  void RebindVoiceSliders(int engine); // 主线程: 4 个音色滑块槽按引擎改绑参数
 
   // ---- UI ----
   int mThemeMode = 0;
