@@ -154,7 +154,8 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
   GetParam(kFFTWindow)->InitInt("WindowFFT", kFFTWindowHann, 0, kNumFFTWindows - 1, "");
   GetParam(kWindowVQT)->InitInt("WindowVQT", kFFTWindowClean, 0, kNumFFTWindows - 1, "");
   GetParam(kRtaOctave)->InitInt("RtaOctave", 0, 0, kNumRtaOctaveOptions - 1, ""); // 默认 1/6 Oct (索引 0; 档位: 1/6, 1/12, 1/24)
-  GetParam(kLoudPreset)->InitInt("LoudPreset", 0, 0, kNumLoudPresets - 1, ""); // 响度目标预设, 默认 -14
+  GetParam(kLoudPreset)->InitInt("LoudPreset", 1, 0, kNumLoudPresets - 1, ""); // 响度目标预设, 默认 -14 (索引 1)
+  GetParam(kLoudScale)->InitInt("LoudScale", 0, 0, kNumLoudScaleOptions - 1, ""); // 响度条刻度窗偏移, 默认 +9
   GetParam(kScopeRange)->InitInt("ScopeRange", 1, 0, 2, ""); // 声像显示范围档位: 0=-60, 1=-80, 2=-100 (默认 -80)
   mDefaultSnapshot = Snapshot();
   mStableSnapshot = Snapshot();
@@ -363,36 +364,36 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     // 弹道与频谱共用速度预设 (MIN..MAX) × LOG/LIN 释放, 峰值保持共用 HOLD 开关。
     mScopeCtrl = new StereoFieldControl(IRECT(20.f, 336.f, 752.f, 604.f));
     pGraphics->AttachControl(mScopeCtrl, kCtrlTagScope);
-    bindText(orm::kTxtScopeTitle, [this](const char *s) { if (mScopeCtrl) mScopeCtrl->SetTitleText(s); });
-    bindText(orm::kTxtScopeCorr, [this](const char *s) { if (mScopeCtrl) mScopeCtrl->SetCorrLabel(s); });
-    bindText(orm::kTxtScopeWidth, [this](const char *s) { if (mScopeCtrl) mScopeCtrl->SetWidthLabel(s); });
-    bindText(orm::kTxtScopeBalance, [this](const char *s) { if (mScopeCtrl) mScopeCtrl->SetBalanceLabel(s); });
-    bindText(orm::kTxtScopeAnti, [this](const char *s) { if (mScopeCtrl) mScopeCtrl->SetAntiLabel(s); });
 
-    // 声像范围循环按钮 (面板头部右缘, 与频谱 Range 按钮同款尺寸/样式);
+    // 声像范围循环按钮 (基线下仪表行右缘, 与频谱 Range 按钮同款尺寸/样式/地位);
     // attach 在面板之后 → 绘制于其上且命中测试优先
-    mScopeRangeBtn = new FlatCycleButton(IRECT(710.f, 337.f, 748.f, 356.f), kScopeRange,
+    mScopeRangeBtn = new FlatCycleButton(IRECT(386.f, 585.f, 424.f, 604.f), kScopeRange,
                                          {"-60", "-80", "-100"}, btnStyle);
     mScopeRangeBtn->SetScaleLabelStyle(true);
     pGraphics->AttachControl(mScopeRangeBtn);
     bindTip(mScopeRangeBtn, orm::kTxtTipScopeRange);
 
-    // ── 响度计读数 (右栏上方, 竖向堆叠) ──────────────────────────────────────
-    // I 大字号 + 目标差 + TARGET + LRA; 底部横条已移除 (频谱下方留空, 无分隔线);
+    // ── 响度计读数 (右栏上方, 无词标数字仪表面板) ──────────────────────────
+    // I 大读数 + 目标差 Δ (±10 LU 迷你刻度条, 中心=目标) + LRA (0..20 条) + M/S 行;
     // M/S/I 响度条在频谱面板右缘 (VU 条右侧), True Peak 在图例行。
     // 数据: 音频线程 LoudnessMeter 快照 → OnIdle 打包 LoudnessUiData 下发 (读数与响度条共用)。
-    mLoudCtrl = new LoudnessMeterControl(IRECT(784.f, 58.f, 940.f, 170.f));
+    mLoudCtrl = new LoudnessMeterControl(IRECT(784.f, 58.f, 940.f, 214.f));
     pGraphics->AttachControl(mLoudCtrl, kCtrlTagLoudness);
-    bindText(orm::kTxtLoudInt, [this](const char *s) { if (mLoudCtrl) mLoudCtrl->SetIntText(s); });
-    bindText(orm::kTxtLoudLra, [this](const char *s) { if (mLoudCtrl) mLoudCtrl->SetLraText(s); });
-    bindText(orm::kTxtLoudTarget, [this](const char *s) { if (mLoudCtrl) mLoudCtrl->SetTargetText(s); });
 
-    // 响度目标预设循环按钮 (-14 流媒体 / -16 Apple Music / -23 EBU R128): 读数下方
-    mLoudPresetBtn = new FlatCycleButton(IRECT(784.f, 176.f, 860.f, 206.f), kLoudPreset,
-                                         {"-14 LUFS", "-16 LUFS", "-23 LUFS"}, btnStyle);
+    // 响度目标预设循环按钮 (-9 / -14 / -23 / -24 LUFS): 读数面板 (±10 Δ 条的中心即目标) 下方
+    mLoudPresetBtn = new FlatCycleButton(IRECT(784.f, 222.f, 860.f, 252.f), kLoudPreset,
+                                         {"-9 LUFS", "-14 LUFS", "-23 LUFS", "-24 LUFS"}, btnStyle);
     mLoudPresetBtn->SetTextSize(11.f);
     pGraphics->AttachControl(mLoudPresetBtn);
     bindTip(mLoudPresetBtn, orm::kTxtTipLoudPreset);
+
+    // 响度条刻度窗偏移循环按钮 (+9 / +18 LU): M/S/I 条竖向刻度以目标为锚
+    // (顶 = 目标+偏移, 1/3 高度 = 目标, 底 = 目标-2×偏移), 与预设按钮同排右半格
+    mLoudScaleBtn = new FlatCycleButton(IRECT(864.f, 222.f, 940.f, 252.f), kLoudScale,
+                                        {"+9", "+18"}, btnStyle);
+    mLoudScaleBtn->SetTextSize(11.f);
+    pGraphics->AttachControl(mLoudScaleBtn);
+    bindTip(mLoudScaleBtn, orm::kTxtTipLoudScale);
 
     // 动态范围循环按钮: 位于频谱图底部右缘 (电平表竖条左侧), 顶替最底部刻度标签
     // (DrawDbGrid 跳过底部一条的文字)。右下角与频谱图右下对齐不留缝, 文字样式/位置
@@ -1275,6 +1276,9 @@ void ORMAnalyzer::OnIdle() {
                                        (long)kNumLoudPresets - 1);
     d.preset = preset;
     d.target = (float)kLoudTargets[preset];
+    const int scaleIdx = (int)std::clamp(std::lround(GetParam(kLoudScale)->Value()), 0L,
+                                         (long)kNumLoudScaleOptions - 1);
+    d.scaleOff = (int)kLoudScaleOffsets[scaleIdx];
     d.iValid = mLoudIValid.load(std::memory_order_relaxed) ? 1 : 0;
     d.lraValid = mLoudLraValid.load(std::memory_order_relaxed) ? 1 : 0;
     SendControlMsgFromDelegate(kCtrlTagLoudness, LoudnessMeterControl::kMsgTagLoudnessData,
@@ -1346,7 +1350,8 @@ void ORMAnalyzer::OnUIClose() {
   mFreezeBtn = nullptr;
   mSlopeBtn = nullptr;
   mLoudCtrl = nullptr;
-  mLoudPresetBtn = nullptr;
+    mLoudPresetBtn = nullptr;
+    mLoudScaleBtn = nullptr;
   mSettingsPanel = nullptr;
   mTextBindings.clear();
   mTooltipBindings.clear();

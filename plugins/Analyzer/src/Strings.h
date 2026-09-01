@@ -75,13 +75,11 @@ enum EText {
   kTxtWinClean,
   kTxtTipRtaOctave,
   kTxtTipVQTGamma,
-  kTxtLoudMomentary,  // 响度计: 瞬时响度 (M, 400ms)
-  kTxtLoudShort,      // 响度计: 短时响度 (S, 3s)
-  kTxtLoudInt,        // 响度计: 综合响度 (I, 双门限累计)
-  kTxtLoudLra,        // 响度计: 响度范围 (LRA)
-  kTxtLoudTp,         // 响度计: 真峰值
-  kTxtLoudTarget,     // 响度计: 目标
+  kTxtLoudMomentary,  // 响度计: 瞬时响度 (M, 400ms) —— 未使用
+  kTxtLoudShort,      // 响度计: 短时响度 (S, 3s) —— 未使用
+  kTxtLoudTp,         // 响度计: 真峰值 —— 未使用
   kTxtTipLoudPreset,  // 响度计: 目标预设 tooltip
+  kTxtTipLoudScale,   // 响度条: 刻度窗偏移 tooltip
   kTxtTipLoudReset,   // 响度计: RESET tooltip
   kTxtSpeedMin,       // 频谱速度预设按钮: 最慢 (MIN, 释放 4s)
   kTxtSpeedSlow,      // 频谱速度预设按钮: 慢速 (SLOW, 释放 2s)
@@ -89,11 +87,6 @@ enum EText {
   kTxtSpeedFast,      // 频谱速度预设按钮: 快速 (FAST, 释放 0.5s)
   kTxtSpeedMax,       // 频谱速度预设按钮: 最快 (MAX, 释放 0.2s)
   kTxtTipSpeed,       // 频谱速度预设 tooltip
-  kTxtScopeTitle,     // 声像显示面板标题
-  kTxtScopeCorr,      // 声像读数: 相关性
-  kTxtScopeWidth,     // 声像读数: 宽度
-  kTxtScopeBalance,   // 声像读数: 平衡
-  kTxtScopeAnti,      // 声像: 反相角标
   kTxtTipScopeRange,  // 声像显示范围 tooltip
   kNumTexts
 };
@@ -167,11 +160,9 @@ inline const char *Tr(int id, int lang) {
           "VQT low-frequency bandwidth floor gamma (L/M/H = 20/10/5 Hz): band width = fc/Q + gamma — H = narrowest low bands, finest low-frequency resolution; L = wider low bands, faster response",
           "MOMENTARY",
           "SHORT-TERM",
-          "INTEGRATED",
-          "LRA",
           "TRUE PEAK",
-          "TARGET",
-          "Loudness target preset: -14 (streaming music) / -16 (Apple Music) / -23 (EBU R128 broadcast)",
+          "Loudness target preset: -9 / -14 (streaming music) / -23 (EBU R128 broadcast) / -24",
+          "Loudness bar scale window offset (top = target + offset, 1/3 height = target, bottom = target - 2x offset): +9 / +18 LU",
           "Reset integrated loudness, LRA and true peak hold",
           "MIN",
           "SLOW",
@@ -179,11 +170,6 @@ inline const char *Tr(int id, int lang) {
           "FAST",
           "MAX",
           "Analyzer response speed (release time): LOG 4/2/1/0.5/0.2 s for MIN..MAX; LIN ≈ ×1.2 (4.8/2.4/1.2/0.6/0.25 s). Attack fixed 0.05 s. Click cycles slow → fast.",
-          "STEREO FIELD",
-          "CORRELATION",
-          "WIDTH",
-          "BALANCE",
-          "Anti-Phase",
           "Stereo display range: click to cycle floor -60 / -80 / -100 dB",
       },
       {
@@ -253,11 +239,9 @@ inline const char *Tr(int id, int lang) {
           "VQT 低频带宽下限 γ（低/中/高 = 20/10/5 Hz）：带宽 = fc/Q + γ —— 高档低频带最窄、最低频分辨力最高；低档低频带更宽、响应更快",
           "瞬时",
           "短时",
-          "总响度",
-          "LRA",
           "真峰值",
-          "目标",
-          "响度目标预设：-14（流媒体音乐）/ -16（Apple Music）/ -23（EBU R128 广播）",
+          "响度目标预设：-9 / -14（流媒体音乐）/ -23（EBU R128 广播）/ -24",
+          "响度条刻度窗偏移（顶 = 目标+偏移，1/3 高度 = 目标，底 = 目标-2×偏移）：+9 / +18 LU",
           "重置综合响度、LRA 与真峰值锁存",
           "最慢",
           "慢速",
@@ -265,11 +249,6 @@ inline const char *Tr(int id, int lang) {
           "快速",
           "最快",
           "频谱响应速度档位（释放时间）：LOG 下 MIN~MAX 为 4/2/1/0.5/0.2 秒；LIN 下约为 ×1.2（4.8/2.4/1.2/0.6/0.25 秒）。上升时间固定 0.05 秒。点击循环：慢 → 快。",
-          "声像",
-          "相关性",
-          "宽度",
-          "平衡",
-          "反相",
           "声像显示范围：点击循环切换底限 -60 / -80 / -100 dB",
       },
   };

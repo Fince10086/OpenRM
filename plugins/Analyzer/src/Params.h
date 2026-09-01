@@ -24,7 +24,8 @@ enum EParams {
   kFFTWindow,     // STFT 窗函数档位 (0: Hann/锐利, 1: BH5 5阶Blackman-Harris/纯净)
   kWindowVQT,     // VQT 窗函数档位 (0: Hann, 1: BH5), 与 STFT 独立保存
   kVQTGamma,      // VQT 低频带宽下限 γ (Hz): bw = fc/q + γ (低/中/高 = 20/10/5, 越小越精细)
-  kLoudPreset,    // 响度目标预设档位 (0: -14 流媒体, 1: -16 Apple, 2: -23 R128)
+  kLoudPreset,    // 响度目标预设档位 (0: -9, 1: -14, 2: -23, 3: -24 LUFS)
+  kLoudScale,     // 响度条刻度窗偏移档位 (顶 = 目标+偏移, 1/3 = 目标, 底 = 目标-2×偏移; 0: +9, 1: +18 LU)
   kScopeRange,    // 声像显示范围档位 (极坐标电平半径 dB 底限: 0: -60, 1: -80, 2: -100)
   kNumParams
 };
@@ -57,9 +58,15 @@ constexpr int kNumVQTGammaOptions = 3;
 constexpr double kHoldTimeSecs[] = {0.5, 2.0, 1e9};
 constexpr int kNumHoldTimeOptions = 3;
 
-// 响度目标预设 (LUFS): 流媒体音乐 -14 / Apple Music -16 / EBU R128 广播 -23
-constexpr double kLoudTargets[] = {-14.0, -16.0, -23.0};
-constexpr int kNumLoudPresets = 3;
+// 响度目标预设 (LUFS): -9 / -14 流媒体 / -23 EBU R128 广播 / -24
+constexpr double kLoudTargets[] = {-9.0, -14.0, -23.0, -24.0};
+constexpr int kNumLoudPresets = 4;
+
+// 响度条刻度窗偏移 (kLoudScale 存索引, LU): M/S/I 条竖向刻度以目标为锚 ——
+// 1/3 高度处 = 目标值, 顶部 = 目标+偏移, 底部 = 目标-2×偏移 (窗高 = 3×偏移)。
+// 例: 目标 -14、偏移 +18 → 顶 +4 / 1/3 -14 / 底 -50。
+constexpr double kLoudScaleOffsets[] = {9.0, 18.0};
+constexpr int kNumLoudScaleOptions = 2;
 
 // 声像显示范围档位 (kScopeRange 存索引): 极坐标电平扇形的半径 dB 底限
 constexpr double kScopeRangeDb[] = {-60.0, -80.0, -100.0};

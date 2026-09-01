@@ -51,6 +51,7 @@ struct LoudnessUiData {
   float tpMax;                // dBTP 锁存
   float target;               // 预设目标 LUFS
   int preset;                 // 预设档位索引
+  int scaleOff;               // M/S/I 条刻度窗偏移 (LU): 顶=目标+off, 1/3=目标, 底=目标-2·off
   int iValid, lraValid;       // I / LRA 有效性
 };
 

@@ -260,6 +260,7 @@ public:
       mShortTerm = d.shortTerm;
       mIntegrated = d.integrated;
       mTarget = d.target;
+      mScaleOff = (float)d.scaleOff;
       SetDirty(false);
     } else if (msgTag == kMsgTagReset) {
       ++mDataPkts; // 方案0: 数据帧分类计数
@@ -770,8 +771,25 @@ private:
     drawBar(barR, mVuR, mVuHoldR);
   }
 
-  // 响度 M/S/I 三条 (LUFS): 位于 VU 条右侧, 样式与 VU 条一致 (轨道 + 刻度 + 渐变段),
-  // 颜色沿用响度计原迷你条配色 (绿/黄/红, -60..0 LUFS), 顶部画目标线。
+  // 语义色降饱和 (固定 RGB 安全色随主题饱和档位; 纯黑白主题下变灰阶; 与声像仪表行同式)
+  static float MeterSatScale2() {
+    const int sat = ThemeSatMax();
+    return (sat <= 30) ? (float)sat / 30.f : (1.f + (float)(sat - 30) / 55.f);
+  }
+  static IColor SemColor(IColor c) {
+    const float m = std::clamp(MeterSatScale2(), 0.f, 1.f);
+    const float lum = 0.299f * c.R + 0.587f * c.G + 0.114f * c.B;
+    return IColor(c.A, (int)std::lround(c.R * m + lum * (1.f - m)),
+                       (int)std::lround(c.G * m + lum * (1.f - m)),
+                       (int)std::lround(c.B * m + lum * (1.f - m)));
+  }
+
+  // 响度 M/S/I 三条 (LUFS): 位于 VU 条右侧, 样式与 VU 条一致 (轨道 + 刻度 + 渐变段)。
+  // 竖向刻度以目标为锚 (kMsgTagLoudness 随帧下发的 target + scaleOff):
+  //   1/3 高度 = 目标值, 顶部 = 目标+偏移, 底部 = 目标-2×偏移 (窗高 = 3×偏移);
+  //   目标无效时退回固定 -60..0 旧制。顶部刻度贴条顶翻到线下侧 (与旧 0 刻度同处理)。
+  // 语义色改为目标相对 (与 Δ 读数同三段式): ≤目标-1 黄 (偏安静) / |Δ|≤1 绿 (达标) /
+  //   ≥目标+1 红 (偏响); 颜色走 satScale 降饱和, 纯黑白主题下自动变灰阶。
   void DrawLoudBars(IGraphics &g, const IRECT &plot) {
     const float scaleL = plot.R + 2.f * kGainBarW + kVuScaleW + 2.f * kVuBarW;
     const float bar0L = scaleL + kLufsScaleW;
@@ -779,44 +797,60 @@ private:
     const IRECT barS(barM.R, plot.T, barM.R + kLoudBarW, plot.B);
     const IRECT barI(barS.R, plot.T, barS.R + kLoudBarW, plot.B);
 
-    // LUFS 刻度文字 -60/-30/0 (0 贴条顶翻到线下侧, 与 VU 刻度同样式)
+    // 目标锚定刻度窗 (顶/1/3/底 三个刻度值; 目标无效退回固定 -60..0)
+    const bool tgtValid = mTarget > -100.f;
+    const float off = tgtValid ? mScaleOff : 0.f;
+    const float topL = tgtValid ? mTarget + off : 0.f;
+    const float botL = tgtValid ? mTarget - 2.f * off : -60.f;
+    const float span = topL - botL;
+
+    auto yOfL = [&](float lufs) {
+      return plot.B - std::clamp((lufs - botL) / span, 0.f, 1.f) * plot.H();
+    };
+
+    // 刻度文字: 底 (目标-2·off) / 1/3 (目标) / 顶 (目标+off, 贴条顶翻到线下侧)
     const IText t(14, COL_700(), kFontRegular, EAlign::Far, EVAlign::Bottom);
-    struct LTick { int lufs; const char *txt; };
-    static const LTick kTicks[] = {{-60, "-60"}, {-30, "-30"}, {0, "0"}};
-    for (const auto &tk : kTicks) {
-      const float y = plot.B - (float)(tk.lufs + 60) / 60.f * plot.H();
-      IRECT labelR(scaleL, y - kLabelH - 1.f, scaleL + kLufsScaleW - kTickRight, y - 1.f);
-      if (tk.lufs == 0)
-        labelR = IRECT(scaleL, plot.T + 1.f, scaleL + kLufsScaleW - kTickRight, plot.T + 1.f + kLabelH);
-      g.DrawText(t, tk.txt, labelR);
+    const IText flipT(14, COL_700(), kFontRegular, EAlign::Far, EVAlign::Top);
+    auto drawTick = [&](float lufs, bool flip) {
+      char buf[8];
+      std::snprintf(buf, sizeof(buf), "%d", (int)std::lround(lufs));
+      if (flip)
+        g.DrawText(flipT, buf, IRECT(scaleL, plot.T + 1.f, scaleL + kLufsScaleW - kTickRight,
+                                     plot.T + 1.f + kLabelH));
+      else {
+        const float y = yOfL(lufs);
+        g.DrawText(t, buf, IRECT(scaleL, y - kLabelH - 1.f, scaleL + kLufsScaleW - kTickRight, y - 1.f));
+      }
+    };
+    drawTick(topL, true);
+    drawTick(mTarget, false);
+    drawTick(botL, false);
+
+    // 目标线 (跨 M/S/I 三条), 落在 1/3 高度刻度处
+    if (tgtValid) {
+      const float yT = yOfL(mTarget);
+      g.FillRect(COL_900(), IRECT(barM.L, yT - 1.f, barI.R, yT + 1.f));
     }
 
-    // 目标线 (跨 M/S/I 三条), 与响度计原迷你条一致
-    if (mTarget > -100.f) {
-      const float yT = plot.B - std::clamp((mTarget + 60.f) / 60.f, 0.f, 1.f) * plot.H();
-      if (yT > plot.T && yT < plot.B)
-        g.FillRect(COL_900(), IRECT(barM.L, yT - 1.f, barI.R, yT + 1.f));
-    }
-
+    // 语义色段 (目标相对, 与 Δ 读数同三段式; satScale 降饱和)
     struct LStop { float lufs; IColor c; };
     const LStop stops[] = {
-      {-60.f, IColor(255, 96, 186, 96)},  // -60 绿 (原 M/S 配色, 颜色暂不变)
-      {-18.f, IColor(255, 232, 173, 40)}, // -18 黄
-      {-6.f, IColor(255, 226, 60, 52)},   // -6 红
-      {0.f, IColor(255, 226, 60, 52)},    // 0 红
+      {botL, SemColor(MeterYellow())}, // ≤ 目标-1 偏安静
+      {mTarget - 1.f, SemColor(MeterGreen())},
+      {mTarget + 1.f, SemColor(MeterRed())},
+      {topL, SemColor(MeterRed())},    // ≥ 目标+1 偏响
     };
     const int nStops = (int)(sizeof(stops) / sizeof(stops[0]));
-    auto tOfL = [](float lufs) { return std::clamp((lufs + 60.f) / 60.f, 0.f, 1.f); };
     const float seamOv = 1.f / std::max(1.f, g.GetScreenScale() * g.GetDrawScale());
 
     // 单条: 轨道 + 分段 2-stop 渐变填充 (NanoVG 后端不支持多 stop, 见 DrawMeterBar) + 顶部小标签
     auto drawBar = [&](const IRECT &bar, float lufs, const char *label) {
       g.FillRect(COL_300(), bar);
       if (lufs > -99.f) {
-        const float yTop = plot.B - std::clamp((lufs + 60.f) / 60.f, 0.f, 1.f) * plot.H();
+        const float yTop = yOfL(lufs);
         for (int i = 0; i + 1 < nStops; ++i) {
-          const float yA = plot.T + tOfL(stops[i].lufs) * plot.H();
-          const float yB = plot.T + tOfL(stops[i + 1].lufs) * plot.H();
+          const float yA = yOfL(stops[i].lufs);
+          const float yB = yOfL(stops[i + 1].lufs);
           if (yB <= yTop)
             continue;
           const float rT = std::max(yA - seamOv, yTop);
@@ -1416,6 +1450,7 @@ private:
   float mMomentary = -120.f, mShortTerm = -120.f; // 响度 M/S (LUFS)
   float mIntegrated = -120.f;               // 总响度 I (LUFS)
   float mTarget = -14.f;                    // 响度目标 (LUFS)
+  float mScaleOff = 9.f;                    // 响度条刻度窗偏移 (LU, kMsgTagLoudness 随帧透传; 顶=目标+off, 1/3=目标, 底=目标-2·off)
   std::vector<int> mBinToBand;     // 预计算: bin -> band 映射 (-1 = 频段外)
   std::array<bool, kSpectrumBands> mBandUsed{}; // FFT: 本帧有 bin 的 band 标记 (含首带入场线), 绘制门控
   int mMode = 0;                   // 分析模式: 0=FFT, 1=VQT, 2=PBT, 3=RTA

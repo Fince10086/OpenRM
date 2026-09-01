@@ -114,7 +114,7 @@ private:
 
   SpectrumPad *mSpectrumPad = nullptr;
   StereoFieldControl *mScopeCtrl = nullptr;   // 声像显示面板 (频谱下方空闲区, PAZ 式极坐标电平)
-  FlatCycleButton *mScopeRangeBtn = nullptr;  // 声像显示范围循环按钮 (面板头部右缘)
+  FlatCycleButton *mScopeRangeBtn = nullptr;  // 声像显示范围循环按钮 (基线下仪表行右端)
   FlatCycleButton *mResBtn = nullptr;      // STFT 分辨率循环按钮 (LOW/MID/HIGH)
   FlatCycleButton *mWindowBtn = nullptr;   // 窗函数循环按钮 (SHARP/CLEAN, STFT 与 VQT 各自独立档位, 按模式改绑参数)
   FlatCycleButton *mPbtLfResBtn = nullptr; // PBT 低频分辨率循环按钮 (40/20/10 Hz)
@@ -132,8 +132,9 @@ private:
   FlatToggleControl *mLevelHoldBtn = nullptr;   // 峰值保持开关 (HOLD, 反色开关样式)
   FlatCycleButton *mLevelHoldTimeBtn = nullptr; // 峰值保持时长循环按钮 (0.5s / 2s / ∞)
   FlatToggleControl *mFreezeBtn = nullptr; // 冻结开关 (FREEZE, 反色开关样式, 同 HOLD)
-  LoudnessMeterControl *mLoudCtrl = nullptr;    // 响度计读数 (右栏上方: I/目标差/TARGET/LRA)
-  FlatCycleButton *mLoudPresetBtn = nullptr;    // 响度目标预设循环按钮 (-14 / -16 / -23 LUFS)
+  LoudnessMeterControl *mLoudCtrl = nullptr;    // 响度计读数 (右栏上方: I 大读数 + Δ/LRA 迷你条 + M/S 行)
+  FlatCycleButton *mLoudPresetBtn = nullptr;    // 响度目标预设循环按钮 (-9 / -14 / -23 / -24 LUFS)
+  FlatCycleButton *mLoudScaleBtn = nullptr;     // 响度条刻度窗偏移循环按钮 (+9 / +18 LU)
 
   int mSentMode = -1;
   int mSentWindowFFT = -1; // STFT 窗函数档位 (kFFTWindow), OnIdle 增量去重
