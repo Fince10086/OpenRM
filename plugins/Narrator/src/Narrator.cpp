@@ -365,7 +365,8 @@ ORMNarrator::ORMNarrator(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
               text = mPhraseText;
             }
           }
-          if (!text.empty() && text.back() != ' ' && text.back() != '\n') {
+          const bool isSamPhonetic = (GetParam(kEngine)->Int() == kEngineSAM && mPhonetic);
+          if (!isSamPhonetic && !text.empty() && text.back() != ' ' && text.back() != '\n') {
             text += " ";
           }
           text += word;
@@ -377,6 +378,7 @@ ORMNarrator::ORMNarrator(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
         });
     mCandidatePanel->SetEngine(GetParam(kEngine)->Int());
     mCandidatePanel->SetTmsBank(GetParam(kTmsBank)->Int());
+    mCandidatePanel->SetPhoneticMode(mPhonetic);
     pGraphics->AttachControl(mCandidatePanel);
     // 数值格式: 整型参数 / 毫秒 / 分贝 (TMS 语速显示为速率倍数)
     auto intFmt = [](WDL_String &ds, const IParam *p) {
@@ -683,6 +685,8 @@ void ORMNarrator::SetPhoneticMode(bool phonetic) {
   mRenderDirty = true;
   if (mPhoneticSegment)
     mPhoneticSegment->SetActive(phonetic ? 1 : 0);
+  if (mCandidatePanel)
+    mCandidatePanel->SetPhoneticMode(phonetic);
 }
 
 void ORMNarrator::SetEngineFromUI(int idx) {
@@ -704,8 +708,10 @@ void ORMNarrator::SetEngineFromUI(int idx) {
   }
   if (mEngineSegment)
     mEngineSegment->SetActive(v);
-  if (mCandidatePanel)
+  if (mCandidatePanel) {
     mCandidatePanel->SetEngine(v);
+    mCandidatePanel->SetPhoneticMode(mPhonetic);
+  }
   // 4 个音色滑块槽按引擎改绑 (SAM: pitch/speed/mouth/throat; TMS: pitch/speed + 灰)
   RebindVoiceSliders(v);
 #if IPLUG_EDITOR
@@ -1516,6 +1522,7 @@ void ORMNarrator::ApplySelectionFromIdle() {
   if (mCandidatePanel) {
     mCandidatePanel->SetEngine(engine);
     mCandidatePanel->SetTmsBank(tms.bank);
+    mCandidatePanel->SetPhoneticMode(phonetic);
   }
   RebindVoiceSliders(engine);
 #if IPLUG_EDITOR

@@ -58,11 +58,28 @@ public:
     SetDirty(false);
   }
 
+  void SetPhoneticMode(bool phonetic)
+  {
+    if (mPhonetic == phonetic)
+      return;
+    mPhonetic = phonetic;
+    mScrollY = 0.f;
+    mHoverIdx = -1;
+    mPressedIdx = -1;
+    UpdateSections();
+    SetDirty(false);
+  }
+
   void SetLanguage(int lang)
   {
     mLang = lang;
     UpdateSections();
     SetDirty(false);
+  }
+
+  bool HasCandidates() const
+  {
+    return (mEngine == kEngineTMS) || (mEngine == kEngineSAM && mPhonetic);
   }
 
   void OnResize() override
@@ -78,21 +95,21 @@ public:
     // 绘制面板背景 (COL_100, 无任何内边框/描边)
     g.FillRect(COL_100(), b);
 
-    // 非 TMS 模式: 显示说明书
-    if (mEngine != kEngineTMS)
+    // 非候选词/非音素模式: 显示说明书
+    if (!HasCandidates())
     {
       const IRECT infoRect = b.GetPadded(-8.f);
-      IText infoHdr(13, COL_900(), kFontSemiBold, EAlign::Near, EVAlign::Top);
-      IText infoBody(12, COL_700(), kFontRegular, EAlign::Near, EVAlign::Top);
+      IText infoHdr(15, COL_900(), kFontSemiBold, EAlign::Near, EVAlign::Top);
+      IText infoBody(14, COL_700(), kFontRegular, EAlign::Near, EVAlign::Top);
 
-      const IRECT hdrR(infoRect.L, infoRect.T, infoRect.R, infoRect.T + 20.f);
-      const IRECT bodyR(infoRect.L, infoRect.T + 26.f, infoRect.R, infoRect.B);
+      const IRECT hdrR(infoRect.L, infoRect.T, infoRect.R, infoRect.T + 22.f);
+      const IRECT bodyR(infoRect.L, infoRect.T + 28.f, infoRect.R, infoRect.B);
       g.DrawText(infoHdr, mNonTmsTitle.c_str(), hdrR);
       g.DrawText(infoBody, mNonTmsBody.c_str(), bodyR);
       return;
     }
 
-    // TMS 模式: 视口裁剪
+    // 候选区: 视口裁剪
     g.PathClipRegion(b);
 
     // 1. 绘制小标题 (无下划线, 纯文字排版)
@@ -101,11 +118,11 @@ public:
       const IRECT r = sec.titleRect.GetTranslated(0.f, b.T - mScrollY);
       if (r.B < b.T || r.T > b.B)
         continue;
-      IText t(12, COL_700(), kFontSemiBold, EAlign::Near, EVAlign::Middle);
+      IText t(15, COL_700(), kFontSemiBold, EAlign::Near, EVAlign::Middle);
       g.DrawText(t, sec.title.c_str(), r);
     }
 
-    // 2. 绘制候选词标签 (Flow Layout)
+    // 2. 绘制候选词/音素按钮 (Flow Layout)
     for (size_t i = 0; i < mItems.size(); ++i)
     {
       const auto &item = mItems[i];
@@ -115,11 +132,63 @@ public:
 
       const bool isPressed = ((int) i == mPressedIdx);
       const bool isHover = ((int) i == mHoverIdx);
-      const IColor fill = isPressed ? COL_900() : (isHover ? COL_500() : COL_300());
 
-      g.FillRect(fill, r);
-      IText t(13, isPressed ? COL_100() : COL_900(), kFontSemiBold, EAlign::Center, EVAlign::Middle);
-      g.DrawText(t, item.word.c_str(), r);
+      if (item.isSplit)
+      {
+        const float splitX = r.L + item.splitW;
+        const IRECT leftR(r.L, r.T, splitX, r.B);
+        const IRECT rightR(splitX, r.T, r.R, r.B);
+
+        // 左半部分: 音素代码区底色 (未激活深色一点)
+        // 右半部分: 比左半部分略微浅一点点 (light mode: 212 vs 228)
+        const IColor leftFill = isPressed ? COL_900() : isHover ? COL_500() : WarmGray(ThemeMode() ? 228 : 212);
+        const IColor rightFill = isPressed ? COL_900() : isHover ? WarmGray(180) : WarmGray(ThemeMode() ? 212 : 228);
+
+        g.FillRect(leftFill, leftR);
+        g.FillRect(rightFill, rightR);
+
+        const IColor fgLeft = isPressed ? COL_100() : COL_900();
+        const IColor fgRight = isPressed ? COL_100() : COL_900();
+
+        // 左半部分文字: 音素代码 (SemiBold 居中, 紧凑大字号 19)
+        IText tCode(19, fgLeft, kFontSemiBold, EAlign::Center, EVAlign::Middle);
+        g.DrawText(tCode, item.word.c_str(), leftR);
+
+        // 右半部分文字: 示例词 (前缀 Regular 400, 目标字母 SemiBold 600, 紧凑大字号 17.5)
+        IText tReg(17.5f, fgRight, kFontRegular, EAlign::Near, EVAlign::Middle);
+        IText tBold(17.5f, fgRight, kFontSemiBold, EAlign::Near, EVAlign::Middle);
+
+        IRECT dummy;
+        const float wPre = item.prefix.empty() ? 0.f : g.MeasureText(tReg, item.prefix.c_str(), dummy);
+        const float wBold = item.boldKey.empty() ? 0.f : g.MeasureText(tBold, item.boldKey.c_str(), dummy);
+        const float wSuf = item.suffix.empty() ? 0.f : g.MeasureText(tReg, item.suffix.c_str(), dummy);
+
+        const float totalW = wPre + wBold + wSuf;
+        const float startX = rightR.MW() - totalW * 0.5f;
+
+        float curX = startX;
+        if (!item.prefix.empty())
+        {
+          g.DrawText(tReg, item.prefix.c_str(), IRECT(curX, rightR.T, curX + wPre + 1.f, rightR.B));
+          curX += wPre;
+        }
+        if (!item.boldKey.empty())
+        {
+          g.DrawText(tBold, item.boldKey.c_str(), IRECT(curX, rightR.T, curX + wBold + 1.f, rightR.B));
+          curX += wBold;
+        }
+        if (!item.suffix.empty())
+        {
+          g.DrawText(tReg, item.suffix.c_str(), IRECT(curX, rightR.T, curX + wSuf + 1.f, rightR.B));
+        }
+      }
+      else
+      {
+        const IColor fill = isPressed ? COL_900() : (isHover ? COL_500() : COL_300());
+        g.FillRect(fill, r);
+        IText t(19, isPressed ? COL_100() : COL_900(), kFontSemiBold, EAlign::Center, EVAlign::Middle);
+        g.DrawText(t, item.word.c_str(), r);
+      }
     }
 
     g.PathClipRegion();
@@ -169,7 +238,7 @@ public:
       return;
     }
 
-    if (mEngine == kEngineTMS)
+    if (HasCandidates())
     {
       const int idx = HitTestItem(x, y);
       if (idx >= 0)
@@ -242,7 +311,7 @@ public:
 
   void OnMouseOver(float x, float y, const IMouseMod &mod) override
   {
-    if (mEngine == kEngineTMS)
+    if (HasCandidates())
     {
       const int idx = HitTestItem(x, y);
       if (idx != mHoverIdx)
@@ -282,10 +351,30 @@ private:
     return -1;
   }
 
+  struct WordItem
+  {
+    std::string code;
+    std::string prefix;
+    std::string boldKey;
+    std::string suffix;
+    bool isSplit = false;
+  };
+
   struct WordSection
   {
     std::string title;
-    std::vector<std::string> words;
+    std::vector<WordItem> items;
+
+    void AddWord(const std::string &w)
+    {
+      items.push_back({w, "", "", "", false});
+    }
+
+    void AddSplit(const std::string &code, const std::string &pre,
+                  const std::string &bold, const std::string &suf)
+    {
+      items.push_back({code, pre, bold, suf, true});
+    }
   };
 
   void UpdateSections()
@@ -321,21 +410,21 @@ private:
           WordSection secNum{zh ? "数字与序数" : "NUMBERS & ORDINALS", {}};
           for (const char *s : kMilNum)
           {
-            secNum.words.emplace_back(s);
+            secNum.AddWord(s);
             used.insert(s);
           }
 
           WordSection secLetters{zh ? "单字母" : "SINGLE LETTERS", {}};
           for (const char *s : kMilLetters)
           {
-            secLetters.words.emplace_back(s);
+            secLetters.AddWord(s);
             used.insert(s);
           }
 
           WordSection secNato{zh ? "NATO 音标字母" : "NATO PHONETICS", {}};
           for (const char *s : kMilNato)
           {
-            secNato.words.emplace_back(s);
+            secNato.AddWord(s);
             used.insert(s);
           }
 
@@ -344,7 +433,7 @@ private:
           {
             const char *w = orm::tms::military::kWords[i].name;
             if (used.find(w) == used.end())
-              secWords.words.emplace_back(w);
+              secWords.AddWord(w);
           }
 
           mSections.push_back(std::move(secNum));
@@ -358,7 +447,7 @@ private:
         {
           WordSection secWords{zh ? "词条 (TI-99/4A)" : "VOCABULARY (TI-99/4A)", {}};
           for (int i = 0; i < orm::tms::ti99::kNumWords; ++i)
-            secWords.words.emplace_back(orm::tms::ti99::kWords[i].name);
+            secWords.AddWord(orm::tms::ti99::kWords[i].name);
           mSections.push_back(std::move(secWords));
           break;
         }
@@ -376,21 +465,21 @@ private:
           WordSection secTones{zh ? "停顿与音调" : "TONES & PAUSES", {}};
           for (const char *s : kAcornTones)
           {
-            secTones.words.emplace_back(s);
+            secTones.AddWord(s);
             used.insert(s);
           }
 
           WordSection secSuffix{zh ? "音节后缀" : "SUFFIXES", {}};
           for (const char *s : kAcornSuffix)
           {
-            secSuffix.words.emplace_back(s);
+            secSuffix.AddWord(s);
             used.insert(s);
           }
 
           WordSection secNum{zh ? "数字与计数" : "NUMBERS", {}};
           for (const char *s : kAcornNum)
           {
-            secNum.words.emplace_back(s);
+            secNum.AddWord(s);
             used.insert(s);
           }
 
@@ -399,7 +488,7 @@ private:
           {
             const char *w = orm::tms::acorn::kWords[i].name;
             if (used.find(w) == used.end())
-              secWords.words.emplace_back(w);
+              secWords.AddWord(w);
           }
 
           mSections.push_back(std::move(secTones));
@@ -422,21 +511,21 @@ private:
           for (char c = 'A'; c <= 'Z'; ++c)
           {
             std::string s(1, c);
-            secLetters.words.push_back(s);
+            secLetters.AddWord(s);
             used.insert(s);
           }
 
           WordSection secNum{zh ? "数字" : "NUMBERS", {}};
           for (const char *s : kSspellNum)
           {
-            secNum.words.emplace_back(s);
+            secNum.AddWord(s);
             used.insert(s);
           }
 
           WordSection secPhrases{zh ? "短语" : "PHRASES", {}};
           for (const char *s : kSspellPhrases)
           {
-            secPhrases.words.emplace_back(s);
+            secPhrases.AddWord(s);
             used.insert(s);
           }
 
@@ -445,7 +534,7 @@ private:
           {
             const char *w = orm::tms::sspell::kWords[i].name;
             if (used.find(w) == used.end())
-              secWords.words.emplace_back(w);
+              secWords.AddWord(w);
           }
 
           mSections.push_back(std::move(secLetters));
@@ -466,7 +555,7 @@ private:
           WordSection secNum{zh ? "数字" : "NUMBERS", {}};
           for (const char *s : kClockNum)
           {
-            secNum.words.emplace_back(s);
+            secNum.AddWord(s);
             used.insert(s);
           }
 
@@ -475,7 +564,7 @@ private:
           {
             const char *w = orm::tms::clock::kWords[i].name;
             if (used.find(w) == used.end())
-              secPhrases.words.emplace_back(w);
+              secPhrases.AddWord(w);
           }
 
           mSections.push_back(std::move(secPhrases));
@@ -486,6 +575,88 @@ private:
         default:
           break;
       }
+    }
+    else if (mEngine == kEngineSAM && mPhonetic)
+    {
+      // 1. 元音 (VOWELS)
+      WordSection secVowels{zh ? "1. 元音 (VOWELS)" : "1. VOWELS", {}};
+      // 单元音 (13)
+      secVowels.AddSplit("IY", "f", "ee", "t");
+      secVowels.AddSplit("IH", "p", "i", "n");
+      secVowels.AddSplit("EH", "b", "e", "g");
+      secVowels.AddSplit("AE", "S", "a", "m");
+      secVowels.AddSplit("AA", "p", "o", "t");
+      secVowels.AddSplit("AH", "b", "u", "dget");
+      secVowels.AddSplit("AO", "t", "a", "lk");
+      secVowels.AddSplit("OH", "c", "o", "ne");
+      secVowels.AddSplit("UH", "b", "oo", "k");
+      secVowels.AddSplit("UX", "l", "oo", "t");
+      secVowels.AddSplit("ER", "b", "ir", "d");
+      secVowels.AddSplit("AX", "g", "a", "llon");
+      secVowels.AddSplit("IX", "d", "i", "git");
+      // 双元音 (6)
+      secVowels.AddSplit("EY", "m", "a", "de");
+      secVowels.AddSplit("AY", "h", "igh", "");
+      secVowels.AddSplit("OY", "b", "oy", "");
+      secVowels.AddSplit("AW", "h", "ow", "");
+      secVowels.AddSplit("OW", "sl", "ow", "");
+      secVowels.AddSplit("UW", "cr", "ew", "");
+      // 成音节特例 (3)
+      secVowels.AddSplit("UL", "sett", "le", "");
+      secVowels.AddSplit("UM", "astron", "om", "y");
+      secVowels.AddSplit("UN", "funct", "ion", "");
+      mSections.push_back(std::move(secVowels));
+
+      // 2. 辅音 (CONSONANTS)
+      WordSection secConsonants{zh ? "2. 辅音 (CONSONANTS)" : "2. CONSONANTS", {}};
+      // 浊辅音 (16)
+      secConsonants.AddSplit("R", "", "r", "ed");
+      secConsonants.AddSplit("L", "a", "ll", "ow");
+      secConsonants.AddSplit("W", "a", "w", "ay");
+      secConsonants.AddSplit("WH", "", "wh", "ale");
+      secConsonants.AddSplit("Y", "", "y", "ou");
+      secConsonants.AddSplit("M", "Sa", "m", "");
+      secConsonants.AddSplit("N", "ma", "n", "");
+      secConsonants.AddSplit("NX", "so", "ng", "");
+      secConsonants.AddSplit("B", "", "b", "ad");
+      secConsonants.AddSplit("D", "", "d", "og");
+      secConsonants.AddSplit("G", "a", "g", "ain");
+      secConsonants.AddSplit("J", "", "j", "udge");
+      secConsonants.AddSplit("Z", "", "z", "oo");
+      secConsonants.AddSplit("ZH", "plea", "s", "ure");
+      secConsonants.AddSplit("V", "se", "v", "en");
+      secConsonants.AddSplit("DH", "", "th", "en");
+      // 清辅音 (9)
+      secConsonants.AddSplit("S", "", "S", "am");
+      secConsonants.AddSplit("SH", "fi", "sh", "");
+      secConsonants.AddSplit("F", "", "f", "ish");
+      secConsonants.AddSplit("TH", "", "th", "in");
+      secConsonants.AddSplit("P", "", "p", "oke");
+      secConsonants.AddSplit("T", "", "t", "alk");
+      secConsonants.AddSplit("K", "", "c", "ake");
+      secConsonants.AddSplit("CH", "spee", "ch", "");
+      secConsonants.AddSplit("/H", "a", "h", "ead");
+      // 规则/内部特例 (7)
+      secConsonants.AddSplit("Q", "kitt", "-", "en");
+      secConsonants.AddSplit("DX", "pi", "t", "y");
+      secConsonants.AddSplit("/X", "", "H", " non-front");
+      secConsonants.AddSplit("YX", "diph", "th", "ong end");
+      secConsonants.AddSplit("WX", "diph", "th", "ong end");
+      secConsonants.AddSplit("RX", "", "R", " after vowel");
+      secConsonants.AddSplit("LX", "", "L", " after vowel");
+      mSections.push_back(std::move(secConsonants));
+
+      // 3. 数字与重音 (STRESS NUMBERS)
+      WordSection secNumbers{zh ? "3. 数字与重音 (STRESS NUMBERS)" : "3. STRESS NUMBERS", {}};
+      secNumbers.AddSplit("1", "", "", zh ? "强烈情绪" : "emotional");
+      secNumbers.AddSplit("2", "", "", zh ? "强强调" : "emphatic");
+      secNumbers.AddSplit("3", "", "", zh ? "显著重音" : "strong");
+      secNumbers.AddSplit("4", "", "", zh ? "普通基准" : "ordinary");
+      secNumbers.AddSplit("5", "", "", zh ? "轻读" : "light");
+      secNumbers.AddSplit("6", "", "", zh ? "中性平调" : "neutral");
+      secNumbers.AddSplit("7", "", "", zh ? "降调" : "pitch drop");
+      secNumbers.AddSplit("8", "", "", zh ? "极强降调" : "extreme drop");
+      mSections.push_back(std::move(secNumbers));
     }
     else if (mEngine == kEngineSAM)
     {
@@ -543,7 +714,7 @@ private:
   {
     mItems.clear();
     mSectionLayouts.clear();
-    if (mSections.empty() || mEngine != kEngineTMS)
+    if (mSections.empty() || !HasCandidates())
     {
       mContentHeight = 0.f;
       return;
@@ -552,7 +723,7 @@ private:
     const float contentL = mRECT.L;
     const float contentR = mRECT.R - 8.f; // 预留右侧直角滚动条
     const float maxChipW = contentR - contentL;
-    const float chipH = 22.f;
+    const float chipH = 26.f;
     const float gapX = 4.f;
     const float gapY = 4.f;
 
@@ -566,27 +737,53 @@ private:
       if (!sec.title.empty())
       {
         if (s > 0)
-          curY += 14.f; // 栏间距
-        mSectionLayouts.push_back({sec.title, IRECT(contentL, curY, contentR, curY + 18.f)});
-        curY += 22.f; // 标题高度 18px + 4px 间隙
+          curY += 16.f; // 栏间距
+        mSectionLayouts.push_back({sec.title, IRECT(contentL, curY, contentR, curY + 20.f)});
+        curY += 25.f; // 标题高度 20px + 5px 间隙
       }
 
       float curX = contentL;
-      for (const auto &w : sec.words)
+      for (const auto &it : sec.items)
       {
-        float wLen = 16.f;
-        for (char c : w)
+        float wLen = 10.f;
+        float splitW = 0.f;
+
+        if (it.isSplit)
         {
-          if (c == 'I' || c == '1' || c == ' ' || c == '.' || c == '\'')
-            wLen += 4.5f;
-          else if (c == 'M' || c == 'W')
-            wLen += 11.f;
-          else if (c == '_')
-            wLen += 8.f;
-          else
-            wLen += 8.0f;
+          splitW = 38.f;
+          float rightLen = 8.f;
+          const std::string fullWord = it.prefix + it.boldKey + it.suffix;
+          for (size_t ci = 0; ci < fullWord.size(); ++ci)
+          {
+            const unsigned char c = (unsigned char) fullWord[ci];
+            if ((c & 0xC0) == 0x80)
+              continue; // 跳过 UTF-8 续字节
+            if (c >= 0x80)
+              rightLen += 17.5f;
+            else if (c == 'i' || c == 'l' || c == 'I' || c == '1' || c == ' ' || c == '-' || c == '.')
+              rightLen += 5.5f;
+            else if (c == 'm' || c == 'w' || c == 'M' || c == 'W')
+              rightLen += 13.5f;
+            else
+              rightLen += 9.2f;
+          }
+          wLen = splitW + rightLen;
         }
-        wLen = std::clamp(wLen, 30.f, maxChipW);
+        else
+        {
+          for (char c : it.code)
+          {
+            if (c == 'I' || c == '1' || c == ' ' || c == '.' || c == '\'')
+              wLen += 5.5f;
+            else if (c == 'M' || c == 'W')
+              wLen += 14.5f;
+            else if (c == '_')
+              wLen += 10.f;
+            else
+              wLen += 10.2f;
+          }
+          wLen = std::clamp(wLen, 28.f, maxChipW);
+        }
 
         if (curX + wLen > contentR && curX > contentL)
         {
@@ -594,7 +791,8 @@ private:
           curY += chipH + gapY;
         }
 
-        mItems.push_back({w, IRECT(curX, curY, curX + wLen, curY + chipH)});
+        mItems.push_back({it.code, it.prefix, it.boldKey, it.suffix, it.isSplit, splitW,
+                          IRECT(curX, curY, curX + wLen, curY + chipH)});
         curX += wLen + gapX;
       }
       curY += chipH;
@@ -609,15 +807,21 @@ private:
     IRECT titleRect;
   };
 
-  struct Item
+  struct ItemLayout
   {
     std::string word;
+    std::string prefix;
+    std::string boldKey;
+    std::string suffix;
+    bool isSplit = false;
+    float splitW = 0.f;
     IRECT rect;
   };
 
   std::function<void(const std::string &)> mOnWordSelected;
   int mEngine = kEngineTMS;
   int mTmsBank = 0;
+  bool mPhonetic = false;
   int mLang = orm::UILang();
 
   std::string mNonTmsTitle;
@@ -625,7 +829,7 @@ private:
 
   std::vector<WordSection> mSections;
   std::vector<SectionLayout> mSectionLayouts;
-  std::vector<Item> mItems;
+  std::vector<ItemLayout> mItems;
 
   float mContentHeight = 0.f;
   float mScrollY = 0.f;
