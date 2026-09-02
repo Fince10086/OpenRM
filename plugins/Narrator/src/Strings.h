@@ -11,7 +11,7 @@ inline int &UILang() {
 }
 
 enum EText {
-  // ---- 设置面板必需的公共条目 (SettingsPanelControl / UiUtils 引用, 保持稳定) ----
+  // 设置面板公共条目
   kTxtLanguage,
   kTxtDark,
   kTxtLight,
@@ -31,30 +31,30 @@ enum EText {
   kTxtYellow,
   kTxtBlue,
   kTxtGreen,
-  // ---- Narrator 专有条目 ----
-  kTxtMapPitch,      // PITCH / 音高映射
-  kTxtMapWords,      // WORDS / 词语映射
-  kTxtText,          // 文本标签
-  kTxtPhonetic,      // 音素
-  kTxtPlay,          // 试听
-  kTxtClear,         // 清空
-  kTxtPitch,         // Pitch
-  kTxtSpeed,         // Speed
-  kTxtMouth,         // Mouth
-  kTxtThroat,        // Throat
-  kTxtAttack,        // Attack
-  kTxtRelease,       // Release
-  kTxtOutput,        // Output
-  kTxtMono,          // MONO
-  kTxtPoly,          // POLY
-  kTxtLoop,          // LOOP (按住循环)
-  kTxtRetrig,        // RETRIG
-  kTxtBaseKey,       // Base Key
-  kTxtNarratorTitle, // Narrator
-  kTxtEngine,        // SAM (引擎名标签, 当前固定)
-  kTxtVoice,         // VOICE (TMS 音色选择标签)
-  kTxtTsiRate,       // Rate (TSI 时钟/速率)
-  kTxtSp0256Rate,    // Rate (SP0256 XTAL/速率)
+  // Narrator 专有
+  kTxtMapPitch,
+  kTxtMapWords,
+  kTxtText,
+  kTxtPhonetic,
+  kTxtPlay,
+  kTxtClear,
+  kTxtPitch,
+  kTxtSpeed,
+  kTxtMouth,
+  kTxtThroat,
+  kTxtAttack,
+  kTxtRelease,
+  kTxtOutput,
+  kTxtMono,
+  kTxtPoly,
+  kTxtLoop,
+  kTxtRetrig,
+  kTxtBaseKey,
+  kTxtNarratorTitle,
+  kTxtEngine,
+  kTxtVoice,
+  kTxtTsiRate,
+  kTxtSp0256Rate,
   kTxtTipKeyboard,
   kTxtTipPhrase,
   kTxtTipTimeline,
@@ -63,10 +63,10 @@ enum EText {
   kTxtTipMouthThroat,
   kTxtTipAttackRelease,
   kTxtTipBaseKey,
-  kTxtClickToTalk,   // 点击键盘或按宿主 MIDI 触发
-  kTxtEmptyPhrase,   // (空) / (empty)
-  kTxtDuration,      // %0.2f s (时长标签)
-  kTxtNative,        // native / 原生 (DECTalk 音高 0 = 音色原生)
+  kTxtClickToTalk,
+  kTxtEmptyPhrase,
+  kTxtDuration,
+  kTxtNative,
   kTxtTipDectalkVoice,
   kTxtTipDectalkRate,
   kTxtTipDectalkPitch,

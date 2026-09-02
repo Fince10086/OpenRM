@@ -38,7 +38,6 @@ class CandidatePanelControl;
 } // namespace igraphics
 } // namespace iplug
 
-// 复音声部数 (Phase 1: 单个短语的 4 个独立回放声部)
 constexpr int kMaxVoices = 4;
 
 class ORMNarrator final : public Plugin
@@ -61,57 +60,54 @@ public:
   void OnParentWindowResize(int width, int height) override;
   bool ConstrainEditorResize(int &w, int &h) const override;
 
-  // ---- 编辑器侧入口 (控件回调经 delegate 调用) ----
-  void OnNoteOnFromUI(int note, bool held = true); // 屏幕键盘 (按住) / 试听按钮 (held=false) 触发
+  // UI 侧入口
+  void OnNoteOnFromUI(int note, bool held = true);
   void OnNoteOffFromUI(int note);
-  void SetPhraseText(const std::string &text); // 文本框提交 (PHRASE: 全局语句; BANK: 选中键的绑定)
-  void SetPhoneticMode(bool phonetic);         // TEXT/PHONEMES 切换
-  void SetEngineFromUI(int idx);               // SAM|TMS|TSI|SP0256|DECTALK 分段选择
-  void SetVoiceFromUI(int idx);                // TMS 音色/词库选择
-  void SetTsiVoiceFromUI(int idx);             // TSI 子集选择
-  void SetSp0256VoiceFromUI(int idx);          // SP0256 语音版本选择
-  void SetDectalkVoiceFromUI(int idx);         // DECTALK 音色选择
-  void SetMapModeFromUI(int idx);              // PHRASE|BANK 分段选择
+  void SetPhraseText(const std::string &text);
+  void SetPhoneticMode(bool phonetic);
+  void SetEngineFromUI(int idx);
+  void SetVoiceFromUI(int idx);
+  void SetTsiVoiceFromUI(int idx);
+  void SetSp0256VoiceFromUI(int idx);
+  void SetDectalkVoiceFromUI(int idx);
+  void SetMapModeFromUI(int idx);
 
 private:
-  // ---- BANK 模式: 逐键绑定 ----
-  // 每个琴键可绑定独立的 词语/音素串 + 引擎 + 音色参数; 绑定后按该键即以
-  // 该组参数原速播放 (varispeed 只在 PHRASE 模式使用)。
+  // BANK 模式: 每个琴键绑定独立的文本与参数
   struct BankEntry
   {
     std::string text;
     bool phonetic = false;
     int engine = 0; // 0=SAM 1=TMS5220 2=TSI S14001A 3=SP0256 4=DECTALK
-    orm::SamSettings sam;         // SAM 参数 (与其他引擎解耦)
-    orm::TmsSettings tms;         // TMS 参数 (与 SAM/TSI/SP0256 解耦)
-    orm::TsiSettings tsi;         // TSI 参数 (与 SAM/TMS/SP0256 解耦)
-    orm::Sp0256Settings sp0256;   // SP0256 参数 (与 SAM/TMS/TSI 解耦)
-    orm::DectalkSettings dectalk; // DECtalk 参数 (与 SAM/TMS/TSI/SP0256 解耦)
-    std::vector<float> rendered; // 惰性渲染缓存 (仅音频线程读写)
+    orm::SamSettings sam;
+    orm::TmsSettings tms;
+    orm::TsiSettings tsi;
+    orm::Sp0256Settings sp0256;
+    orm::DectalkSettings dectalk;
+    std::vector<float> rendered;
     bool dirty = true;
   };
-  std::map<int, BankEntry> mBank;     // note → entry (mTextMutex 保护)
-  std::atomic<int> mPendingSelect{-1}; // 音频线程请求选中键
+  std::map<int, BankEntry> mBank;
+  std::atomic<int> mPendingSelect{-1};
   std::atomic<bool> mSelectChanged{false};
-  int mUISelected = -1;                // 主线程当前选中键
+  int mUISelected = -1;
   FlatSegmentControl *mMapSegment = nullptr;
   FlatSegmentControl *mEngineSegment = nullptr;
-  FlatSegmentControl *mVoiceSegment = nullptr;    // TMS 音色/词库选择 (仅 TMS 显示)
-  FlatSegmentControl *mTsiVoiceSegment = nullptr; // TSI 子集选择 (仅 TSI 显示)
-  FlatSegmentControl *mSp0256VoiceSegment = nullptr; // SP0256 语音版本选择 (仅 SP0256 显示)
-  FlatSegmentControl *mDectalkVoiceSegment = nullptr; // DECTALK 音色选择 (仅 DECTALK 显示)
-  // ---- 渲染与回放 ----
+  FlatSegmentControl *mVoiceSegment = nullptr;
+  FlatSegmentControl *mTsiVoiceSegment = nullptr;
+  FlatSegmentControl *mSp0256VoiceSegment = nullptr;
+  FlatSegmentControl *mDectalkVoiceSegment = nullptr;
+
   struct Voice
   {
     int note = -1;
     orm::VoiceRenderer renderer;
-    double ratio = 1.0; // 触发时的 varispeed 系数 (Loop 重放复用)
-    bool held = false;  // 按键未松开 (Loop 循环重放的条件)
+    double ratio = 1.0;
+    bool held = false;
   };
   std::array<Voice, kMaxVoices> mVoices;
   int mNextVoice = 0;
 
-  // MIDI 事件队列 (ProcessMidiMsg 收集, ProcessBlock 按采样偏移处理)
   struct MidiEvent
   {
     int offset;
@@ -120,43 +116,41 @@ private:
     int velocity;
   };
   std::vector<MidiEvent> mMidiQueue;
-  std::vector<float> mPhraseBuffer; // 已渲染短语 (引擎原生采样率, 单声道)
+  std::vector<float> mPhraseBuffer;
 
-  // UI 侧每音的保持标记 (默认 1=按住): 屏幕键盘写入 1, 试听按钮的预览音写入 0
-  // (预览无松键动作, 不参与 Loop)。UI 在发 MIDI 前写入, 音频线程触发时读走并复位。
+  // UI 侧每音保持标记: 屏幕键盘写 1, 试听按钮写 0 (预览不参与 Loop)
   std::array<std::atomic<uint8_t>, 128> mUIHoldState{};
 
-  // 文本状态 (编辑器写 / 音频线程读, 互斥保护)
   mutable std::mutex mTextMutex;
   std::string mPhraseText = "HELLO WORLD.";
   bool mPhonetic = false;
 
-  // 音频线程 -> UI 队列 (OnIdle 转发, 同 BandPass 的 ISender 惯例)
+  // 音频线程 -> UI 队列
   struct NoteMsg { bool on; int note; };
   struct ProgressMsg { float progress; };
   struct TimelineMsg { std::array<float, kPhraseEnvPoints> env; };
   IPlugQueue<NoteMsg> mNoteQueue{64};
   IPlugQueue<ProgressMsg> mProgressQueue{32};
   IPlugQueue<TimelineMsg> mTimelineQueue{4};
-  float mAudioProgress = 0.f; // 仅音频线程读写
+  float mAudioProgress = 0.f;
 
   std::atomic<double> mPhraseDuration{0.0};
   std::atomic<bool> mRenderDirty{true};
-  double mLastUIProgress = 0.0; // 仅主线程
+  double mLastUIProgress = 0.0;
 
-  void EnsureRendered();          // 渲染脏标记时重渲染 (音频线程调用)
+  void EnsureRendered();
   void TriggerVoice(int note);
   void ReleaseVoice(int note);
   double PitchRatioForNote(int note) const;
   void RenderSegment(sample *out, int from, int to);
-  void PushPhraseToUI();          // 渲染后向时间线控件推送包络
+  void PushPhraseToUI();
   void PushNoteStateToUI(bool on, int note);
-  void RenderBankEntry(BankEntry &e); // 引擎分派渲染绑定项 (音频线程)
-  void PushBankPhraseToUI(const BankEntry &e); // 绑定项渲染后推送时间线包络
-  void ApplySelectionFromIdle();      // 主线程: 把选中绑定的参数载入参数面板
-  void RebindVoiceSliders(int engine); // 主线程: 4 个音色滑块槽按引擎改绑参数
+  void RenderBankEntry(BankEntry &e);
+  void PushBankPhraseToUI(const BankEntry &e);
+  void ApplySelectionFromIdle();
+  void RebindVoiceSliders(int engine);
 
-  // ---- 参数快照撤销/重做 (与 Analyzer 同构: UI 手势按间隙分组, 只覆盖参数) ----
+  // 参数快照撤销/重做
   ParamSnapshot Snapshot() const;
   void SetParamFromEditor(int idx, double value);
   void ApplySnapshot(const ParamSnapshot &s);
@@ -167,7 +161,6 @@ private:
   void Undo();
   void Redo();
 
-  // ---- UI ----
   int mThemeMode = 0;
   SettingsPanelControl *mSettingsPanel = nullptr;
   PianoKeyboardControl *mKeyboard = nullptr;
@@ -175,13 +168,12 @@ private:
   UtteranceTimelineControl *mTimeline = nullptr;
   CandidatePanelControl *mCandidatePanel = nullptr;
   ORMSlider *mParamSliders[9] = {};
-  FlatSegmentControl *mPhoneticSegment = nullptr; // SAM 文本/音素切换 (仅 SAM 显示)
+  FlatSegmentControl *mPhoneticSegment = nullptr;
   std::vector<std::pair<int, std::function<void(const char *)>>> mTextBindings;
   std::vector<std::pair<IControl *, int>> mTooltipBindings;
 
-  // ---- 撤销/重做状态 (仅主线程访问) ----
   std::deque<ParamSnapshot> mUndoStack, mRedoStack;
-  ParamSnapshot mStableSnapshot{}; // 手势起点前的稳定参数态 (撤销基准)
+  ParamSnapshot mStableSnapshot{};
   double mLastUIChangeTime = -1e9;
   bool mGesturePending = false;
 

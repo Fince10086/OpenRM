@@ -92,10 +92,9 @@ public:
   {
     const IRECT b = mRECT;
 
-    // 绘制面板背景 (COL_100, 无任何内边框/描边)
     g.FillRect(COL_100(), b);
 
-    // 非候选词/非音素模式: 显示说明书
+    // 非候选模式显示说明书
     if (!HasCandidates())
     {
       const IRECT infoRect = b.GetPadded(-8.f);
@@ -109,10 +108,9 @@ public:
       return;
     }
 
-    // 候选区: 视口裁剪
     g.PathClipRegion(b);
 
-    // 1. 绘制小标题 (无下划线, 纯文字排版)
+    // 小标题
     for (const auto &sec : mSectionLayouts)
     {
       const IRECT r = sec.titleRect.GetTranslated(0.f, b.T - mScrollY);
@@ -122,7 +120,7 @@ public:
       g.DrawText(t, sec.title.c_str(), r);
     }
 
-    // 2. 绘制候选词/音素按钮 (Flow Layout)
+    // 候选词/音素按钮
     for (size_t i = 0; i < mItems.size(); ++i)
     {
       const auto &item = mItems[i];
@@ -139,8 +137,6 @@ public:
         const IRECT leftR(r.L, r.T, splitX, r.B);
         const IRECT rightR(splitX, r.T, r.R, r.B);
 
-        // 左半部分: 音素代码区底色 (未激活深色一点)
-        // 右半部分: 比左半部分略微浅一点点 (light mode: 212 vs 228)
         const IColor leftFill = isPressed ? COL_900() : isHover ? COL_500() : WarmGray(ThemeMode() ? 228 : 212);
         const IColor rightFill = isPressed ? COL_900() : isHover ? WarmGray(180) : WarmGray(ThemeMode() ? 212 : 228);
 
@@ -150,11 +146,9 @@ public:
         const IColor fgLeft = isPressed ? COL_100() : COL_900();
         const IColor fgRight = isPressed ? COL_100() : COL_900();
 
-        // 左半部分文字: 音素代码 (SemiBold 居中, 紧凑大字号 19)
         IText tCode(19, fgLeft, kFontSemiBold, EAlign::Center, EVAlign::Middle);
         g.DrawText(tCode, item.word.c_str(), leftR);
 
-        // 右半部分文字: 示例词 (整词自然坐标对齐 Virtual Full-Word Kerning)
         IText tReg(17.5f, fgRight, kFontRegular, EAlign::Near, EVAlign::Middle);
         IText tBold(17.5f, fgRight, kFontSemiBold, EAlign::Near, EVAlign::Middle);
 
@@ -162,20 +156,17 @@ public:
 
         if (item.prefix.empty() && item.boldKey.empty())
         {
-          // 纯单段释义 (如数字与重音说明 "强烈情绪")
           IText tMid(17.5f, fgRight, kFontRegular, EAlign::Center, EVAlign::Middle);
           g.DrawText(tMid, fullWord.c_str(), rightR);
         }
         else if (item.prefix.empty() && item.suffix.empty())
         {
-          // 纯单段重点词
           IText tMid(17.5f, fgRight, kFontSemiBold, EAlign::Center, EVAlign::Middle);
           g.DrawText(tMid, fullWord.c_str(), rightR);
         }
         else
         {
-          // 途径 A: 严格基于混合字重自然排版推进坐标
-          // 1. 计算前缀真实步长 (Regular 400)
+          // 混合字重排版: 分别测量前缀/重点/后缀宽度后居中
           float advPre = 0.f;
           if (!item.prefix.empty())
           {
@@ -185,7 +176,6 @@ public:
             advPre = rPreBold.R - rBoldOnly.R;
           }
 
-          // 2. 计算重点字母真实排版步长 (使用真实的 SemiBold 600 advance)
           float advBold = 0.f;
           if (!item.boldKey.empty())
           {
@@ -195,7 +185,6 @@ public:
             advBold = rBoldDot.R - rDot.R;
           }
 
-          // 3. 计算后缀宽度与粗->细衔接微留白 (微调至 0.2px, 紧凑自然)
           float sufW = 0.f;
           float boldToSufGap = 0.f;
           if (!item.suffix.empty())
@@ -206,7 +195,6 @@ public:
             boldToSufGap = 0.2f;
           }
 
-          // 混合字重下的整词精确排版总宽与居中
           const float totalW = advPre + advBold + boldToSufGap + sufW;
           const float startX = rightR.MW() - totalW * 0.5f;
 
@@ -238,7 +226,7 @@ public:
 
     g.PathClipRegion();
 
-    // 3. 绘制右侧拖拽条 (直角矩形, 无圆角, 无边框)
+    // 滚动条
     const float vpH = b.H();
     if (mContentHeight > vpH)
     {
@@ -251,7 +239,7 @@ public:
       const float thumbT = b.T + scrollNorm * (vpH - thumbH);
       const IRECT thumb(trackL, thumbT, trackR, thumbT + thumbH);
       const IColor thumbCol = mDraggingScrollbar ? COL_900() : COL_500();
-      g.FillRect(thumbCol, thumb); // 直角, 无圆角
+      g.FillRect(thumbCol, thumb);
     }
   }
 
@@ -263,7 +251,7 @@ public:
     if (!mRECT.Contains(x, y))
       return;
 
-    // 检测是否点击右侧直角滚动条轨道
+    // 滚动条
     if (x >= mRECT.R - 8.f && mContentHeight > mRECT.H())
     {
       mDraggingScrollbar = true;
@@ -433,19 +421,16 @@ private:
       {
         case 0: // MILITARY
         {
-          // 1. 数字与序数 (34)
           static const char *const kMilNum[] = {
               "ZERO", "ONE", "TWO", "THREE", "FOUR", "FIVE", "SIX", "SEVEN", "EIGHT", "NINE", "TEN",
               "ELEVEN", "TWELVE", "THIR_", "FIF_", "_TEEN", "TWENTY", "HUNDRED", "THOUSAND", "THIRTEEN",
               "FOURTEEN", "FIFTEEN", "SIXTEEN", "SEVENTEEN", "EIGHTEEN", "NINETEEN", "THIRTY", "FOURTY",
               "FIFTY", "SIXTY", "SEVENTY", "EIGHTY", "NINETY", "MILLION"};
 
-          // 2. 单字母 (26)
           static const char *const kMilLetters[] = {
               "A", "B", "C", "D", "E", "F", "G", "H", "I", "L", "J", "K", "M",
               "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z"};
 
-          // 3. NATO 音标字母 (28)
           static const char *const kMilNato[] = {
               "ALPHA", "BRAVO", "CHARLIE", "DELTA", "ECHO", "FOXTROT", "GOLF", "HENRY", "INDIA",
               "JULIET", "KILO", "LIMA", "MIKE", "NOVEMBER", "OSCAR", "PAPA", "QUEBEC", "ROMEO",
@@ -623,9 +608,8 @@ private:
     }
     else if (mEngine == kEngineSAM && mPhonetic)
     {
-      // 1. 元音 (VOWELS)
+      // 元音
       WordSection secVowels{zh ? "1. 元音 (VOWELS)" : "1. VOWELS", {}};
-      // 单元音 (13)
       secVowels.AddSplit("IY", "f", "ee", "t");
       secVowels.AddSplit("IH", "p", "i", "n");
       secVowels.AddSplit("EH", "b", "e", "g");
@@ -639,22 +623,19 @@ private:
       secVowels.AddSplit("ER", "b", "ir", "d");
       secVowels.AddSplit("AX", "g", "a", "llon");
       secVowels.AddSplit("IX", "d", "i", "git");
-      // 双元音 (6)
       secVowels.AddSplit("EY", "m", "a", "de");
       secVowels.AddSplit("AY", "h", "igh", "");
       secVowels.AddSplit("OY", "b", "oy", "");
       secVowels.AddSplit("AW", "h", "ow", "");
       secVowels.AddSplit("OW", "sl", "ow", "");
       secVowels.AddSplit("UW", "cr", "ew", "");
-      // 成音节特例 (3)
       secVowels.AddSplit("UL", "sett", "le", "");
       secVowels.AddSplit("UM", "astron", "om", "y");
       secVowels.AddSplit("UN", "funct", "ion", "");
       mSections.push_back(std::move(secVowels));
 
-      // 2. 辅音 (CONSONANTS)
+      // 辅音
       WordSection secConsonants{zh ? "2. 辅音 (CONSONANTS)" : "2. CONSONANTS", {}};
-      // 浊辅音 (16)
       secConsonants.AddSplit("R", "", "r", "ed");
       secConsonants.AddSplit("L", "a", "ll", "ow");
       secConsonants.AddSplit("W", "a", "w", "ay");
@@ -671,7 +652,6 @@ private:
       secConsonants.AddSplit("ZH", "plea", "s", "ure");
       secConsonants.AddSplit("V", "se", "v", "en");
       secConsonants.AddSplit("DH", "", "th", "en");
-      // 清辅音 (9)
       secConsonants.AddSplit("S", "", "S", "am");
       secConsonants.AddSplit("SH", "fi", "sh", "");
       secConsonants.AddSplit("F", "", "f", "ish");
@@ -681,7 +661,6 @@ private:
       secConsonants.AddSplit("K", "", "c", "ake");
       secConsonants.AddSplit("CH", "spee", "ch", "");
       secConsonants.AddSplit("/H", "a", "h", "ead");
-      // 规则/内部特例 (7)
       secConsonants.AddSplit("Q", "kitt", "-", "en");
       secConsonants.AddSplit("DX", "pi", "t", "y");
       secConsonants.AddSplit("/X", "", "H", " non-front");
@@ -691,7 +670,7 @@ private:
       secConsonants.AddSplit("LX", "", "L", " after vowel");
       mSections.push_back(std::move(secConsonants));
 
-      // 3. 数字与重音 (STRESS NUMBERS)
+      // 数字与重音
       WordSection secNumbers{zh ? "3. 数字与重音 (STRESS NUMBERS)" : "3. STRESS NUMBERS", {}};
       secNumbers.AddSplit("1", "", "", zh ? "强烈情绪" : "emotional");
       secNumbers.AddSplit("2", "", "", zh ? "强强调" : "emphatic");
@@ -766,7 +745,7 @@ private:
     }
 
     const float contentL = mRECT.L;
-    const float contentR = mRECT.R - 8.f; // 预留右侧直角滚动条
+    const float contentR = mRECT.R - 8.f;
     const float maxChipW = contentR - contentL;
     const float chipH = 26.f;
     const float gapX = 4.f;
@@ -778,13 +757,12 @@ private:
     {
       const auto &sec = mSections[s];
 
-      // 放置小标题 (无下划线)
       if (!sec.title.empty())
       {
         if (s > 0)
-          curY += 16.f; // 栏间距
+          curY += 16.f;
         mSectionLayouts.push_back({sec.title, IRECT(contentL, curY, contentR, curY + 20.f)});
-        curY += 25.f; // 标题高度 20px + 5px 间隙
+        curY += 25.f;
       }
 
       float curX = contentL;
@@ -802,7 +780,7 @@ private:
           {
             const unsigned char c = (unsigned char) fullWord[ci];
             if ((c & 0xC0) == 0x80)
-              continue; // 跳过 UTF-8 续字节
+              continue;
             if (c >= 0x80)
               rightLen += 17.5f;
             else if (c == 'i' || c == 'l' || c == 'I' || c == '1' || c == ' ' || c == '-' || c == '.')

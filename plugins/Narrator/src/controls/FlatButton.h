@@ -1,8 +1,6 @@
 #pragma once
 
-// 扁平按钮族: FlatActionButton (瞬时按钮) / InvertToggleControl (反色开关) / FlatToggleControl。
-// MakeMomentary() 为瞬时按钮封装: 点击回调后立即复位值。
-// IconActionButton 为小图标按钮 (撤销/重做/导入/导出), 与 Analyzer 同构。
+// 扁平按钮族: 瞬时按钮 / 反色开关 / 循环按钮 / 分段选择器 / 图标按钮
 
 #include "IControls.h"
 #include "../Theme.h"
@@ -45,22 +43,14 @@ inline IVButtonControl *MakeMomentary(const IRECT &r, std::function<void(IContro
       label, st);
 }
 
-// ── 小图标按钮 (文字放不下的窄按钮, 移植自 Analyzer) ──────────────────────
-// 撤销/重做/保存/读取四个动作改用图标表达, 图标全部由主题色矩形与正圆圆弧
-// (多段线逼近) 拼成, 延续界面的矩形+正圆极简语言; 颜色规则与本插件按钮一致
-// (COL_300 底 / COL_900 图标 / hover 换 COL_500, 主题自适应)。
-
 enum IconAction {
-  kIconUndo, // 撤销: assets/icons/undo.svg (环形箭头, 实体填充)
-  kIconRedo, // 重做: assets/icons/redo.svg (水平镜像)
-  kIconSave, // 保存 (导出到磁盘): assets/icons/export.svg (托盘 + 上箭头取出)
-  kIconLoad, // 读取 (从磁盘导入): assets/icons/import.svg (文件夹 + 下箭头引入)
+  kIconUndo,
+  kIconRedo,
+  kIconSave,
+  kIconLoad,
 };
 
-// SVG 路径命令表 (源: assets/icons/*.svg, 1024×1024 网格, 实心填充)。
-// 命令: 0=Move, 1=Line, 2=贝塞尔(c1x,c1y,c2x,c2y,x,y), 3=Close。圆弧已按 SVG
-// 端点参数化转成两条三次贝塞尔 (180° 半圆, k=0.5523r)。绘制时以主题色填充,
-// 保持深/浅主题与色相自适应 (与 FlatActionButton 的 hover/pressed 规则一致)。
+// SVG 路径命令: 0=Move, 1=Line, 2=贝塞尔, 3=Close
 struct SvgPathCmd {
   uint8_t cmd;
   float v[6];
@@ -89,7 +79,7 @@ static constexpr SvgPathCmd kRedoIcon[] = {
     {1, {819.141f, 247.066f}},       {1, {702.495f, 130.394f}},
     {1, {778.137f, 54.752f}},        {3, {}},
 };
-static constexpr SvgPathCmd kImportIcon[] = { // 导入 (读取进插件): 文件夹 + 下箭头引入托盘
+static constexpr SvgPathCmd kImportIcon[] = {
     {0, {849.750f, 419.711f}},       {1, {588.934f, 419.711f}},
     {1, {549.228f, 419.711f}},       {1, {549.228f, 96.167f}},
     {1, {174.250f, 96.167f}},        {1, {174.250f, 907.904f}},
@@ -115,7 +105,7 @@ static constexpr SvgPathCmd kImportIcon[] = { // 导入 (读取进插件): 文�
     {1, {771.797f, 962.690f}},       {1, {778.785f, 955.910f}},
     {1, {675.921f, 856.250f}},       {3, {}},
 };
-static constexpr SvgPathCmd kExportIcon[] = { // 导出 (保存出插件): 托盘 + 上箭头取出
+static constexpr SvgPathCmd kExportIcon[] = {
     {0, {111.884f, 623.884f}},       {1, {111.884f, 890.580f}},
     {1, {111.884f, 917.293f}},       {1, {885.403f, 917.293f}},
     {1, {912.043f, 917.293f}},       {1, {912.043f, 623.884f}},
@@ -144,8 +134,7 @@ public:
   IconActionButton(const IRECT &bounds, std::function<void(IControl *)> fn, IconAction icon)
       : IControl(bounds), mFn(std::move(fn)), mIcon(icon) {}
 
-  // 快速连击: 偶数次点击会被平台识别为双击, 若不处理会走 IControl 默认的
-  // SetValueToDefault, 导致丢一次响应。双击视为再次按下。
+  // 双击视为再次按下, 避免快速连击丢响应
   void OnMouseDblClick(float x, float y, const IMouseMod &mod) override { OnMouseDown(x, y, mod); }
 
   void OnMouseDown(float x, float y, const IMouseMod &mod) override {
@@ -155,11 +144,8 @@ public:
 
   void Draw(IGraphics &g) override {
     const IRECT b = mRECT;
-    // hover 换色 (COL_500) 与本插件 FlatActionButton/分段控件一致 (Analyzer 为半透明叠层)
     g.FillRect(GetMouseIsOver() ? COL_500() : COL_300(), b);
 
-    // 图标几何来自用户提供的 assets/icons/*.svg (1024×1024 网格), 缩放到 16px
-    // 以按钮中心对齐。实心填充主题色, 随深浅主题/色相自适应。
     const float cx = b.MW(), cy = b.MH();
     const float s = 16.f / 1024.f;
     auto X = [&](float vx) { return cx + (vx - 512.f) * s; };
@@ -229,7 +215,6 @@ class FlatToggleControl : public InvertToggleControl {
 public:
   using InvertToggleControl::InvertToggleControl;
 
-  // 全幅绘制 (与图标按钮同尺寸基准, 不做 widget 内缩), 开启时底色变黑文字反白
   void Draw(IGraphics &g) override {
     const IRECT b = mRECT;
     const bool on = GetValue() > 0.5;
@@ -241,8 +226,7 @@ public:
   }
 };
 
-// 循环按钮 (移植自 Analyzer, 精简): 绑参数, 单击在档位间循环切换;
-// 绘制恒用未激活配色 (不随状态反色), 文字即当前档位 (单音/复音二态切换用两档实现)。
+// 循环按钮: 绑参数, 单击在档位间循环切换
 class FlatCycleButton : public IControl {
 public:
   FlatCycleButton(const IRECT &bounds, int paramIdx, std::vector<const char *> labels, float fontSize = 20.f)
@@ -250,13 +234,11 @@ public:
     SetActionFunction(EmptyClickActionFunc);
   }
 
-  // 运行时换标签 (语言切换)
   void SetLabels(const std::vector<const char *> &labels) {
     mLabels = labels;
     SetDirty(false);
   }
 
-  // 快速连击: 偶数次点击走双击, 转发为按下 (循环切换), 避免重置默认
   void OnMouseDblClick(float x, float y, const IMouseMod &mod) override { OnMouseDown(x, y, mod); }
 
   void OnMouseDown(float x, float y, const IMouseMod &mod) override {
@@ -270,7 +252,7 @@ public:
   }
 
   void Draw(IGraphics &g) override {
-    const IRECT b = mRECT; // 全幅绘制, 与图标按钮/反色开关同尺寸基准 (不做内缩)
+    const IRECT b = mRECT;
     const int num = (int) mLabels.size();
     const int idx = GetParam() ? (int) std::clamp(std::lround(GetParam()->Value()), 0L, (long) num - 1) : 0;
     g.FillRect(GetMouseIsOver() ? COL_500() : COL_300(), b);
@@ -285,8 +267,7 @@ private:
   float mFontSize = 20.f;
 };
 
-// 扁平分段选择器 (N 选一): TEXT/PHONEMES 等互斥模式。
-// active 索引由外部持有 (回调写回), 控件不绑参数。
+// 扁平分段选择器 (N 选一), active 索引由外部持有
 class FlatSegmentControl : public IControl {
 public:
   FlatSegmentControl(const IRECT &bounds, std::vector<std::string> labels,

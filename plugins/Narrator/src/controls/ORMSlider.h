@@ -180,7 +180,6 @@ protected:
     const IParam *p = GetParam();
     if (!p)
       return;
-    // Narrator 无 BandPass 的随机调制参数, 统一走参数默认显示
     p->GetDisplay(ds, false);
   }
 

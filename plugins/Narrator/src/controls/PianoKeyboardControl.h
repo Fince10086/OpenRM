@@ -13,8 +13,7 @@
 BEGIN_IPLUG_NAMESPACE
 BEGIN_IGRAPHICS_NAMESPACE
 
-// 屏幕钢琴键盘: 宿主 MIDI 回显 + 鼠标点击触发 (经 SendMidiMsgFromUI)。
-// 琴键范围固定 C3(48)..C6(84), 与 780 宽窗口匹配。
+// 屏幕钢琴键盘: 鼠标点击触发 + 宿主 MIDI 回显
 class PianoKeyboardControl : public IControl
 {
 public:
@@ -27,7 +26,7 @@ public:
   {
     std::function<void(int note)> onNoteOn;
     std::function<void(int note)> onNoteOff;
-    std::function<int()> baseKey; // 返回当前基准键 (画基准标记)
+    std::function<int()> baseKey;
   };
 
   PianoKeyboardControl(const IRECT &bounds, Hooks hooks, int lowNote = kLowNoteDefault,
@@ -45,8 +44,6 @@ public:
     SetDirty(false);
   }
 
-  // 宿主/delegate 回显
-  // 约定: SendControlMsgFromDelegate(kCtrlTagKeyboard, msgTag, sizeof(int), &note)
   void OnMsgFromDelegate(int msgTag, int dataSize, const void *pData) override
   {
     if (!pData || dataSize < (int) sizeof(int))
@@ -58,8 +55,6 @@ public:
       SetNoteActive(note, false);
   }
 
-  // ---- 几何 ----
-  // 白键宽度自适应; 黑键按半音定位
   int NumWhiteKeys() const
   {
     int n = 0;
@@ -116,7 +111,7 @@ public:
     const int nWhite = NumWhiteKeys();
     const float whiteW = b.W() / nWhite;
 
-    // 白键 (借鉴 Bandpass 频谱背景按八度/频段的 WarmGray 梯度填色, 无细线描边)
+    // 白键
     for (int note = mLowNote; note <= mHighNote; ++note)
     {
       if (IsBlack(note))
@@ -131,14 +126,13 @@ public:
       if (mPressedNote == note)
         g.FillRect(IColor(70, COL_900().R, COL_900().G, COL_900().B), key);
     }
-    // 黑键 (统一采用与全插件按键黑色/激活背景一致的 COL_900() 深灰, 绝非 #000000 全黑, 随主题自适应)
+    // 黑键
     const float blackW = whiteW * 0.62f;
     const float blackH = b.H() * 0.62f;
     for (int note = mLowNote; note <= mHighNote; ++note)
     {
       if (!IsBlack(note))
         continue;
-      // 黑键中心落在该半音与左侧白键的交界
       const float cx = KeyCenterX(note, whiteW, b.L);
       const IRECT key(cx - blackW * 0.5f, b.T, cx + blackW * 0.5f, b.T + blackH);
       const IColor keyCol = mActive[note] ? COL_500() : COL_900();
@@ -160,7 +154,7 @@ public:
       g.FillTriangle(COL_900(), cx - 5.f, b.B, cx + 5.f, b.B, cx, b.B - 9.f);
     }
 
-    // 选中键标记 (高亮描边)
+    // 选中键高亮描边
     if (mSelectedNote >= mLowNote && mSelectedNote <= mHighNote)
     {
       if (IsBlack(mSelectedNote))
@@ -190,7 +184,6 @@ public:
     SetDirty(false);
   }
 
-  // BANK 模式: 当前选中 (正在编辑) 的键, 画高亮框
   void SetSelectedNote(int note)
   {
     if (mSelectedNote == note)
@@ -210,10 +203,10 @@ private:
     const int relOct = std::max(0, (note - mLowNote) / 12);
     struct OctBand { float v0, v1; };
     static const OctBand kBands[] = {
-      {194.f, 218.f}, // 类似 Bandpass 第 1 频段
-      {205.f, 229.f}, // 类似 Bandpass 第 2 频段
-      {216.f, 240.f}, // 类似 Bandpass 第 3 频段
-      {227.f, 239.f}, // 类似 Bandpass 第 4 频段
+      {194.f, 218.f},
+      {205.f, 229.f},
+      {216.f, 240.f},
+      {227.f, 239.f},
     };
     const int bandIdx = std::clamp(relOct, 0, (int)(sizeof(kBands) / sizeof(kBands[0])) - 1);
     const OctBand &b = kBands[bandIdx];
@@ -234,8 +227,7 @@ private:
     return idx;
   }
 
-  // 黑键中心 = 其左侧白键与右侧白键的交界, 即第 WhiteIndex(note) 个白键的右边缘。
-  // 之前多加 1 导致 C# 画在 D 右边、D# 画在 E 右边。
+  // 黑键中心 = 其左侧白键的右边缘
   float KeyCenterX(int note, float whiteW, float left) const
   {
     return left + WhiteIndex(note) * whiteW;
@@ -250,10 +242,9 @@ private:
     const float blackH = mRECT.H() * 0.62f;
     const bool inBlackZone = y < mRECT.T + blackH;
 
-    // 优先命中黑键: 检查左右两白键交界附近的黑键
+    // 优先命中黑键
     if (inBlackZone)
     {
-      // 该白键 idx 左右边界可能各有黑键; 黑键中心在边界处
       for (int candidate = mLowNote; candidate <= mHighNote; ++candidate)
       {
         if (!IsBlack(candidate))
@@ -263,7 +254,7 @@ private:
           return candidate;
       }
     }
-    // 白键: 第 wIdx 个白键
+    // 白键
     int count = -1;
     for (int n = mLowNote; n <= mHighNote; ++n)
     {

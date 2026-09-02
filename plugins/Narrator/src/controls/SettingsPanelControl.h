@@ -68,7 +68,6 @@ public:
     std::function<void(const char *name)> onAudioAPI;
   };
 
-  // showAudioInput=false: 乐器插件无音频输入, 设置面板不显示输入行
   SettingsPanelControl(const IRECT &bounds, Hooks hooks, bool showAudioInput = true)
       : IControl(bounds), mHooks(std::move(hooks)), mShowAudioInput(showAudioInput) {
     mHasAudio = (bool)(mHooks.listAudioDevices && mHooks.currentAudioDevice && mHooks.onAudioDevice);

@@ -1,7 +1,6 @@
 #pragma once
 
-// 系列共享的 UI 工具函数: 频率格式化/解析、旋钮绘制、Ghost 覆盖、随机颜色菜单。
-// 目的: 消除 FilterNodePad / BandRangeSlider / ORMSlider / SettingsPanel 等控件间的逐字重复。
+// 系列共享的 UI 工具函数
 
 #include "IControls.h"
 #include "../Theme.h"
@@ -40,7 +39,7 @@ inline void DrawKnob(IGraphics &g, float cx, float cy) {
   g.FillCircle(COL_900(), cx, cy, HANDLE_R);
 }
 
-// Mono/禁用态的半透明覆盖层
+// 禁用态半透明覆盖层
 inline void DrawGhostOverlay(IGraphics &g, const IRECT &r) {
   const IColor base = COL_100();
   g.FillRect(IColor(150, base.R, base.G, base.B), r);
@@ -48,9 +47,7 @@ inline void DrawGhostOverlay(IGraphics &g, const IRECT &r) {
 
 constexpr int kRandomColorNameIds[kNumRandomColors] = {orm::kTxtRed, orm::kTxtYellow, orm::kTxtBlue, orm::kTxtGreen};
 
-// 统一的随机颜色弹窗: 填充 4 色名称, 勾选当前项, 回调选中索引
-// 注意: onPick 必须按值接收并按值/移动捕获 —— 调用方传入的多是临时 std::function,
-//       若按引用捕获, 本函数返回后临时对象销毁, 菜单关闭时(异步主队列)回调即悬空崩溃。
+// 随机颜色弹窗: onPick 按值捕获, 避免引用悬空
 inline void OpenColorPopup(IGraphics &g, IControl &host, IPopupMenu &menu, const IRECT &anchor, int selected,
                            std::function<void(int)> onPick) {
   menu.Clear();

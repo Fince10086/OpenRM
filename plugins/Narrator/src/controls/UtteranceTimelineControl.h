@@ -11,10 +11,7 @@
 BEGIN_IPLUG_NAMESPACE
 BEGIN_IGRAPHICS_NAMESPACE
 
-// 语句时间线: 渲染结果的最小/最大包络 + 播放进度指针。
-// 波形数据由 delegate 在每次渲染后经 SendControlMsgFromDelegate 推送
-// (kMsgTagPhrase: float 包络点数组, 中心对称的 min/max 值域 [-1,1]);
-// 进度由 OnIdle 经 SetProgress() 轻量更新。
+// 语句时间线: 渲染结果包络 + 播放进度指针
 class UtteranceTimelineControl : public IControl
 {
 public:
@@ -26,7 +23,7 @@ public:
   {
   }
 
-  // pData: kEnvPoints 个 float, 顺序包络 (正半轴幅值 0..1)
+  // pData: kEnvPoints 个 float, 正半轴幅值 0..1
   void OnMsgFromDelegate(int msgTag, int dataSize, const void *pData) override
   {
     if (msgTag != kMsgTagPhrase || !pData)
@@ -87,7 +84,7 @@ public:
       g.FillRect(COL_900(), IRECT(px - 1.5f, wave.T, px + 1.5f, wave.B));
     }
 
-    // 时长标签 (右上角)
+    // 时长标签
     char buf[32];
     snprintf(buf, sizeof(buf), orm::Tr(orm::kTxtDuration, orm::UILang()), mDuration);
     g.DrawText(IText(14, COL_700(), kFontRegular, EAlign::Far, EVAlign::Top), buf, b.GetPadded(-6.f));

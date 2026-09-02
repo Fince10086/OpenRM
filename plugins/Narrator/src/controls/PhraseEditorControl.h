@@ -11,8 +11,7 @@
 BEGIN_IPLUG_NAMESPACE
 BEGIN_IGRAPHICS_NAMESPACE
 
-// 短语文本框: 显示当前语句文本, 点击唤起平台文本输入 (IGraphics::CreateTextEntry)。
-// 合成文本限英文 (SAM Reciter 仅英语, 插件内明示); 界面文案仍双语。
+// 短语文本框: 显示语句文本, 点击唤起平台文本输入
 class PhraseEditorControl : public IControl
 {
 public:
@@ -56,7 +55,6 @@ public:
     std::string text = mHooks.getText ? mHooks.getText() : std::string();
     if (text.empty())
       text = orm::Tr(orm::kTxtEmptyPhrase, orm::UILang());
-    // 保留换行显示为空格 (单行框)
     std::replace(text.begin(), text.end(), '\n', ' ');
     IText t(20, COL_900(), kFontRegular, EAlign::Near, EVAlign::Middle);
     g.DrawText(t, text.c_str(), b.GetPadded(-6.f));

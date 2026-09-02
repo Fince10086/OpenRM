@@ -7,14 +7,13 @@
 #include <string>
 
 // 插件全局 UI 偏好持久化
-// 文件位置:
-//   macOS: ~/Library/Application Support/OpenRM/<Plugin>.settings
-//   Windows: %APPDATA%/OpenRM/<Plugin>.settings
+// macOS: ~/Library/Application Support/OpenRM/<Plugin>.settings
+// Windows: %APPDATA%/OpenRM/<Plugin>.settings
 
 constexpr const char *kSettingsFileName = "ORMNarrator.settings";
 
 struct SettingsData {
-  int lang = -1;       // -1 = 未保存过, 用 DetectSystemLanguage()
+  int lang = -1; // -1 = 未保存, 用系统语言
   int hue = 45;
   int satMax = 15;
   int themeMode = 0;
