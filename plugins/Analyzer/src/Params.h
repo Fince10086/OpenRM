@@ -32,6 +32,8 @@ enum EParams {
   kScopeImgKernel,   // 声像测试: 注入核半宽 (bin)
   kScopeImgDecay,    // 声像测试: 直方图时间衰减 (s)
   kScopeImgDome,     // 声像测试: 穹顶半径占 rMax 比例
+  kScopeImgRelGap,   // 声像测试: 直方图相对地坪 (dB, 峰值之下此深度不画)
+  kScopeImgAntiPow,  // 声像测试: 反相通道负相关加权指数 (0=不加权, 1=线性, 2=平方)
   kNumParams
 };
 

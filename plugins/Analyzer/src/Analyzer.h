@@ -146,6 +146,8 @@ private:
   double mSentScopeImgKernel = 1e9;
   double mSentScopeImgDecay = 1e9;
   double mSentScopeImgDome = 1e9;
+  double mSentScopeImgRelGap = 1e9;
+  double mSentScopeImgAntiPow = 1e9;
 
   // ── Freeze (冻结/保持), 确定性回放方案 ─────────────────────────────
   // 音频线程把最近输入滚环记录进 mFreezeRing (freeze 后停止写入, 即冻结时刻快照),
