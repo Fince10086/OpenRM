@@ -32,7 +32,8 @@ enum EText {
   kTxtBlue,
   kTxtGreen,
   // ---- Narrator 专有条目 ----
-  kTxtPhrase,        // PHRASE
+  kTxtMapPitch,      // PITCH / 音高映射
+  kTxtMapWords,      // WORDS / 词语映射
   kTxtText,          // 文本标签
   kTxtPhonetic,      // 音素
   kTxtPlay,          // 试听
@@ -46,6 +47,7 @@ enum EText {
   kTxtOutput,        // Output
   kTxtMono,          // MONO
   kTxtPoly,          // POLY
+  kTxtLoop,          // LOOP (按住循环)
   kTxtRetrig,        // RETRIG
   kTxtBaseKey,       // Base Key
   kTxtNarratorTitle, // Narrator
@@ -94,7 +96,8 @@ inline const char *Tr(int id, int lang) {
           "Yellow",
           "Blue",
           "Green",
-          "PHRASE",
+          "PITCH",
+          "WORDS",
           "TEXT",
           "PHONEMES",
           "PLAY",
@@ -108,6 +111,7 @@ inline const char *Tr(int id, int lang) {
           "Output",
           "MONO",
           "POLY",
+          "LOOP",
           "RETRIG",
           "Base Key",
           "Narrator",
@@ -152,7 +156,8 @@ inline const char *Tr(int id, int lang) {
           "黄",
           "蓝",
           "绿",
-          "语句",
+          "音高映射",
+          "词语映射",
           "文本",
           "音素",
           "试听",
@@ -166,6 +171,7 @@ inline const char *Tr(int id, int lang) {
           "输出",
           "单音",
           "复音",
+          "循环",
           "重触发",
           "基准键",
           "Narrator",

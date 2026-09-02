@@ -14,11 +14,11 @@ BEGIN_IPLUG_NAMESPACE
 BEGIN_IGRAPHICS_NAMESPACE
 
 // 屏幕钢琴键盘: 宿主 MIDI 回显 + 鼠标点击触发 (经 SendMidiMsgFromUI)。
-// 琴键范围固定 C2(36)..C6(84), 与 960 宽窗口匹配。
+// 琴键范围固定 C3(48)..C6(84), 与 780 宽窗口匹配。
 class PianoKeyboardControl : public IControl
 {
 public:
-  static constexpr int kLowNoteDefault = 36;  // C2
+  static constexpr int kLowNoteDefault = 48;  // C3
   static constexpr int kHighNoteDefault = 84; // C6
   static constexpr int kMsgTagNoteOn = 1;
   static constexpr int kMsgTagNoteOff = 2;
@@ -116,20 +116,22 @@ public:
     const int nWhite = NumWhiteKeys();
     const float whiteW = b.W() / nWhite;
 
-    // 白键
+    // 白键 (借鉴 Bandpass 频谱背景按八度/频段的 WarmGray 梯度填色, 无细线描边)
     for (int note = mLowNote; note <= mHighNote; ++note)
     {
       if (IsBlack(note))
         continue;
       const int wIdx = WhiteIndex(note);
-      const IRECT key(b.L + wIdx * whiteW, b.T, b.L + (wIdx + 1) * whiteW, b.B);
-      const IColor fill = mActive[note] ? COL_500() : COL_100();
+      const float x0 = b.L + wIdx * whiteW;
+      const float x1 = (wIdx + 1 == nWhite) ? b.R : (b.L + (wIdx + 1) * whiteW);
+      const IRECT key(x0, b.T, x1, b.B);
+      const IColor keyCol = WarmGray(OctaveBandV(note));
+      const IColor fill = mActive[note] ? COL_500() : keyCol;
       g.FillRect(fill, key);
-      g.DrawRect(COL_500(), key);
       if (mPressedNote == note)
         g.FillRect(IColor(70, COL_900().R, COL_900().G, COL_900().B), key);
     }
-    // 黑键
+    // 黑键 (统一采用与全插件按键黑色/激活背景一致的 COL_900() 深灰, 绝非 #000000 全黑, 随主题自适应)
     const float blackW = whiteW * 0.62f;
     const float blackH = b.H() * 0.62f;
     for (int note = mLowNote; note <= mHighNote; ++note)
@@ -139,7 +141,8 @@ public:
       // 黑键中心落在该半音与左侧白键的交界
       const float cx = KeyCenterX(note, whiteW, b.L);
       const IRECT key(cx - blackW * 0.5f, b.T, cx + blackW * 0.5f, b.T + blackH);
-      g.FillRect(mActive[note] ? COL_500() : COL_900(), key);
+      const IColor keyCol = mActive[note] ? COL_500() : COL_900();
+      g.FillRect(keyCol, key);
       if (mPressedNote == note)
         g.FillRect(IColor(70, COL_100().R, COL_100().G, COL_100().B), key);
     }
@@ -197,6 +200,31 @@ public:
   }
 
 private:
+  int OctaveBandV(int note) const
+  {
+    static const int kWhiteInOct[12] = {0, -1, 1, -1, 2, 3, -1, 4, -1, 5, -1, 6};
+    const int wInOct = kWhiteInOct[note % 12];
+    if (wInOct < 0)
+      return 210;
+
+    const int relOct = std::max(0, (note - mLowNote) / 12);
+    struct OctBand { float v0, v1; };
+    static const OctBand kBands[] = {
+      {194.f, 218.f}, // 类似 Bandpass 第 1 频段
+      {205.f, 229.f}, // 类似 Bandpass 第 2 频段
+      {216.f, 240.f}, // 类似 Bandpass 第 3 频段
+      {227.f, 239.f}, // 类似 Bandpass 第 4 频段
+    };
+    const int bandIdx = std::clamp(relOct, 0, (int)(sizeof(kBands) / sizeof(kBands[0])) - 1);
+    const OctBand &b = kBands[bandIdx];
+
+    if (note == mHighNote && wInOct == 0)
+      return (int)std::lround(b.v0);
+
+    const float t = (float)wInOct / 6.f;
+    return (int)std::lround(b.v0 + (b.v1 - b.v0) * t);
+  }
+
   int WhiteIndex(int note) const
   {
     int idx = 0;

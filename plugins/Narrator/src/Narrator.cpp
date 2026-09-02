@@ -12,10 +12,12 @@
 #include "controls/PianoKeyboardControl.h"
 #include "controls/PhraseEditorControl.h"
 #include "controls/UtteranceTimelineControl.h"
+#include "controls/CandidatePanelControl.h"
 #include "SettingsFileIO.h"
 
 #include <cstring>
 #include <cstdio>
+#include <chrono>
 #include <functional>
 #include <algorithm>
 #include <string>
@@ -26,6 +28,9 @@
 #elif defined(OS_WIN)
 #include <windows.h>
 #endif
+
+// 撤销手势分组间隙: 距上次 UI 改动超过该时长的连续改动算一次独立手势 (与 Analyzer 一致)
+static constexpr double kGestureGapSec = 0.4;
 
 int orm::DetectSystemLanguage() {
 #if defined(OS_MAC)
@@ -69,8 +74,8 @@ ORMNarrator::ORMNarrator(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     }
   }
 
-  GetParam(kEngine)->InitEnum("Engine", 0, {"SAM", "TMS", "TSI", "SP0256", "DECTALK"});
-  GetParam(kMapMode)->InitEnum("Map Mode", 0, {"PHRASE", "BANK"});
+  GetParam(kEngine)->InitEnum("Engine", 0, {"SAM", "DEC", "SP", "TMS", "TSI"});
+  GetParam(kMapMode)->InitEnum("Map Mode", 0, {"PITCH", "WORDS"});
   GetParam(kBaseKey)->InitDouble("Base Key", 48., 0., 127., 1., "");
   // SAM 专属音色参数 (与 TMS 解耦)
   GetParam(kSamPitch)->InitDouble("SAM Pitch", 64., 0., 255., 1., "");
@@ -99,7 +104,14 @@ ORMNarrator::ORMNarrator(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
   GetParam(kAttack)->InitDouble("Attack", 5., 1., 500., 1., "ms");
   GetParam(kRelease)->InitDouble("Release", 120., 1., 2000., 1., "ms");
   GetParam(kMono)->InitBool("Mono", true);
-  GetParam(kGain)->InitDouble("Output", 0., -24., 6., 0.1, "dB");
+  GetParam(kGain)->InitDouble("Output", -12., -24., 6., 0.1, "dB");
+  GetParam(kLoop)->InitBool("Loop", false);
+
+  // 按键保持标记默认全 1 (宿主 MIDI 键视为按住; 试听按钮触发前单独写 0)
+  for (auto &f : mUIHoldState)
+    f.store(1, std::memory_order_relaxed);
+
+  mStableSnapshot = Snapshot(); // 撤销基准快照 (构造态; 宿主恢复状态后由 UnserializeState/OnUIOpen 重取)
 
 #if IPLUG_EDITOR
   mMakeGraphicsFunc = [&]() {
@@ -161,7 +173,9 @@ ORMNarrator::ORMNarrator(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
       sysFontOk = pGraphics->LoadFont(kFontSystem, MIXED_FN);
 
     const IVStyle style = MakeORMStyle();
-    const IVStyle btnStyle = MakeButtonStyle();
+    IVStyle btnStyle = MakeButtonStyle();
+    btnStyle.labelText = IText(20, COL_900(), kFontSemiBold, EAlign::Center, EVAlign::Middle);
+    btnStyle.valueText = IText(20, COL_900(), kFontSemiBold, EAlign::Center, EVAlign::Middle);
     IVStyle toggleStyle = btnStyle;
     toggleStyle.showLabel = false;
     toggleStyle.showValue = false;
@@ -173,32 +187,117 @@ ORMNarrator::ORMNarrator(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     };
     auto bindTip = [this](IControl *c, int id) { mTooltipBindings.push_back({c, id}); };
 
-    constexpr float kLeftR = 640.f;  // 左列右边界
-    constexpr float kRightL = 656.f; // 右列左边界
-    constexpr float kRightR = 940.f;
+    // 布局常量
+    // 窗口尺寸 780 x 720 (原 960 x 720 缩窄 180px, 即去掉键盘左侧 1 个八度)
+    // 左列 (选项与音色参数): 20..382 (宽 362, 占一半)
+    // 列间距: 16 (382..398)
+    // 右列 (Phrase 文本框与自定义区): 398..760 (宽 362, 占另一半)
+    // 下部左侧 (音频显示时间线 + 键盘): 20..588 (宽 568)
+    // 下部右侧 (Output + 基准键 + 模式 + 图标行 + ORM 品牌区): 604..760 (宽 156)
+    constexpr float kOptL = 20.f;      // 左列 (选项与参数): 宽 362
+    constexpr float kOptR = 382.f;
+    constexpr float kPhraseL = 398.f;  // 右列 (Phrase 文本框): 宽 362
+    constexpr float kPhraseR = 760.f;
+    constexpr float kBottomL = 20.f;   // 底部左侧 (时间线 + 键盘): 宽 568
+    constexpr float kBottomR = 588.f;
+    constexpr float kTitleX = 604.f;   // 底部右侧 (功能区 + 品牌): 宽 156
+    constexpr float kRightR = 760.f;
 
-    // ---- 语句区 (左列) ----
-    SectionTitleControl *phraseTitle = new SectionTitleControl(
-        IRECT(20, 20, kLeftR, 44), "PHRASE",
-        IText(20, COL_900(), kFontBold, EAlign::Near, EVAlign::Middle), 0, 1);
-    pGraphics->AttachControl(phraseTitle);
-    phraseTitle->SetTargetRECT(IRECT(20, 20, 170, 44));
-    bindText(orm::kTxtPhrase, [phraseTitle](const char *s) {
-      phraseTitle->SetStr(s);
-      phraseTitle->SetDirty(false);
-    });
-    bindTip(phraseTitle, orm::kTxtTipPhrase);
+    constexpr float kBtnH = 26.f;        // 统一所有方形按钮的高度
+    constexpr float kBtnFontSize = 20.f; // 统一所有方形按钮的字号 (原 MONO/POLY 字号 20)
 
-    // 映射模式: PHRASE 单句变调 / BANK 逐键绑定
+    // ---- 选项与参数区 (左列) ----
+    // 映射模式: PITCH 音高映射 / WORDS 词语映射 (放在 Sam/Tms/... 选项上方)
     mMapSegment = new FlatSegmentControl(
-        IRECT(180, 20, 400, 44),
-        std::vector<std::string>{"PHRASE", "BANK"},
+        IRECT(kOptL, 16.f, kOptR, 16.f + kBtnH),
+        std::vector<std::string>{orm::Tr(orm::kTxtMapPitch, orm::UILang()),
+                                 orm::Tr(orm::kTxtMapWords, orm::UILang())},
         [this](int idx) { SetMapModeFromUI(idx); },
-        GetParam(kMapMode)->Int());
+        GetParam(kMapMode)->Int(), kBtnFontSize);
     pGraphics->AttachControl(mMapSegment);
 
+    // 引擎选择 (SP0256 简写为 SP, DECTalk 简写为 DEC, 适应 20 号大字)
+    mEngineSegment = new FlatSegmentControl(
+        IRECT(kOptL, 46.f, kOptR, 46.f + kBtnH),
+        std::vector<std::string>{"SAM", "DEC", "SP", "TMS", "TSI"},
+        [this](int idx) { SetEngineFromUI(idx); },
+        GetParam(kEngine)->Int(), kBtnFontSize);
+    pGraphics->AttachControl(mEngineSegment);
+
+    // SAM 文本/音素切换 (仅 SAM 引擎显示; 与其他引擎的语音选择段同一行)
+    mPhoneticSegment = new FlatSegmentControl(
+        IRECT(kOptL, 76.f, kOptR, 76.f + kBtnH),
+        std::vector<std::string>{orm::Tr(orm::kTxtText, orm::UILang()),
+                                 orm::Tr(orm::kTxtPhonetic, orm::UILang())},
+        [this](int idx) { SetPhoneticMode(idx == 1); }, mPhonetic ? 1 : 0, kBtnFontSize);
+    pGraphics->AttachControl(mPhoneticSegment);
+
+    // TMS 音色/词库选择 (SAM 时隐藏; 显式处理器 SetVoiceFromUI, 不依赖 OnParamChange)
+    mVoiceSegment = new FlatSegmentControl(
+        IRECT(kOptL, 76.f, kOptR, 76.f + kBtnH),
+        std::vector<std::string>{"MIL", "TI99", "ACORN", "S&S", "CLOCK"},
+        [this](int idx) { SetVoiceFromUI(idx); },
+        GetParam(kTmsBank)->Int(), kBtnFontSize);
+    pGraphics->AttachControl(mVoiceSegment);
+
+    // TSI 子集选择 (仅 TSI 引擎显示; 9 段宽度有限用短标签)
+    mTsiVoiceSegment = new FlatSegmentControl(
+        IRECT(kOptL, 76.f, kOptR, 76.f + kBtnH),
+        std::vector<std::string>{"BZ", "F2", "C0", "C1", "C2", "C3", "C4", "C5", "C6"},
+        [this](int idx) { SetTsiVoiceFromUI(idx); },
+        GetParam(kTsiBank)->Int(), kBtnFontSize);
+    pGraphics->AttachControl(mTsiVoiceSegment);
+
+    // SP0256 输入模式选择 (仅 SP0256 引擎显示; 与 SAM 同款 文本/音素 控件)
+    mSp0256VoiceSegment = new FlatSegmentControl(
+        IRECT(kOptL, 76.f, kOptR, 76.f + kBtnH),
+        std::vector<std::string>{orm::Tr(orm::kTxtText, orm::UILang()),
+                                 orm::Tr(orm::kTxtPhonetic, orm::UILang())},
+        [this](int idx) { SetSp0256VoiceFromUI(idx); },
+        GetParam(kSp0256Voice)->Int(), kBtnFontSize);
+    pGraphics->AttachControl(mSp0256VoiceSegment);
+
+    // DECTALK 音色选择 (仅 DECTALK 引擎显示; 9 段放不下全名, 用 DECtalk 自己的
+    // 2 字符音色码, 与 TSI 段一致; 完整名单见 kDectalkVoice 参数与提示)
+    mDectalkVoiceSegment = new FlatSegmentControl(
+        IRECT(kOptL, 76.f, kOptR, 76.f + kBtnH),
+        std::vector<std::string>{"NP", "NB", "NH", "NF", "ND", "NK", "NU", "NR", "NW"},
+        [this](int idx) { SetDectalkVoiceFromUI(idx); },
+        GetParam(kDectalkVoice)->Int(), kBtnFontSize);
+    pGraphics->AttachControl(mDectalkVoiceSegment);
+    bindTip(mDectalkVoiceSegment, orm::kTxtTipDectalkVoice);
+
+    struct SliderDef {
+      int param;
+      int txtId;
+      int tipId;
+      const char *fallback;
+    };
+    static const SliderDef kSliders[] = {
+        {kSamPitch, orm::kTxtPitch, orm::kTxtTipPitch, "Pitch"},
+        {kSamSpeed, orm::kTxtSpeed, orm::kTxtTipSpeed, "Speed"},
+        {kSamMouth, orm::kTxtMouth, orm::kTxtTipMouthThroat, "Mouth"},
+        {kSamThroat, orm::kTxtThroat, orm::kTxtTipMouthThroat, "Throat"},
+        {kAttack, orm::kTxtAttack, orm::kTxtTipAttackRelease, "Attack"},
+        {kRelease, orm::kTxtRelease, orm::kTxtTipAttackRelease, "Release"},
+        // Output 滑块移到右下角总功能区 (见下), 槽位仍是 mParamSliders[6]
+    };
+    const int nSliders = (int)(sizeof(kSliders) / sizeof(kSliders[0]));
+    for (int i = 0; i < nSliders; ++i) {
+      const float y = 110.f + i * 48.f;
+      ORMSlider *sl = new ORMSlider(IRECT(kOptL, y, kOptR, y + 40.f), kSliders[i].param,
+                                    kSliders[i].fallback, style, EDirection::Horizontal);
+      mParamSliders[i] = sl;
+      pGraphics->AttachControl(sl);
+      sl->SetHeaderFont(kFontRegular);
+      bindText(kSliders[i].txtId, [sl](const char *s) { sl->SetHeaderLabel(s); });
+      if (kSliders[i].tipId >= 0)
+        bindTip(sl, kSliders[i].tipId);
+    }
+
+    // ---- 语句文本区 (右列): 顶格开始为文本框, 下方放试听/清空按钮, 下部保持留空 ----
     mPhraseEditor = new PhraseEditorControl(
-        IRECT(20, 48, kLeftR, 116),
+        IRECT(kPhraseL, 16.f, kPhraseR, 84.f),
         PhraseEditorControl::Hooks{
             [this]() -> std::string {
               std::lock_guard<std::mutex> lock(mTextMutex);
@@ -217,11 +316,12 @@ ORMNarrator::ORMNarrator(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     bindTip(mPhraseEditor, orm::kTxtTipPhrase);
 
     IVButtonControl *playBtn =
-        MakeMomentary(IRECT(20, 122, 116, 154), [this](IControl *) {
+        MakeMomentary(IRECT(kPhraseL, 90.f, kPhraseL + 96.f, 90.f + kBtnH), [this](IControl *) {
+          // 试听 = 预览 (held=false): 无松键动作, 不参与 Loop 循环
           if (GetParam(kMapMode)->Int() == 1 && mUISelected >= 0)
-            OnNoteOnFromUI(mUISelected);
+            OnNoteOnFromUI(mUISelected, false);
           else
-            OnNoteOnFromUI(std::clamp(GetParam(kBaseKey)->Int(), 0, 127));
+            OnNoteOnFromUI(std::clamp(GetParam(kBaseKey)->Int(), 0, 127), false);
         }, "PLAY", btnStyle);
     pGraphics->AttachControl(playBtn);
     bindText(orm::kTxtPlay, [playBtn](const char *s) {
@@ -230,7 +330,7 @@ ORMNarrator::ORMNarrator(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     });
 
     IVButtonControl *clearBtn =
-        MakeMomentary(IRECT(122, 122, 218, 154), [this](IControl *) {
+        MakeMomentary(IRECT(kPhraseL + 102.f, 90.f, kPhraseL + 198.f, 90.f + kBtnH), [this](IControl *) {
           if (GetParam(kMapMode)->Int() == 1 && mUISelected >= 0) {
             std::lock_guard<std::mutex> lock(mTextMutex);
             mBank.erase(mUISelected); // 解除选中键的绑定
@@ -248,88 +348,36 @@ ORMNarrator::ORMNarrator(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
       clearBtn->SetDirty(false);
     });
 
-    mTimeline = new UtteranceTimelineControl(IRECT(20, 162, kLeftR, 306));
-    pGraphics->AttachControl(mTimeline, kCtrlTagTimeline);
-    bindTip(mTimeline, orm::kTxtTipTimeline);
-
-    // ---- 引擎选择 + 参数列 (右列) ----
-    mEngineSegment = new FlatSegmentControl(
-        IRECT(kRightL, 16, kRightR, 40),
-        std::vector<std::string>{"SAM", "TMS", "TSI", "SP0256", "DECTalk"},
-        [this](int idx) { SetEngineFromUI(idx); },
-        GetParam(kEngine)->Int(), 15.f);
-    pGraphics->AttachControl(mEngineSegment);
-
-    // SAM 文本/音素切换 (仅 SAM 引擎显示; 与其他引擎的语音选择段同一行)
-    mPhoneticSegment = new FlatSegmentControl(
-        IRECT(kRightL, 46, kRightR, 74),
-        std::vector<std::string>{orm::Tr(orm::kTxtText, orm::UILang()),
-                                 orm::Tr(orm::kTxtPhonetic, orm::UILang())},
-        [this](int idx) { SetPhoneticMode(idx == 1); }, mPhonetic ? 1 : 0);
-    pGraphics->AttachControl(mPhoneticSegment);
-
-    // TMS 音色/词库选择 (SAM 时隐藏; 显式处理器 SetVoiceFromUI, 不依赖 OnParamChange)
-    mVoiceSegment = new FlatSegmentControl(
-        IRECT(kRightL, 46, kRightR, 74),
-        std::vector<std::string>{"MIL", "TI99", "ACORN", "S&S", "CLOCK"},
-        [this](int idx) { SetVoiceFromUI(idx); },
-        GetParam(kTmsBank)->Int());
-    pGraphics->AttachControl(mVoiceSegment);
-
-    // TSI 子集选择 (仅 TSI 引擎显示; 9 段宽度有限用短标签)
-    mTsiVoiceSegment = new FlatSegmentControl(
-        IRECT(kRightL, 46, kRightR, 74),
-        std::vector<std::string>{"BZ", "F2", "C0", "C1", "C2", "C3", "C4", "C5", "C6"},
-        [this](int idx) { SetTsiVoiceFromUI(idx); },
-        GetParam(kTsiBank)->Int());
-    pGraphics->AttachControl(mTsiVoiceSegment);
-
-    // SP0256 输入模式选择 (仅 SP0256 引擎显示; 与 SAM 同款 文本/音素 控件)
-    mSp0256VoiceSegment = new FlatSegmentControl(
-        IRECT(kRightL, 46, kRightR, 74),
-        std::vector<std::string>{orm::Tr(orm::kTxtText, orm::UILang()),
-                                 orm::Tr(orm::kTxtPhonetic, orm::UILang())},
-        [this](int idx) { SetSp0256VoiceFromUI(idx); },
-        GetParam(kSp0256Voice)->Int());
-    pGraphics->AttachControl(mSp0256VoiceSegment);
-
-    // DECTALK 音色选择 (仅 DECTALK 引擎显示; 9 段放不下全名, 用 DECtalk 自己的
-    // 2 字符音色码, 与 TSI 段一致; 完整名单见 kDectalkVoice 参数与提示)
-    mDectalkVoiceSegment = new FlatSegmentControl(
-        IRECT(kRightL, 46, kRightR, 74),
-        std::vector<std::string>{"NP", "NB", "NH", "NF", "ND", "NK", "NU", "NR", "NW"},
-        [this](int idx) { SetDectalkVoiceFromUI(idx); },
-        GetParam(kDectalkVoice)->Int());
-    pGraphics->AttachControl(mDectalkVoiceSegment);
-    bindTip(mDectalkVoiceSegment, orm::kTxtTipDectalkVoice);
-
-    struct SliderDef {
-      int param;
-      int txtId;
-      int tipId;
-      const char *fallback;
-    };
-    static const SliderDef kSliders[] = {
-        {kSamPitch, orm::kTxtPitch, orm::kTxtTipPitch, "Pitch"},
-        {kSamSpeed, orm::kTxtSpeed, orm::kTxtTipSpeed, "Speed"},
-        {kSamMouth, orm::kTxtMouth, orm::kTxtTipMouthThroat, "Mouth"},
-        {kSamThroat, orm::kTxtThroat, orm::kTxtTipMouthThroat, "Throat"},
-        {kAttack, orm::kTxtAttack, orm::kTxtTipAttackRelease, "Attack"},
-        {kRelease, orm::kTxtRelease, orm::kTxtTipAttackRelease, "Release"},
-        {kGain, orm::kTxtOutput, -1, "Output"},
-    };
-    const int nSliders = (int)(sizeof(kSliders) / sizeof(kSliders[0]));
-    for (int i = 0; i < nSliders; ++i) {
-      const float y = 84.f + i * 48.f;
-      ORMSlider *sl = new ORMSlider(IRECT(kRightL, y, kRightR, y + 40.f), kSliders[i].param,
-                                    kSliders[i].fallback, style, EDirection::Horizontal);
-      mParamSliders[i] = sl;
-      pGraphics->AttachControl(sl);
-      sl->SetHeaderFont(kFontRegular);
-      bindText(kSliders[i].txtId, [sl](const char *s) { sl->SetHeaderLabel(s); });
-      if (kSliders[i].tipId >= 0)
-        bindTip(sl, kSliders[i].tipId);
-    }
+    // ---- 候选词库 / 说明书系统 (位于试听/清空按钮下方, 至时间线上方) ----
+    constexpr float kCandT = 126.f;
+    constexpr float kCandB = 456.f;
+    mCandidatePanel = new CandidatePanelControl(
+        IRECT(kPhraseL, kCandT, kPhraseR, kCandB),
+        [this](const std::string &word) {
+          std::string text;
+          {
+            std::lock_guard<std::mutex> lock(mTextMutex);
+            if (GetParam(kMapMode)->Int() == 1 && mUISelected >= 0) {
+              auto it = mBank.find(mUISelected);
+              if (it != mBank.end())
+                text = it->second.text;
+            } else {
+              text = mPhraseText;
+            }
+          }
+          if (!text.empty() && text.back() != ' ' && text.back() != '\n') {
+            text += " ";
+          }
+          text += word;
+          SetPhraseText(text);
+#if IPLUG_EDITOR
+          if (GetUI())
+            GetUI()->SetAllControlsDirty();
+#endif
+        });
+    mCandidatePanel->SetEngine(GetParam(kEngine)->Int());
+    mCandidatePanel->SetTmsBank(GetParam(kTmsBank)->Int());
+    pGraphics->AttachControl(mCandidatePanel);
     // 数值格式: 整型参数 / 毫秒 / 分贝 (TMS 语速显示为速率倍数)
     auto intFmt = [](WDL_String &ds, const IParam *p) {
       if (!p)
@@ -382,22 +430,75 @@ ORMNarrator::ORMNarrator(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
       snprintf(buf, sizeof(buf), "%.1f ms", p->Value());
       ds.Set(buf);
     });
-    mParamSliders[6]->SetValueFormatter([](WDL_String &ds, const IParam *p) {
-      char buf[32];
-      snprintf(buf, sizeof(buf), "%.1f dB", p->Value());
-      ds.Set(buf);
+
+    // ---- 右下角"总功能区" (标题块上方, 行距 = 列距 = kIconGap) ----
+    // 自下而上: 图标行 (撤销|重做|保存|读取) → 单音|复音 + 循环 → Base Key 滑块
+    // → Output 滑块; 所有行与标题块同宽 (604..760)。
+
+    // 图标按钮行 (移植 Analyzer 的 撤销|重做|保存|读取 图标行): 撤销/重做接参数
+    // 快照历史; 状态导入/导出功能暂未实现, 保存/读取两颗先占位 (点击暂不触发动作)。
+    constexpr float kIconRowH = 26.f;  // 按钮行高, 与 Analyzer 图标行一致
+    constexpr float kIconRowB = 610.f; // 标题区上缘 615, 留 5px (与 Analyzer 一致)
+    constexpr float kIconRowT = kIconRowB - kIconRowH;
+    constexpr float kIconGap = 4.f;
+    constexpr float kIconBtnW = (kRightR - kTitleX - 3.f * kIconGap) / 4.f; // = 36, 与 Analyzer 一致
+    constexpr float kIconStep = kIconBtnW + kIconGap;
+
+    // 单音|复音 + 循环行: 每颗宽 = 两个图标键 + 间距 (76), 高同图标键。
+    // 单音/复音为单击循环切换 (FlatCycleButton, 不随状态反色); 循环为反色开关
+    // (同 Analyzer FREEZE: 常显文字, 开启时底色变黑文字反白), 开启时按住的键
+    // 把其对应音频从头循环重放, 松键后进入释放段停止。
+    constexpr float kModeRowB = kIconRowT - kIconGap;
+    constexpr float kModeRowT = kModeRowB - kIconRowH;
+    constexpr float kModeBtnW = 2.f * kIconBtnW + kIconGap;
+
+    // Output / Base Key 滑块行: 各占一排, 宽度与按钮行对齐 (ORMSlider 头 26 + 滑轨)
+    constexpr float kSliderRowH = 40.f;
+    constexpr float kBaseRowB = kModeRowT - kIconGap;
+    constexpr float kBaseRowT = kBaseRowB - kSliderRowH;
+    constexpr float kOutRowB = kBaseRowT - kIconGap;
+    constexpr float kOutRowT = kOutRowB - kSliderRowH;
+
+    // ---- 音频显示 (时间线): 位于键盘上方, 宽度和键盘一样, 下缘对齐 MONO 按钮下缘, 上缘对齐 Output 组件上缘 ----
+    mTimeline = new UtteranceTimelineControl(IRECT(kBottomL, kOutRowT, kBottomR, kModeRowB));
+    pGraphics->AttachControl(mTimeline, kCtrlTagTimeline);
+    bindTip(mTimeline, orm::kTxtTipTimeline);
+
+    pGraphics->AttachControl(
+        MakeIconMomentary(IRECT(kTitleX, kIconRowT, kTitleX + kIconBtnW, kIconRowB),
+                          [this](IControl *) { Undo(); }, kIconUndo));
+    pGraphics->AttachControl(
+        MakeIconMomentary(IRECT(kTitleX + kIconStep, kIconRowT, kTitleX + kIconStep + kIconBtnW, kIconRowB),
+                          [this](IControl *) { Redo(); }, kIconRedo));
+    pGraphics->AttachControl(
+        MakeIconMomentary(IRECT(kTitleX + 2.f * kIconStep, kIconRowT, kTitleX + 2.f * kIconStep + kIconBtnW, kIconRowB),
+                          [](IControl *) {}, kIconSave)); // 导出占位: 功能暂未接入
+    pGraphics->AttachControl(
+        MakeIconMomentary(IRECT(kTitleX + 3.f * kIconStep, kIconRowT, kRightR, kIconRowB),
+                          [](IControl *) {}, kIconLoad)); // 导入占位: 功能暂未接入
+
+    // 单音|复音: 绑 kMono, 单击在两态间循环, 颜色不变; 标签序 = 参数值序 (0=复音, 1=单音)
+    FlatCycleButton *monoBtn =
+        new FlatCycleButton(IRECT(kTitleX, kModeRowT, kTitleX + kModeBtnW, kModeRowB), kMono,
+                            {orm::Tr(orm::kTxtPoly, orm::UILang()), orm::Tr(orm::kTxtMono, orm::UILang())},
+                            kBtnFontSize);
+    pGraphics->AttachControl(monoBtn);
+    // 语言切换重建标签 (一条绑定即可覆盖)
+    bindText(orm::kTxtMono, [monoBtn](const char *) {
+      monoBtn->SetLabels({orm::Tr(orm::kTxtPoly, orm::UILang()), orm::Tr(orm::kTxtMono, orm::UILang())});
+    });
+    FlatToggleControl *loopToggle =
+        new FlatToggleControl(IRECT(kTitleX + kModeBtnW + kIconGap, kModeRowT, kRightR, kModeRowB), kLoop, " ",
+                               toggleStyle, orm::Tr(orm::kTxtLoop, orm::UILang()), orm::Tr(orm::kTxtLoop, orm::UILang()));
+    pGraphics->AttachControl(loopToggle);
+    bindText(orm::kTxtLoop, [loopToggle](const char *s) {
+      loopToggle->SetOnText(s);
+      loopToggle->SetOffText(s);
     });
 
-    // 单音/复音 (重触发已移除, 始终从头重放)
-    FlatToggleControl *monoToggle =
-        new FlatToggleControl(IRECT(kRightL, 424, kRightR, 452), kMono, " ", toggleStyle,
-                              orm::Tr(orm::kTxtPoly, orm::UILang()), orm::Tr(orm::kTxtMono, orm::UILang()));
-    pGraphics->AttachControl(monoToggle);
-    bindText(orm::kTxtMono, [monoToggle](const char *s) { monoToggle->SetOnText(s); });
-    bindText(orm::kTxtPoly, [monoToggle](const char *s) { monoToggle->SetOffText(s); });
-
+    // Base Key (基准键)
     ORMSlider *baseKeySlider =
-        new ORMSlider(IRECT(kRightL, 460, kRightR, 500), kBaseKey,
+        new ORMSlider(IRECT(kTitleX, kBaseRowT, kRightR, kBaseRowB), kBaseKey,
                       orm::Tr(orm::kTxtBaseKey, orm::UILang()), style, EDirection::Horizontal);
     pGraphics->AttachControl(baseKeySlider);
     baseKeySlider->SetHeaderFont(kFontRegular);
@@ -411,9 +512,25 @@ ORMNarrator::ORMNarrator(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     bindText(orm::kTxtBaseKey, [baseKeySlider](const char *s) { baseKeySlider->SetHeaderLabel(s); });
     bindTip(baseKeySlider, orm::kTxtTipBaseKey);
 
-    // ---- 键盘 (C2..C6, 右侧留出标题块位置) ----
+    // Output (输出电平, 默认 -12 dB)
+    mParamSliders[6] = new ORMSlider(IRECT(kTitleX, kOutRowT, kRightR, kOutRowB), kGain,
+                                     orm::Tr(orm::kTxtOutput, orm::UILang()), style, EDirection::Horizontal);
+    pGraphics->AttachControl(mParamSliders[6]);
+    mParamSliders[6]->SetHeaderFont(kFontRegular);
+    mParamSliders[6]->SetValueFormatter([](WDL_String &ds, const IParam *p) {
+      char buf[32];
+      snprintf(buf, sizeof(buf), "%.1f dB", p->Value());
+      ds.Set(buf);
+    });
+    bindText(orm::kTxtOutput, [this](const char *s) {
+      if (mParamSliders[6])
+        mParamSliders[6]->SetHeaderLabel(s);
+    });
+
+    // ---- 键盘 (C3..C6, 22 个白键): 压扁拉宽铺满底部空带 —— 上缘对齐图标按钮排顶
+    // (kIconRowT), 下缘对齐标题块底 (684), 右缘止于标题块左缘前 16px ----
     mKeyboard = new PianoKeyboardControl(
-        IRECT(20, 504, 616, 660),
+        IRECT(kBottomL, kIconRowT, kBottomR, 684),
         PianoKeyboardControl::Hooks{
             [this](int note) { OnNoteOnFromUI(note); },
             [this](int note) { OnNoteOffFromUI(note); },
@@ -423,8 +540,6 @@ ORMNarrator::ORMNarrator(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     pGraphics->AttachControl(mKeyboard, kCtrlTagKeyboard);
     bindTip(mKeyboard, orm::kTxtTipKeyboard);
 
-    // ---- 右下角标题块 (与 Analyzer 同构: 底部锚定, 上缘 615, 底到 684) ----
-    constexpr float kTitleX = 784.f;
     IText ormText(32, COL_900(), kFontBold, EAlign::Near, EVAlign::Bottom);
     SectionTitleControl *ormTitle = new SectionTitleControl(IRECT(kTitleX, 618, kTitleX + 120, 652), "ORM", ormText, 0);
     pGraphics->AttachControl(ormTitle);
@@ -507,7 +622,19 @@ ORMNarrator::ORMNarrator(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
 
 // ---- 编辑器侧入口 ----
 
-void ORMNarrator::OnNoteOnFromUI(int note) {
+void ORMNarrator::OnUIOpen() {
+  // 基类实现把当前参数值同步进各绑定控件 (否则控件值停在第 1 个值, 依赖
+  // 「控件值 != 新值」判断的点击会被吞掉, 如 单音/复音 循环按钮无法切换)
+#if IPLUG_EDITOR
+  Plugin::OnUIOpen();
+#endif
+  // 宿主状态恢复可能发生在构造之后、开 UI 之前: 以 UI 打开时刻的参数为第一个撤销基准
+  mStableSnapshot = Snapshot();
+}
+
+void ORMNarrator::OnNoteOnFromUI(int note, bool held) {
+  // 先写保持标记再发 MIDI: 音频线程触发时读走 (试听按钮 held=false → 不参与 Loop)
+  mUIHoldState[(size_t) note].store(held ? 1 : 0, std::memory_order_relaxed);
   // 注意: iPlug2 的 IMidiMsg 用打包 nibble 语义 (mStatus = channel | (type<<4)),
   // 必须经 MakeNoteOnMsg 构造, 不能手写原始 MIDI 字节
   IMidiMsg msg;
@@ -560,6 +687,8 @@ void ORMNarrator::SetPhoneticMode(bool phonetic) {
 
 void ORMNarrator::SetEngineFromUI(int idx) {
   const int v = std::clamp(idx, 0, 4);
+  // 分段控件不走 IControl 参数联动 (直接 GetParam()->Set), 撤销手势须手动分组
+  MaybePushGestureUndo();
   GetParam(kEngine)->Set((double) v);
   InformHostOfParamChange(kEngine, GetParam(kEngine)->GetNormalized());
   mRenderDirty = true;
@@ -575,6 +704,8 @@ void ORMNarrator::SetEngineFromUI(int idx) {
   }
   if (mEngineSegment)
     mEngineSegment->SetActive(v);
+  if (mCandidatePanel)
+    mCandidatePanel->SetEngine(v);
   // 4 个音色滑块槽按引擎改绑 (SAM: pitch/speed/mouth/throat; TMS: pitch/speed + 灰)
   RebindVoiceSliders(v);
 #if IPLUG_EDITOR
@@ -585,6 +716,7 @@ void ORMNarrator::SetEngineFromUI(int idx) {
 
 void ORMNarrator::SetVoiceFromUI(int idx) {
   const int v = std::clamp(idx, 0, kNumBanks - 1);
+  MaybePushGestureUndo();
   GetParam(kTmsBank)->Set((double) v);
   InformHostOfParamChange(kTmsBank, GetParam(kTmsBank)->GetNormalized());
   mRenderDirty = true; // 分段控件不走参数联动, 必须显式置脏才会重渲染
@@ -600,6 +732,8 @@ void ORMNarrator::SetVoiceFromUI(int idx) {
   }
   if (mVoiceSegment)
     mVoiceSegment->SetActive(v);
+  if (mCandidatePanel)
+    mCandidatePanel->SetTmsBank(v);
 #if IPLUG_EDITOR
   if (GetUI())
     GetUI()->SetAllControlsDirty();
@@ -608,6 +742,7 @@ void ORMNarrator::SetVoiceFromUI(int idx) {
 
 void ORMNarrator::SetTsiVoiceFromUI(int idx) {
   const int v = std::clamp(idx, 0, kNumS14001Sets - 1);
+  MaybePushGestureUndo();
   GetParam(kTsiBank)->Set((double) v);
   InformHostOfParamChange(kTsiBank, GetParam(kTsiBank)->GetNormalized());
   mRenderDirty = true; // 分段控件不走参数联动, 必须显式置脏才会重渲染
@@ -631,6 +766,7 @@ void ORMNarrator::SetTsiVoiceFromUI(int idx) {
 
 void ORMNarrator::SetSp0256VoiceFromUI(int idx) {
   const int v = std::clamp(idx, 0, kNumSp0256 - 1);
+  MaybePushGestureUndo();
   GetParam(kSp0256Voice)->Set((double) v);
   InformHostOfParamChange(kSp0256Voice, GetParam(kSp0256Voice)->GetNormalized());
   mRenderDirty = true; // 分段控件不走参数联动, 必须显式置脏才会重渲染
@@ -654,6 +790,7 @@ void ORMNarrator::SetSp0256VoiceFromUI(int idx) {
 
 void ORMNarrator::SetDectalkVoiceFromUI(int idx) {
   const int v = std::clamp(idx, 0, orm::kNumDectalkVoices - 1);
+  MaybePushGestureUndo();
   GetParam(kDectalkVoice)->Set((double) v);
   InformHostOfParamChange(kDectalkVoice, GetParam(kDectalkVoice)->GetNormalized());
   mRenderDirty = true; // 分段控件不走参数联动, 必须显式置脏才会重渲染
@@ -677,6 +814,7 @@ void ORMNarrator::SetDectalkVoiceFromUI(int idx) {
 
 void ORMNarrator::SetMapModeFromUI(int idx) {
   const int v = std::clamp(idx, 0, 1);
+  MaybePushGestureUndo();
   GetParam(kMapMode)->Set((double) v);
   InformHostOfParamChange(kMapMode, GetParam(kMapMode)->GetNormalized());
   if (mMapSegment)
@@ -708,8 +846,14 @@ void ORMNarrator::ApplyLanguage() {
     mSp0256VoiceSegment->SetLabels({orm::Tr(orm::kTxtText, orm::UILang()),
                                     orm::Tr(orm::kTxtPhonetic, orm::UILang())});
   }
+  if (mMapSegment) {
+    mMapSegment->SetLabels({orm::Tr(orm::kTxtMapPitch, orm::UILang()),
+                            orm::Tr(orm::kTxtMapWords, orm::UILang())});
+  }
   // 语言切换后重刷滑杆槽绑定 (TSI 槽 0 的头部标签是动态的)
   RebindVoiceSliders((int) GetParam(kEngine)->Int());
+  if (mCandidatePanel)
+    mCandidatePanel->SetLanguage(orm::UILang());
   if (GetUI()) {
     GetUI()->SetAllControlsDirty();
     GetUI()->UpdateTooltips();
@@ -742,11 +886,97 @@ void ORMNarrator::ToggleSettingsPanel() {
     mSettingsPanel->SetVisible(mSettingsPanel->IsHidden());
 }
 
+// ---- 参数快照撤销/重做 (移植 Analyzer, 只覆盖插件参数; 语句/BANK 文本不参与) ----
+
+ParamSnapshot ORMNarrator::Snapshot() const {
+  ParamSnapshot s;
+  for (int i = 0; i < kNumParams; ++i)
+    s[i] = GetParam(i)->Value();
+  return s;
+}
+
+void ORMNarrator::SetParamFromEditor(int idx, double value) {
+  GetParam(idx)->Set(value);
+  InformHostOfParamChange(idx, GetParam(idx)->GetNormalized());
+}
+
+void ORMNarrator::ApplySnapshot(const ParamSnapshot &s) {
+  for (int i = 0; i < kNumParams; ++i)
+    SetParamFromEditor(i, s[i]);
+  // 快照可能切换了引擎: 重绑音色滑块槽 (分段高亮由 OnIdle 每帧按参数同步)
+  RebindVoiceSliders((int) GetParam(kEngine)->Int());
+  RefreshAfterEdit();
+}
+
+void ORMNarrator::RefreshAfterEdit() {
+  if (GetUI()) {
+    SendCurrentParamValuesFromDelegate();
+    GetUI()->SetAllControlsDirty();
+  }
+  MarkStateStable();
+}
+
+void ORMNarrator::PushUndoSnapshot(const ParamSnapshot &s) {
+  if (!mUndoStack.empty() && mUndoStack.back() == s)
+    return;
+  mUndoStack.push_back(s);
+  if (mUndoStack.size() > 100)
+    mUndoStack.pop_front();
+  mRedoStack.clear();
+}
+
+void ORMNarrator::MaybePushGestureUndo() {
+  using namespace std::chrono;
+  const double now = duration<double>(steady_clock::now().time_since_epoch()).count();
+  if (now - mLastUIChangeTime > kGestureGapSec)
+    PushUndoSnapshot(mStableSnapshot);
+  mLastUIChangeTime = now;
+  mGesturePending = true;
+}
+
+void ORMNarrator::MarkStateStable() {
+  mStableSnapshot = Snapshot();
+  mGesturePending = false;
+}
+
+void ORMNarrator::Undo() {
+  if (mUndoStack.empty())
+    return;
+  mRedoStack.push_back(Snapshot());
+  const ParamSnapshot s = mUndoStack.back();
+  mUndoStack.pop_back();
+  ApplySnapshot(s);
+}
+
+void ORMNarrator::Redo() {
+  if (mRedoStack.empty())
+    return;
+  mUndoStack.push_back(Snapshot());
+  const ParamSnapshot s = mRedoStack.back();
+  mRedoStack.pop_back();
+  ApplySnapshot(s);
+}
+
+void ORMNarrator::OnParamChangeUI(int paramIdx, EParamSource source) {
+  // 参数绑定控件 (滑块/开关) 经 SendParameterValueFromUI 走到这里; 分段控件
+  // 在各自 Set*FromUI 里手动调用 MaybePushGestureUndo
+  if (source == EParamSource::kUI)
+    MaybePushGestureUndo();
+}
+
 void ORMNarrator::OnIdle() {
   if (!GetUI())
     return;
 
   ApplySelectionFromIdle();
+
+  // 手势结束 (超过 kGestureGapSec 无 UI 改动): 把当前参数固化为下一次撤销的基准快照
+  using namespace std::chrono;
+  const double now = duration<double>(steady_clock::now().time_since_epoch()).count();
+  if (mGesturePending && now - mLastUIChangeTime > kGestureGapSec) {
+    mStableSnapshot = Snapshot();
+    mGesturePending = false;
+  }
 
   // 音频线程队列 -> 控件
   TimelineMsg t;
@@ -774,9 +1004,9 @@ void ORMNarrator::OnIdle() {
 
   // 引擎/音色参数已由 RebindVoiceSliders 管理绑定的滑块; 宿主侧改引擎时同步重绑
   const int eng = (int) GetParam(kEngine)->Int();
-  const int expectIdx = (eng == 1) ? kTmsPitch : (eng == 2) ? kTsiSpeed
-                                                           : (eng == 3) ? kSp0256Speed
-                                                                        : (eng == 4) ? kDectalkPitch : kSamPitch;
+  const int expectIdx = (eng == kEngineTMS) ? kTmsPitch : (eng == kEngineTSI) ? kTsiSpeed
+                                                        : (eng == kEngineSP)  ? kSp0256Speed
+                                                        : (eng == kEngineDEC) ? kDectalkPitch : kSamPitch;
   const bool bound = mParamSliders[0] ? (mParamSliders[0]->GetParamIdx() == expectIdx) : false;
   if (!bound)
     RebindVoiceSliders(eng);
@@ -1093,7 +1323,9 @@ int ORMNarrator::UnserializeState(const IByteChunk &chunk, int startPos) {
     }
   }
   mRenderDirty = true;
-  return UnserializeParams(chunk, startPos);
+  startPos = UnserializeParams(chunk, startPos);
+  mStableSnapshot = Snapshot(); // 宿主恢复状态后重取撤销基准
+  return startPos;
 }
 
 void ORMNarrator::EnsureRendered() {
@@ -1123,18 +1355,18 @@ void ORMNarrator::EnsureRendered() {
   const float spScale = (float)(GetParam(kSp0256Speed)->Value() / 72.0);
   bool ok = false;
   double rate = 0.0;
-  if (engine == 0) {
+  if (engine == kEngineSAM) {
     ok = orm::SamEngine::Render(text, phon, s, mPhraseBuffer);
     rate = orm::SamEngine::kSampleRate;
-  } else if (engine == 2) {
+  } else if (engine == kEngineTSI) {
     // TSI S14001A: 文本 = 词索引 (Wnn / n), rateScale 缩放芯片时钟
     ok = orm::TsiS14001Engine::Render(text, tsiBank, tsiScale, mPhraseBuffer);
     rate = orm::TsiS14001Engine::RateForSet(tsiBank, tsiScale);
-  } else if (engine == 3) {
+  } else if (engine == kEngineSP) {
     // SP0256: 文本 = allophone/单词标签或数字码, speedScale 缩放 XTAL
     ok = orm::Sp0256Engine::Render(text, spVariant, spScale, mPhraseBuffer);
     rate = orm::Sp0256Engine::RateFor(spScale);
-  } else if (engine == 4) {
+  } else if (engine == kEngineDEC) {
     // DECTALK: 文本 = 自由英语文本 (带数字/缩写/标点), 原生 11025 Hz;
     // 语速/音高经 DECtalk 原生机制 (保韵律), 键盘变调仍走 VoiceRenderer
     orm::DectalkSettings d;
@@ -1164,13 +1396,13 @@ void ORMNarrator::EnsureRendered() {
 
 void ORMNarrator::RenderBankEntry(BankEntry &e) {
   e.rendered.clear();
-  if (e.engine == 0) {
+  if (e.engine == kEngineSAM) {
     orm::SamEngine::Render(e.text, e.phonetic, e.sam, e.rendered);
-  } else if (e.engine == 2) {
+  } else if (e.engine == kEngineTSI) {
     orm::TsiS14001Engine::Render(e.text, e.tsi.bank, (float)(e.tsi.speed / 72.0), e.rendered);
-  } else if (e.engine == 3) {
+  } else if (e.engine == kEngineSP) {
     orm::Sp0256Engine::Render(e.text, e.sp0256.variant, (float)(e.sp0256.speed / 72.0), e.rendered);
-  } else if (e.engine == 4) {
+  } else if (e.engine == kEngineDEC) {
     orm::DectalkEngine::Render(e.text, e.phonetic, e.dectalk, e.rendered);
   } else if (e.tms.bank == kBankSspell) {
     orm::Tms5110Engine::Render(e.text, (float)(e.tms.speed / 72.0), e.rendered);
@@ -1281,6 +1513,10 @@ void ORMNarrator::ApplySelectionFromIdle() {
     mSp0256VoiceSegment->SetActive(sp0256.variant);
   if (mDectalkVoiceSegment)
     mDectalkVoiceSegment->SetActive(dectalk.voice);
+  if (mCandidatePanel) {
+    mCandidatePanel->SetEngine(engine);
+    mCandidatePanel->SetTmsBank(tms.bank);
+  }
   RebindVoiceSliders(engine);
 #if IPLUG_EDITOR
   if (GetUI()) {
@@ -1293,7 +1529,7 @@ void ORMNarrator::ApplySelectionFromIdle() {
 void ORMNarrator::RebindVoiceSliders(int engine) {
   // 槽 0..3 = Pitch/Speed/Mouth/Throat (SAM); TMS 槽 2/3 置灰;
   // TSI/SP0256 仅槽 0 有效 (时钟/速率), 槽 1..3 置灰
-  if (engine == 1) {
+  if (engine == kEngineTMS) {
     const int tmsIdx[2] = {kTmsPitch, kTmsSpeed};
     for (int i = 0; i < 2; ++i) {
       if (mParamSliders[i]) {
@@ -1310,7 +1546,7 @@ void ORMNarrator::RebindVoiceSliders(int engine) {
     }
     if (mParamSliders[0])
       mParamSliders[0]->SetHeaderLabel(orm::Tr(orm::kTxtPitch, orm::UILang()));
-  } else if (engine == 2) {
+  } else if (engine == kEngineTSI) {
     if (mParamSliders[0]) {
       mParamSliders[0]->SetParamIdx(kTsiSpeed);
       mParamSliders[0]->SetValueFromDelegate(GetParam(kTsiSpeed)->GetNormalized());
@@ -1323,7 +1559,7 @@ void ORMNarrator::RebindVoiceSliders(int engine) {
         mParamSliders[i]->SetGhost(true);
       }
     }
-  } else if (engine == 3) {
+  } else if (engine == kEngineSP) {
     if (mParamSliders[0]) {
       mParamSliders[0]->SetParamIdx(kSp0256Speed);
       mParamSliders[0]->SetValueFromDelegate(GetParam(kSp0256Speed)->GetNormalized());
@@ -1336,7 +1572,7 @@ void ORMNarrator::RebindVoiceSliders(int engine) {
         mParamSliders[i]->SetGhost(true);
       }
     }
-  } else if (engine == 4) {
+  } else if (engine == kEngineDEC) {
     // DECTALK: 槽 0 = AP 平均音高 (Hz), 槽 1 = 说话速率 (wpm)
     const int dtIdx[2] = {kDectalkPitch, kDectalkRate};
     for (int i = 0; i < 2; ++i) {
@@ -1378,15 +1614,15 @@ void ORMNarrator::RebindVoiceSliders(int engine) {
       mParamSliders[1]->SetTooltip(orm::Tr(orm::kTxtTipSpeed, orm::UILang()));
   }
   if (mPhoneticSegment)
-    mPhoneticSegment->Hide(engine != 0);
+    mPhoneticSegment->Hide(engine != kEngineSAM);
   if (mVoiceSegment)
-    mVoiceSegment->Hide(engine != 1);
+    mVoiceSegment->Hide(engine != kEngineTMS);
   if (mTsiVoiceSegment)
-    mTsiVoiceSegment->Hide(engine != 2);
+    mTsiVoiceSegment->Hide(engine != kEngineTSI);
   if (mSp0256VoiceSegment)
-    mSp0256VoiceSegment->Hide(engine != 3);
+    mSp0256VoiceSegment->Hide(engine != kEngineSP);
   if (mDectalkVoiceSegment)
-    mDectalkVoiceSegment->Hide(engine != 4);
+    mDectalkVoiceSegment->Hide(engine != kEngineDEC);
 }
 
 void ORMNarrator::PushPhraseToUI() {
@@ -1409,6 +1645,8 @@ void ORMNarrator::PushPhraseToUI() {
 }
 
 void ORMNarrator::TriggerVoice(int note) {
+  // 读取并复位该音的 UI 保持标记 (试听按钮预写 0 → 不参与 Loop)
+  const bool held = mUIHoldState[(size_t) note].exchange(1, std::memory_order_relaxed) != 0;
   const bool bank = GetParam(kMapMode)->Int() == 1;
 
   if (bank)
@@ -1436,26 +1674,30 @@ void ORMNarrator::TriggerVoice(int note) {
     const bool mono = GetParam(kMono)->Value() > 0.5;
     if (mono)
     {
-      // 单音: 停掉当前音后从头顶重放 (重触发始终开启)
+      // 单音: 停掉当前音后从头顶重放 (重触发始终开启); 清 held 防止旧键被 Loop 复活
       for (Voice &v : mVoices)
+      {
+        v.held = false;
         if (v.renderer.IsPlaying())
           v.renderer.Release();
+      }
     }
 
     Voice &v = mVoices[(size_t) mNextVoice];
     mNextVoice = (mNextVoice + 1) % kMaxVoices;
     v.note = note;
+    v.held = held;
     v.renderer.SetEnvelope(GetParam(kAttack)->Value(), GetParam(kRelease)->Value());
-    const double bankRate = e->engine == 0 ? orm::SamEngine::kSampleRate
-                           : e->engine == 2 ? orm::TsiS14001Engine::RateForSet(e->tsi.bank, (float)(e->tsi.speed / 72.0))
-                           : e->engine == 3 ? orm::Sp0256Engine::RateFor((float)(e->sp0256.speed / 72.0))
-                           : e->engine == 4 ? orm::DectalkEngine::kSampleRate
+    const double bankRate = e->engine == kEngineSAM ? orm::SamEngine::kSampleRate
+                           : e->engine == kEngineTSI ? orm::TsiS14001Engine::RateForSet(e->tsi.bank, (float)(e->tsi.speed / 72.0))
+                           : e->engine == kEngineSP ? orm::Sp0256Engine::RateFor((float)(e->sp0256.speed / 72.0))
+                           : e->engine == kEngineDEC ? orm::DectalkEngine::kSampleRate
                            : (e->tms.bank == kBankSspell) ? orm::Tms5110Engine::kSampleRate
                                                           : orm::Tms5220Engine::kSampleRate;
     v.renderer.SetPhrase(e->rendered.data(), (int) e->rendered.size(), bankRate, GetSampleRate());
-    v.renderer.Trigger(e->engine == 1
-                           ? std::pow(2., (e->tms.pitch - 64.) / 24.) // TMS 音高以 varispeed 近似
-                           : 1.0); // 绑定项原速
+    v.ratio = e->engine == kEngineTMS ? std::pow(2., (e->tms.pitch - 64.) / 24.) // TMS 音高以 varispeed 近似
+                             : 1.0; // 绑定项原速
+    v.renderer.Trigger(v.ratio);
     PushBankPhraseToUI(*e);
     return;
   }
@@ -1469,38 +1711,47 @@ void ORMNarrator::TriggerVoice(int note) {
 
   if (mono)
   {
-    // 单音: 停掉当前音后从头顶重放 (重触发始终开启)
+    // 单音: 停掉当前音后从头顶重放 (重触发始终开启); 清 held 防止旧键被 Loop 复活
     for (Voice &v : mVoices)
+    {
+      v.held = false;
       if (v.renderer.IsPlaying())
         v.renderer.Release();
+    }
   }
 
   Voice &v = mVoices[(size_t) mNextVoice];
   mNextVoice = (mNextVoice + 1) % kMaxVoices;
   v.note = note;
+  v.held = held;
   v.renderer.SetEnvelope(GetParam(kAttack)->Value(), GetParam(kRelease)->Value());
   const int engine = (int) GetParam(kEngine)->Int();
   const int bankIdx = (int) GetParam(kTmsBank)->Int();
   const int tsiBank = (int) GetParam(kTsiBank)->Int();
   const double phraseRate =
-      (engine == 0) ? orm::SamEngine::kSampleRate
-      : (engine == 2) ? orm::TsiS14001Engine::RateForSet(tsiBank, (float)(GetParam(kTsiSpeed)->Value() / 72.0))
-      : (engine == 3) ? orm::Sp0256Engine::RateFor((float)(GetParam(kSp0256Speed)->Value() / 72.0))
-      : (engine == 4) ? orm::DectalkEngine::kSampleRate
+      (engine == kEngineSAM) ? orm::SamEngine::kSampleRate
+      : (engine == kEngineTSI) ? orm::TsiS14001Engine::RateForSet(tsiBank, (float)(GetParam(kTsiSpeed)->Value() / 72.0))
+      : (engine == kEngineSP) ? orm::Sp0256Engine::RateFor((float)(GetParam(kSp0256Speed)->Value() / 72.0))
+      : (engine == kEngineDEC) ? orm::DectalkEngine::kSampleRate
       : (bankIdx == kBankSspell) ? orm::Tms5110Engine::kSampleRate
                                  : orm::Tms5220Engine::kSampleRate;
   v.renderer.SetPhrase(mPhraseBuffer.data(), (int) mPhraseBuffer.size(), phraseRate,
                        GetSampleRate());
   double ratio = PitchRatioForNote(note);
-  if (engine == 1)
+  if (engine == kEngineTMS)
     ratio *= std::pow(2., (GetParam(kTmsPitch)->Value() - 64.) / 24.); // TMS 音高参数以 varispeed 近似
+  v.ratio = ratio;
   v.renderer.Trigger(ratio);
 }
 
 void ORMNarrator::ReleaseVoice(int note) {
   for (Voice &v : mVoices)
-    if (v.note == note && v.renderer.IsPlaying())
-      v.renderer.Release();
+    if (v.note == note)
+    {
+      v.held = false; // 先断循环链: 即使处于两轮循环的间隙也能正确停下
+      if (v.renderer.IsPlaying())
+        v.renderer.Release();
+    }
 }
 
 double ORMNarrator::PitchRatioForNote(int note) const {
@@ -1509,7 +1760,12 @@ double ORMNarrator::PitchRatioForNote(int note) const {
 }
 
 void ORMNarrator::RenderSegment(sample *out, int from, int to) {
-  for (Voice &v : mVoices)
+  // Loop 开启且按键未松开: 短语播完即从头顶重放, 直到松键 (held 断开) 走释放段
+  const bool loop = GetParam(kLoop)->Value() > 0.5;
+  for (Voice &v : mVoices) {
+    if (loop && v.held && !v.renderer.IsPlaying())
+      v.renderer.Trigger(v.ratio);
     v.renderer.ProcessAdd(out + from, to - from);
+  }
 }
 #endif

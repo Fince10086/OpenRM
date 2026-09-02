@@ -3,11 +3,23 @@
 // 参数枚举独立成头: 插件本体 (Narrator.h/.cpp) 与 UI 控件 (ORMSlider 等)
 // 都要引用参数索引, 避免控件反向依赖插件头文件。
 
+#include <array>
+
+enum EEngine
+{
+  kEngineSAM = 0,
+  kEngineDEC = 1,
+  kEngineSP = 2,
+  kEngineTMS = 3,
+  kEngineTSI = 4,
+  kNumEngines = 5
+};
+
 enum EParams
 {
-  kEngine = 0,  // 合成引擎: 0=SAM 1=TMS 2=TSI 3=SP0256 4=DECTALK
-  kMapMode,     // 映射模式: 0=PHRASE 单句变调 1=BANK 逐键绑定
-  kBaseKey,     // 触发基准键 (PHRASE 模式音高偏移的 0 点)
+  kEngine = 0,  // 合成引擎: 0=SAM 1=DEC 2=SP 3=TMS 4=TSI (见 EEngine)
+  kMapMode,     // 映射模式: 0=PITCH 音高映射 1=WORDS 词语映射
+  kBaseKey,     // 触发基准键 (PITCH 模式音高偏移的 0 点)
   // ---- SAM 专属音色参数 (与 TMS 解耦, 各引擎独立存取) ----
   kSamPitch,    // SAM 原生音高 (0..255)
   kSamSpeed,    // SAM 原生语速 (值越大越慢)
@@ -32,8 +44,12 @@ enum EParams
   kRelease,     // 松键释放 ms
   kMono,        // 单音 (true) / 复音 (false)
   kGain,        // 输出电平 dB
+  kLoop,        // 按键未松开时循环重放其音频
   kNumParams
 };
+
+// 全参数快照 (撤销/重做的原子单位, 与 Analyzer 同构)
+using ParamSnapshot = std::array<double, kNumParams>;
 
 // TMS 音色/词库索引 (kTmsBank) — 顺序即 UI 音色选择段的顺序
 enum

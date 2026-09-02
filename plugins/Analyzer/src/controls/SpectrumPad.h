@@ -1133,35 +1133,36 @@ private:
       return;
     float topL, botL;
     LoudWindow(topL, botL);
-    const float yHi = LoudYOf(plot, std::clamp(mLraMax, botL, topL));
-    const float yLo = LoudYOf(plot, std::clamp(mLraMin, botL, topL));
-    if (yHi - yLo < 1.f)
+    // LoudYOf: LUFS 越高 y 越小 (靠上) → lraMax (95% 上臂) 得 yTop, lraMin (10% 下臂) 得 yBot
+    const float yTop = LoudYOf(plot, std::clamp(mLraMax, botL, topL));
+    const float yBot = LoudYOf(plot, std::clamp(mLraMin, botL, topL));
+    if (yBot - yTop < 1.f)
       return; // 范围太小, 上下臂重合, 不画
 
     const float zoneL = plot.R + kMeterStripW - kLraZoneW; // = M 条右缘 = spine 起点
     const float zoneR = plot.R + kMeterStripW;             // = 频谱面板右缘 = 文字右边界
     const IColor col = SemColor(MeterYellow());
 
-    // spine + caps (1.5px 粗细; 上下臂居中位于 yHi / yLo)
+    // spine + caps (1.5px 粗细; 上下臂居中位于 yTop / yBot)
     constexpr float kSpineW = 1.5f, kCapH = 1.5f, kCapLen = 6.f;
-    g.FillRect(col, IRECT(zoneL, yHi, zoneL + kSpineW, yLo));
-    g.FillRect(col, IRECT(zoneL, yHi - kCapH * 0.5f, zoneL + kCapLen, yHi + kCapH * 0.5f));
-    g.FillRect(col, IRECT(zoneL, yLo - kCapH * 0.5f, zoneL + kCapLen, yLo + kCapH * 0.5f));
+    g.FillRect(col, IRECT(zoneL, yTop, zoneL + kSpineW, yBot));
+    g.FillRect(col, IRECT(zoneL, yTop - kCapH * 0.5f, zoneL + kCapLen, yTop + kCapH * 0.5f));
+    g.FillRect(col, IRECT(zoneL, yBot - kCapH * 0.5f, zoneL + kCapLen, yBot + kCapH * 0.5f));
 
-    // 文字: "LRA" (小标) + "XX.X" (值), 竖排, 右对齐 zoneR。字号按当前 LUFS 量程缩放:
-    // 范围窄 (<8 LU) 时两行塞进 [yLo, yHi] 之间; 范围宽 (≥16 LU) 时各自留一行高, 居中。
+    // 文字: "LRA" (小标) + "XX.X" (值), 竖排, 右对齐 zoneR。字号随跨度缩放,
+    // 两行整体居中于上下臂之间; 空间不足时贴顶 (允许向下微溢)。
     char valBuf[16];
     std::snprintf(valBuf, sizeof(valBuf), "%.1f", mRange);
-    const float midY = (yHi + yLo) * 0.5f;
-    const float span = yHi - yLo;
+    const float midY = (yTop + yBot) * 0.5f;
+    const float span = yBot - yTop;
     const float labelSize = std::clamp(span * 0.28f, 9.f, 12.f); // "LRA" 字号随跨度缩
     const float valSize = std::clamp(span * 0.42f, 11.f, 16.f);  // "XX.X" 字号随跨度缩
     const float gap = 1.f;
     const float labelH = labelSize + 2.f;
     const float valH = valSize + 2.f;
-    // 两行总高: 上下各留 ~6px 内边距, 整体居中于 [yLo+4, yHi-4]
     const float totalH = labelH + gap + valH;
-    const float blockT = std::clamp(midY - totalH * 0.5f, yLo + 1.f, yHi - totalH - 1.f);
+    const float topLimit = std::max(yTop + 1.f, yBot - totalH - 1.f); // 防 clamp 界翻转
+    const float blockT = std::min(std::max(midY - totalH * 0.5f, yTop + 1.f), topLimit);
     const IText labelT(labelSize, col, kFontRegular, EAlign::Far, EVAlign::Middle);
     g.DrawText(labelT, "LRA", IRECT(zoneL + kCapLen + 1.f, blockT, zoneR - 1.f, blockT + labelH));
     const IText valT(valSize, col, kFontSemiBold, EAlign::Far, EVAlign::Middle);

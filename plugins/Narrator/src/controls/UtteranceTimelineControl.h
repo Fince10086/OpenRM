@@ -57,7 +57,7 @@ public:
   void Draw(IGraphics &g) override
   {
     const IRECT b = mRECT;
-    g.FillRect(COL_300(), b.GetPadded(-BLOCK_GAP));
+    g.FillRect(COL_300(), b);
 
     const IRECT wave = b.GetPadded(-8.f);
     if (mEnvCount <= 1)

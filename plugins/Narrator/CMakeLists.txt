@@ -67,6 +67,7 @@ openrm_add_plugin(${PROJECT_NAME}
     src/controls/PianoKeyboardControl.h
     src/controls/PhraseEditorControl.h
     src/controls/UtteranceTimelineControl.h
+    src/controls/CandidatePanelControl.h
     src/SettingsFileIO.h
   FORMATS APP AU VST3
   DEFINES SAMPLE_TYPE_FLOAT

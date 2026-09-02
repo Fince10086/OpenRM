@@ -14,6 +14,8 @@
 
 #include <array>
 #include <atomic>
+#include <cstdint>
+#include <deque>
 #include <functional>
 #include <map>
 #include <mutex>
@@ -32,6 +34,7 @@ class PhraseEditorControl;
 class UtteranceTimelineControl;
 class ORMSlider;
 class FlatSegmentControl;
+class CandidatePanelControl;
 } // namespace igraphics
 } // namespace iplug
 
@@ -48,16 +51,18 @@ public:
   void ProcessMidiMsg(const IMidiMsg &msg) override;
   void OnReset() override;
   void OnParamChange(int paramIdx, EParamSource source, int sampleOffset) override;
+  void OnParamChangeUI(int paramIdx, EParamSource source) override;
   bool SerializeState(IByteChunk &chunk) const override;
   int UnserializeState(const IByteChunk &chunk, int startPos) override;
 #endif
 
   void OnIdle() override;
+  void OnUIOpen() override;
   void OnParentWindowResize(int width, int height) override;
   bool ConstrainEditorResize(int &w, int &h) const override;
 
   // ---- 编辑器侧入口 (控件回调经 delegate 调用) ----
-  void OnNoteOnFromUI(int note);   // 屏幕键盘/试听按钮触发
+  void OnNoteOnFromUI(int note, bool held = true); // 屏幕键盘 (按住) / 试听按钮 (held=false) 触发
   void OnNoteOffFromUI(int note);
   void SetPhraseText(const std::string &text); // 文本框提交 (PHRASE: 全局语句; BANK: 选中键的绑定)
   void SetPhoneticMode(bool phonetic);         // TEXT/PHONEMES 切换
@@ -100,6 +105,8 @@ private:
   {
     int note = -1;
     orm::VoiceRenderer renderer;
+    double ratio = 1.0; // 触发时的 varispeed 系数 (Loop 重放复用)
+    bool held = false;  // 按键未松开 (Loop 循环重放的条件)
   };
   std::array<Voice, kMaxVoices> mVoices;
   int mNextVoice = 0;
@@ -114,6 +121,10 @@ private:
   };
   std::vector<MidiEvent> mMidiQueue;
   std::vector<float> mPhraseBuffer; // 已渲染短语 (引擎原生采样率, 单声道)
+
+  // UI 侧每音的保持标记 (默认 1=按住): 屏幕键盘写入 1, 试听按钮的预览音写入 0
+  // (预览无松键动作, 不参与 Loop)。UI 在发 MIDI 前写入, 音频线程触发时读走并复位。
+  std::array<std::atomic<uint8_t>, 128> mUIHoldState{};
 
   // 文本状态 (编辑器写 / 音频线程读, 互斥保护)
   mutable std::mutex mTextMutex;
@@ -145,16 +156,34 @@ private:
   void ApplySelectionFromIdle();      // 主线程: 把选中绑定的参数载入参数面板
   void RebindVoiceSliders(int engine); // 主线程: 4 个音色滑块槽按引擎改绑参数
 
+  // ---- 参数快照撤销/重做 (与 Analyzer 同构: UI 手势按间隙分组, 只覆盖参数) ----
+  ParamSnapshot Snapshot() const;
+  void SetParamFromEditor(int idx, double value);
+  void ApplySnapshot(const ParamSnapshot &s);
+  void RefreshAfterEdit();
+  void PushUndoSnapshot(const ParamSnapshot &s);
+  void MaybePushGestureUndo();
+  void MarkStateStable();
+  void Undo();
+  void Redo();
+
   // ---- UI ----
   int mThemeMode = 0;
   SettingsPanelControl *mSettingsPanel = nullptr;
   PianoKeyboardControl *mKeyboard = nullptr;
   PhraseEditorControl *mPhraseEditor = nullptr;
   UtteranceTimelineControl *mTimeline = nullptr;
+  CandidatePanelControl *mCandidatePanel = nullptr;
   ORMSlider *mParamSliders[9] = {};
   FlatSegmentControl *mPhoneticSegment = nullptr; // SAM 文本/音素切换 (仅 SAM 显示)
   std::vector<std::pair<int, std::function<void(const char *)>>> mTextBindings;
   std::vector<std::pair<IControl *, int>> mTooltipBindings;
+
+  // ---- 撤销/重做状态 (仅主线程访问) ----
+  std::deque<ParamSnapshot> mUndoStack, mRedoStack;
+  ParamSnapshot mStableSnapshot{}; // 手势起点前的稳定参数态 (撤销基准)
+  double mLastUIChangeTime = -1e9;
+  bool mGesturePending = false;
 
 #if IPLUG_EDITOR
   void ApplyLanguage();

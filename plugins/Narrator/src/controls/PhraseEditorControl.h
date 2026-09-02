@@ -40,7 +40,7 @@ public:
     if (GetUI())
       GetUI()->CreateTextEntry(*this,
                                IText(20, COL_900(), kFontRegular, EAlign::Near, EVAlign::Middle),
-                               mRECT.GetPadded(-4.f), cur.c_str());
+                               mRECT.GetPadded(-6.f), cur.c_str());
   }
 
   void OnTextEntryCompletion(const char *str, int) override
@@ -52,7 +52,7 @@ public:
   void Draw(IGraphics &g) override
   {
     const IRECT b = mRECT;
-    g.FillRect(COL_300(), b.GetPadded(-BLOCK_GAP));
+    g.FillRect(COL_300(), b);
     std::string text = mHooks.getText ? mHooks.getText() : std::string();
     if (text.empty())
       text = orm::Tr(orm::kTxtEmptyPhrase, orm::UILang());
