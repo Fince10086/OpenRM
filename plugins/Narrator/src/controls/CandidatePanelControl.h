@@ -154,32 +154,77 @@ public:
         IText tCode(19, fgLeft, kFontSemiBold, EAlign::Center, EVAlign::Middle);
         g.DrawText(tCode, item.word.c_str(), leftR);
 
-        // 右半部分文字: 示例词 (前缀 Regular 400, 目标字母 SemiBold 600, 紧凑大字号 17.5)
+        // 右半部分文字: 示例词 (整词自然坐标对齐 Virtual Full-Word Kerning)
         IText tReg(17.5f, fgRight, kFontRegular, EAlign::Near, EVAlign::Middle);
         IText tBold(17.5f, fgRight, kFontSemiBold, EAlign::Near, EVAlign::Middle);
 
-        IRECT dummy;
-        const float wPre = item.prefix.empty() ? 0.f : g.MeasureText(tReg, item.prefix.c_str(), dummy);
-        const float wBold = item.boldKey.empty() ? 0.f : g.MeasureText(tBold, item.boldKey.c_str(), dummy);
-        const float wSuf = item.suffix.empty() ? 0.f : g.MeasureText(tReg, item.suffix.c_str(), dummy);
+        const std::string fullWord = item.prefix + item.boldKey + item.suffix;
 
-        const float totalW = wPre + wBold + wSuf;
-        const float startX = rightR.MW() - totalW * 0.5f;
+        if (item.prefix.empty() && item.boldKey.empty())
+        {
+          // 纯单段释义 (如数字与重音说明 "强烈情绪")
+          IText tMid(17.5f, fgRight, kFontRegular, EAlign::Center, EVAlign::Middle);
+          g.DrawText(tMid, fullWord.c_str(), rightR);
+        }
+        else if (item.prefix.empty() && item.suffix.empty())
+        {
+          // 纯单段重点词
+          IText tMid(17.5f, fgRight, kFontSemiBold, EAlign::Center, EVAlign::Middle);
+          g.DrawText(tMid, fullWord.c_str(), rightR);
+        }
+        else
+        {
+          // 途径 A: 严格基于混合字重自然排版推进坐标
+          // 1. 计算前缀真实步长 (Regular 400)
+          float advPre = 0.f;
+          if (!item.prefix.empty())
+          {
+            IRECT rPreBold, rBoldOnly;
+            g.MeasureText(tReg, (item.prefix + item.boldKey).c_str(), rPreBold);
+            g.MeasureText(tReg, item.boldKey.c_str(), rBoldOnly);
+            advPre = rPreBold.R - rBoldOnly.R;
+          }
 
-        float curX = startX;
-        if (!item.prefix.empty())
-        {
-          g.DrawText(tReg, item.prefix.c_str(), IRECT(curX, rightR.T, curX + wPre + 1.f, rightR.B));
-          curX += wPre;
-        }
-        if (!item.boldKey.empty())
-        {
-          g.DrawText(tBold, item.boldKey.c_str(), IRECT(curX, rightR.T, curX + wBold + 1.f, rightR.B));
-          curX += wBold;
-        }
-        if (!item.suffix.empty())
-        {
-          g.DrawText(tReg, item.suffix.c_str(), IRECT(curX, rightR.T, curX + wSuf + 1.f, rightR.B));
+          // 2. 计算重点字母真实排版步长 (使用真实的 SemiBold 600 advance)
+          float advBold = 0.f;
+          if (!item.boldKey.empty())
+          {
+            IRECT rBoldDot, rDot;
+            g.MeasureText(tBold, (item.boldKey + ".").c_str(), rBoldDot);
+            g.MeasureText(tBold, ".", rDot);
+            advBold = rBoldDot.R - rDot.R;
+          }
+
+          // 3. 计算后缀宽度与粗->细衔接微留白 (微调至 0.2px, 紧凑自然)
+          float sufW = 0.f;
+          float boldToSufGap = 0.f;
+          if (!item.suffix.empty())
+          {
+            IRECT rSuf;
+            g.MeasureText(tReg, item.suffix.c_str(), rSuf);
+            sufW = rSuf.W();
+            boldToSufGap = 0.2f;
+          }
+
+          // 混合字重下的整词精确排版总宽与居中
+          const float totalW = advPre + advBold + boldToSufGap + sufW;
+          const float startX = rightR.MW() - totalW * 0.5f;
+
+          const float boldX = startX + advPre;
+          const float sufX = boldX + advBold + boldToSufGap;
+
+          if (!item.prefix.empty())
+          {
+            g.DrawText(tReg, item.prefix.c_str(), IRECT(startX, rightR.T, rightR.R, rightR.B));
+          }
+          if (!item.boldKey.empty())
+          {
+            g.DrawText(tBold, item.boldKey.c_str(), IRECT(boldX, rightR.T, rightR.R, rightR.B));
+          }
+          if (!item.suffix.empty())
+          {
+            g.DrawText(tReg, item.suffix.c_str(), IRECT(sufX, rightR.T, rightR.R, rightR.B));
+          }
         }
       }
       else
