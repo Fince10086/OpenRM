@@ -141,13 +141,6 @@ private:
   int mSentWindowVQT = -1; // VQT 窗函数档位 (kWindowVQT), OnIdle 增量去重
   int mSentRtaOct = -1;    // RTA 分数倍频程档位 (kRtaOctave), OnIdle 增量去重
   int mSentScopeRange = -1; // 声像显示范围档位 (kScopeRange), OnIdle 增量去重
-  double mSentScopeAntiThresh = 1e9;
-  double mSentScopeImgBins = -1;
-  double mSentScopeImgKernel = 1e9;
-  double mSentScopeImgDecay = 1e9;
-  double mSentScopeImgDome = 1e9;
-  double mSentScopeImgRelGap = 1e9;
-  double mSentScopeImgAntiPow = 1e9;
 
   // ── Freeze (冻结/保持), 确定性回放方案 ─────────────────────────────
   // 音频线程把最近输入滚环记录进 mFreezeRing (freeze 后停止写入, 即冻结时刻快照),
