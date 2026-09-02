@@ -26,7 +26,6 @@ public:
     kMsgTagSampleRate = 1,
     kMsgTagRelease,
     kMsgTagReleaseMode,
-    kMsgTagRange, // 显示 dB 底限 (float, 负值)
     kMsgTagReset, // 清空带状态/相关性窗口 (配置重建/冻结回放前)
   };
 
@@ -54,10 +53,6 @@ public:
       int v;
       stream.Get(&v, 0);
       mReleaseMode = std::clamp(v, 0, 1);
-    } else if (msgTag == kMsgTagRange) {
-      float v;
-      stream.Get(&v, 0);
-      mFloorDb = std::clamp(v, -120.f, -30.f);
     } else if (msgTag == kMsgTagReset) {
       ResetDisplay();
     }
@@ -320,8 +315,8 @@ private:
   }
 
   // 色块场: 12 个 15° 扇区 × 每 20 dB 一环; 亮度 = 角度维 × dB 维平均:
-  // dB 维外圈亮 (245) → 圆心暗 (172); 角度维同相区向中心渐亮 (205→235)、翼区压暗 (195);
-  // ±45° 亮度台阶即反相区分界 (无线条/颜色标记, 黑白主题成立)。
+  // dB 维外圈亮 (245) → 圆心暗 (172); 角度维同相区两色: -15..15 亮 (230),
+  // ±(15..45) 暗一档 (215); ±45..90 翼区再暗一档 (195) = 反相区分界。
   void DrawGridContent(IGraphics &g, const IRECT &cv) {
     float cx, cy, rMax;
     FanGeom(cv, cx, cy, rMax);
@@ -340,8 +335,7 @@ private:
         const float a0 = (-90.f + 15.f * i) * kDeg;
         const float a1 = a0 + 15.f * kDeg;
         const float aa = std::fabs(a0 + 7.5f * kDeg);
-        const float vAng =
-            (aa <= 0.25f * (float)PI) ? (235.f - 30.f * (aa / (0.25f * (float)PI))) : 195.f;
+        const float vAng = (aa <= 15.f * kDeg) ? 230.f : (aa <= 45.f * kDeg) ? 215.f : 195.f;
         const int v = (int)std::lround(0.5f * (vAng + vDb));
         FillSector(g, cx, cy, rLo, rHi, a0, a1, WarmGray(v));
       }
@@ -380,7 +374,7 @@ private:
   }
 
   // 场内标注 (动态绘制, 供 hover 读数避让): L/R 在 ±45° 射线内侧, Anti Phase 在 ±90°
-  // 基线内侧两端, dB 刻度沿中轴竖排 (0/−20/−40/… 随 Range)。
+  // 基线内侧两端, dB 刻度沿中轴竖排 (0/−20/−40…)。
   void DrawTicks(IGraphics &g, const IRECT &cv, const IRECT &skipRect) {
     float cx, cy, rMax;
     FanGeom(cv, cx, cy, rMax);
@@ -391,17 +385,14 @@ private:
       g.DrawText(it, txt, box);
     };
 
-    // L / R (弧缘内 14px, 通道色)
-    IColor cL, cR, cM;
-    GetChannelColors(cL, cR, cM);
+    // L / R (弧缘内 14px; 灰色常规字重, 与其它标注一致)
     const float d45 = (rMax - 14.f) / (float)std::sqrt(2.f);
-    draw(IText(14, cL, kFontSemiBold, EAlign::Center, EVAlign::Middle), "L",
-         IRECT(cx - d45 - 18.f, cy - d45 - 9.f, cx - d45 + 18.f, cy - d45 + 9.f));
-    draw(IText(14, cR, kFontSemiBold, EAlign::Center, EVAlign::Middle), "R",
-         IRECT(cx + d45 - 18.f, cy - d45 - 9.f, cx + d45 + 18.f, cy - d45 + 9.f));
+    const IText lrT(14, COL_700(), kFontRegular, EAlign::Center, EVAlign::Middle);
+    draw(lrT, "L", IRECT(cx - d45 - 18.f, cy - d45 - 9.f, cx - d45 + 18.f, cy - d45 + 9.f));
+    draw(lrT, "R", IRECT(cx + d45 - 18.f, cy - d45 - 9.f, cx + d45 + 18.f, cy - d45 + 9.f));
 
     // Anti Phase (两端对称绘制)
-    const IText apT(14, COL_700(), kFontSemiBold, EAlign::Center, EVAlign::Middle);
+    const IText apT(14, COL_700(), kFontRegular, EAlign::Center, EVAlign::Middle);
     const float ax = rMax - 50.f;
     draw(apT, "Anti Phase", IRECT(cx - ax - 36.f, cy - 19.f, cx - ax + 36.f, cy - 5.f));
     draw(apT, "Anti Phase", IRECT(cx + ax - 36.f, cy - 19.f, cx + ax + 36.f, cy - 5.f));
@@ -673,7 +664,7 @@ private:
   double mSampleRate = 48000.0;
   float mReleaseSec = 0.2f;      // 释放时间常数 (LOG/LIN 档位, 与频谱同源)
   int mReleaseMode = 0;          // 0=LOG 对数域, 1=LIN 匀速
-  float mFloorDb = -80.f;        // 半径 dB 底限 (外缘 = 0 dB)
+  float mFloorDb = -80.f;        // 半径 dB 底限 (外缘 = 0 dB; 固定 -80, 无调节参数)
 
   std::array<double, kScopeBands> mRcWin{}, mEWin{};      // 反相权重窗: 聚合相关/能量单极点 (kAntiWinFrames 帧)
   std::array<double, kScopeBands> mDlInWin{}, mRcInWin{}; // 同相组方位窗: 组聚合单极点 (kImgWinFrames 帧)

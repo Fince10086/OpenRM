@@ -12,7 +12,6 @@
 #include "controls/SpectrumPad.h"
 #include "controls/StereoFieldControl.h"
 #include "controls/CpuMeterControl.h"
-#include "controls/LoudnessMeterControl.h"
 #include "StateFileIO.h"
 #include "SettingsFileIO.h"
 
@@ -155,7 +154,6 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
   GetParam(kRtaOctave)->InitInt("RtaOctave", 0, 0, kNumRtaOctaveOptions - 1, ""); // 默认 1/6 Oct (索引 0; 档位: 1/6, 1/12, 1/24)
   GetParam(kLoudPreset)->InitInt("LoudPreset", 1, 0, kNumLoudPresets - 1, ""); // 响度目标预设, 默认 -14 (索引 1)
   GetParam(kLoudScale)->InitInt("LoudScale", 0, 0, kNumLoudScaleOptions - 1, ""); // 响度条刻度窗偏移, 默认 +9
-  GetParam(kScopeRange)->InitInt("ScopeRange", 1, 0, 2, ""); // 声像显示范围档位: 0=-60, 1=-80, 2=-100 (默认 -80)
   mDefaultSnapshot = Snapshot();
   mStableSnapshot = Snapshot();
 
@@ -237,7 +235,6 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     constexpr float kCol1X = 784.f;
     constexpr float kBtnW = 76.f;  // 按钮显示宽度
     constexpr float kBtnGap = 4.f; // 并排按钮间隙 (替代原 BLOCK_GAP 内缩间距)
-    constexpr float kBtnH = 30.f;
     constexpr float kCol2X = kCol1X + kBtnW + kBtnGap; // 右列按钮左缘
     constexpr float kPanelR = kCol2X + kBtnW;
 
@@ -334,14 +331,19 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     pGraphics->AttachControl(mSpeedBtn);
     bindTip(mSpeedBtn, orm::kTxtTipSpeed);
 
-    // 主频谱绘制区域: 右缘 752 (= 频谱区原右缘 598 + 电平表带总宽 kMeterStripW=154)。
-    // 电平表带 (L/R 条 + VU 刻度 + VU 双条 + LUFS 刻度 + M/S/I 响度条) 整体位于频谱
-    // 右侧腾出的空区, 频谱区宽度与右侧按键下移前的版本一致, 不因电平条增多而变窄。
-    mSpectrumPad = new SpectrumPad(IRECT(20, 58, 752, 328));
+    // 主频谱绘制区域: 右缘 784 (= 频谱区右缘 584 + 电平表带总宽 kMeterStripW=200,
+    // 含 LRA bracket 区 kLraZoneW=32)。
+    // 电平表带 (L/R 条 + VU 刻度 + VU 双条 + LUFS 刻度 + I/S/M 响度条 + LRA bracket)
+    // 整体位于频谱右侧腾出的空区; I 条为 2 倍宽后表带总宽由 154 → 168, 加 LRA bracket
+    // 后再 → 200, 频谱绘图区右缘 plot.R 锚定 584 不变, 其余各条带几何全部锚定 plot.R
+    // 相对推导, 自动跟随。
+    mSpectrumPad = new SpectrumPad(IRECT(20, 58, 784, 328));
     pGraphics->AttachControl(mSpectrumPad, kCtrlTagPad);
 
     // 电平条点击交互 (SpectrumPad::OnMouseDown 命中电平条区域时回调):
-    // dBTP 模式点击条 → 清真峰值持久锁存; dBFS 模式点击条体 → 清峰值保持, 点击顶部 LED → 清过载
+    // dBTP 模式点击条 → 清真峰值持久锁存; dBFS 模式点击条体 → 清峰值保持, 点击顶部 LED → 清过载;
+    // 响度窗顶刻度按钮 → 循环刻度窗偏移 (+9/+18); 响度 1/3 目标刻度按钮 → 循环目标预设
+    // (-9/-14/-23/-24)。档位循环与 FlatCycleButton 同一行为 (undo 分组见 MaybePushGestureUndo)。
     mSpectrumPad->mMeterClickHandler = [this](SpectrumPad::EMeterClick c) {
       switch (c) {
       case SpectrumPad::kClickResetPersist:
@@ -353,52 +355,42 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
       case SpectrumPad::kClickResetOver:
         mLevelResetOverFlag.store(true, std::memory_order_relaxed);
         break;
+      case SpectrumPad::kClickLoudScale:
+      case SpectrumPad::kClickLoudPreset: {
+        const int param = (c == SpectrumPad::kClickLoudScale) ? kLoudScale : kLoudPreset;
+        const int num = (c == SpectrumPad::kClickLoudScale) ? kNumLoudScaleOptions : kNumLoudPresets;
+        MaybePushGestureUndo();
+        const int cur = (int)std::clamp(std::lround(GetParam(param)->Value()), 0L, (long)num - 1);
+        const int next = (cur + 1) % num;
+        // 传 plain 档位值 (SetParamFromEditor 内部 GetParam()->Set(value) 期望 plain,
+        // 见 SetParamFromEditor 实现; 传 normalized 会在多档参数上把非整小数写进 plain 域,
+        // 下次 lround 又回到原档, 循环被吞 —— 2 档 (norm=0/1) 侥幸等价, 4 档预设必现)。
+        SetParamFromEditor(param, (double)next);
+        break;
+      }
       }
     };
 
     // ── 声像显示面板 (频谱下方空闲区): PAZ 式极坐标电平扇形 ─────────────────
     // 数据: StereoScope 引擎 (音频线程攒 hop 样本包) → OnIdle TransmitData;
     // 弹道与频谱共用速度预设 (MIN..MAX) × LOG/LIN 释放, 峰值保持共用 HOLD 开关。
-    mScopeCtrl = new StereoFieldControl(IRECT(20.f, 336.f, 752.f, 604.f));
+    mScopeCtrl = new StereoFieldControl(IRECT(20.f, 336.f, 784.f, 604.f));
     pGraphics->AttachControl(mScopeCtrl, kCtrlTagScope);
 
-    // 声像范围循环按钮 (基线下仪表行右缘, 与频谱 Range 按钮同款尺寸/样式/地位);
-    // attach 在面板之后 → 绘制于其上且命中测试优先
-    mScopeRangeBtn = new FlatCycleButton(IRECT(386.f, 585.f, 424.f, 604.f), kScopeRange,
-                                         {"-60", "-80", "-100"}, btnStyle);
-    mScopeRangeBtn->SetScaleLabelStyle(true);
-    pGraphics->AttachControl(mScopeRangeBtn);
-    bindTip(mScopeRangeBtn, orm::kTxtTipScopeRange);
+    // ── 响度计读数面板 (右栏 LoudnessMeterControl) 已删除 ──────────────────
+    // LRA 整体迁移到频谱面板 M 条右侧的 Pro-L2 式 bracket (SpectrumPad::DrawLraBracket);
+    // I 当前值以水印形式落在频谱 I 条底部, M/S 单位 "LUFS" 拆为 "LU"/"FS" 分色落
+    // S/M 条底部。右栏不再需要独立读数控件, 释放的空间可在后续填充其他内容。
 
-    // ── 响度计读数 (右栏上方, 无词标数字仪表面板) ──────────────────────────
-    // I 大读数 + 目标差 Δ (±10 LU 迷你刻度条, 中心=目标) + LRA (0..20 条) + M/S 行;
-    // M/S/I 响度条在频谱面板右缘 (VU 条右侧), True Peak 在图例行。
-    // 数据: 音频线程 LoudnessMeter 快照 → OnIdle 打包 LoudnessUiData 下发 (读数与响度条共用)。
-    mLoudCtrl = new LoudnessMeterControl(IRECT(784.f, 58.f, 940.f, 214.f));
-    pGraphics->AttachControl(mLoudCtrl, kCtrlTagLoudness);
-
-    // 响度目标预设循环按钮 (-9 / -14 / -23 / -24 LUFS): 读数面板 (±10 Δ 条的中心即目标) 下方
-    mLoudPresetBtn = new FlatCycleButton(IRECT(784.f, 222.f, 860.f, 252.f), kLoudPreset,
-                                         {"-9 LUFS", "-14 LUFS", "-23 LUFS", "-24 LUFS"}, btnStyle);
-    mLoudPresetBtn->SetTextSize(11.f);
-    pGraphics->AttachControl(mLoudPresetBtn);
-    bindTip(mLoudPresetBtn, orm::kTxtTipLoudPreset);
-
-    // 响度条刻度窗偏移循环按钮 (+9 / +18 LU): M/S/I 条竖向刻度以目标为锚
-    // (顶 = 目标+偏移, 1/3 高度 = 目标, 底 = 目标-2×偏移), 与预设按钮同排右半格
-    mLoudScaleBtn = new FlatCycleButton(IRECT(864.f, 222.f, 940.f, 252.f), kLoudScale,
-                                        {"+9", "+18"}, btnStyle);
-    mLoudScaleBtn->SetTextSize(11.f);
-    pGraphics->AttachControl(mLoudScaleBtn);
-    bindTip(mLoudScaleBtn, orm::kTxtTipLoudScale);
-
+    // 响度目标预设 (-9/-14/-23/-24) 与刻度窗偏移 (+9/+18) 已并入 M/S/I 响度条的
+    // 刻度按钮 (窗顶值 / 1/3 目标值, SpectrumPad 内部绘制与分发), 不再需要独立按钮。
     // 动态范围循环按钮: 位于频谱图底部右缘 (电平表竖条左侧), 顶替最底部刻度标签
     // (DrawDbGrid 跳过底部一条的文字)。右下角与频谱图右下对齐不留缝, 文字样式/位置
     // 与刻度文字完全一致 (刻度样式), 仅多一个背景方块。点击循环切换 80/100/120 dB。
     // attach 在 pad 之后 → 覆盖于频谱之上, 命中测试优先。
     constexpr float kRangeBtnW = 38.f; // 收紧方块: 仅比文字 (-120 @14px ≈ 31px) 多出少量左右 padding
     constexpr float kRangeBtnH = 19.f; // 贴住文字行高 (14px 字 ≈ 17px 高)
-    const float plotR = 752.f - kMeterStripW; // 频谱图形区右缘 (与 pad 内几何一致)
+    const float plotR = 784.f - kMeterStripW; // 频谱图形区右缘 (与 pad 内几何一致, = spectrum panel R 784 - kMeterStripW 200 = 584)
     const float plotB = 328.f;
     mRangeBtn = new FlatCycleButton(IRECT(plotR - kRangeBtnW, plotB - kRangeBtnH, plotR, plotB), kRange,
                                     {"-80", "-100", "-120"}, btnStyle);
@@ -408,43 +400,46 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
 
     // CPU 占用率显示
     // 右栏控件组: 底部锚定标题区上方 (标题上缘 615, 留 5px), 纵向行距与横向并排间距一致
-    // (kBtnGap), 自上而下 = CPU / 图标行 / FREEZE·RESET / HOLD·时长 (ATTACK/RELEASE 滑块
-    // 已删除, 由顶排速度预设按钮替代, 释放时间随档位与 LOG/LIN 模式派生)
+    // (kBtnGap), 自上而下 = CPU / FREEZE·RESET / HOLD·时长 / 图标行 (撤销|重做 · 保存|读取,
+    // 图标行移到最下面一排)。行高统一 kRowH = 26, 与顶排通道模式按钮 (能量和) 一致。
     constexpr float kRowGap = kBtnGap;
-    constexpr float kHoldRowY = 610.f - 30.f;
-    constexpr float kFreezeRowY = kHoldRowY - kRowGap - 30.f;
-    constexpr float kIconRowY = kFreezeRowY - kRowGap - 30.f;
-    constexpr float kCpuY = kIconRowY - kRowGap - 30.f;
-    mCpuMeter = new CpuMeterControl(IRECT(kCol1X, kCpuY, kPanelR, kCpuY + 30.f));
+    constexpr float kRowH = 26.f;
+    constexpr float kIconRowY = 610.f - kRowH; // 最下面一排 = 图标行
+    constexpr float kHoldRowY = kIconRowY - kRowGap - kRowH;
+    constexpr float kFreezeRowY = kHoldRowY - kRowGap - kRowH;
+    constexpr float kCpuY = kFreezeRowY - kRowGap - kRowH;
+    mCpuMeter = new CpuMeterControl(IRECT(kCol1X, kCpuY, kPanelR, kCpuY + kRowH));
     pGraphics->AttachControl(mCpuMeter, kCtrlTagCpu);
 
     // 频谱斜率与释放回落模式按钮已移至顶行 (窗按钮右侧), 见上方创建处
 
-    // 撤销/重做/保存/读取: 文字按钮改为两两一组 (撤销|重做, 保存|读取) 的小图标按钮。
-    // 单个宽 (kBtnW-kBtnGap)/2=36, 高仍 kBtnH; 组内组间空隙均 kBtnGap, 整排
-    // 4×36+3×4=156 铺满右栏。位于控件组图标行 (y=kIconRowY)。
+    // 撤销/重做/保存/读取: 小图标按钮, 两两一组 (撤销|重做, 保存|读取).
+    // 单个宽 (kBtnW-kBtnGap)/2=36, 高 kRowH; 组内组间空隙均 kBtnGap, 整排
+    // 4×36+3×4=156 铺满右栏。位于控件组最下面一排 (y=kIconRowY)。
     constexpr float kIconBtnW = (kBtnW - kBtnGap) / 2.f;
     constexpr float kIconBtnY = kIconRowY;
     constexpr float kIconStep = kIconBtnW + kBtnGap;
     IControl *undoBtn = MakeIconMomentary(
-        IRECT(kCol1X, kIconBtnY, kCol1X + kIconBtnW, kIconBtnY + kBtnH), [this](IControl *) { Undo(); }, kIconUndo);
+        IRECT(kCol1X, kIconBtnY, kCol1X + kIconBtnW, kIconBtnY + kRowH), [this](IControl *) { Undo(); }, kIconUndo);
     pGraphics->AttachControl(undoBtn);
     IControl *redoBtn = MakeIconMomentary(
-        IRECT(kCol1X + kIconStep, kIconBtnY, kCol1X + kIconStep + kIconBtnW, kIconBtnY + kBtnH),
+        IRECT(kCol1X + kIconStep, kIconBtnY, kCol1X + kIconStep + kIconBtnW, kIconBtnY + kRowH),
         [this](IControl *) { Redo(); }, kIconRedo);
     pGraphics->AttachControl(redoBtn);
     IControl *saveBtn = MakeIconMomentary(
-        IRECT(kCol1X + 2.f * kIconStep, kIconBtnY, kCol1X + 2.f * kIconStep + kIconBtnW, kIconBtnY + kBtnH),
+        IRECT(kCol1X + 2.f * kIconStep, kIconBtnY, kCol1X + 2.f * kIconStep + kIconBtnW, kIconBtnY + kRowH),
         [this](IControl *) { SaveFile(); }, kIconSave);
     pGraphics->AttachControl(saveBtn);
     IControl *loadBtn = MakeIconMomentary(
-        IRECT(kCol1X + 3.f * kIconStep, kIconBtnY, kPanelR, kIconBtnY + kBtnH),
+        IRECT(kCol1X + 3.f * kIconStep, kIconBtnY, kPanelR, kIconBtnY + kRowH),
         [this](IControl *) { LoadFile(); }, kIconLoad);
     pGraphics->AttachControl(loadBtn);
 
     // 电平表模式循环按钮 (dBTP <-> dBFS): 移入电平条内部底部, 显示覆盖在两条电平条之上,
     // 宽度 = 两条电平条总宽 (2 × kGainBarW, 与 VU 条同窄), 高度与左侧 Range 循环按钮一致
-    // (kRangeBtnH)。幽灵样式: 无背景方块, 文字用条轨浅灰, 不遮挡条体。
+    // (kRangeBtnH)。幽灵样式: 无背景方块, 不遮挡条体; 文字色随条上渐变状态驱动
+    // (OnIdle 每帧 SetGhostSignalActive): 空轨 (低于显示范围) 呈深灰可点, 有 dB 值退回
+    // 条轨浅灰水印; hover 只在文字背后垫半透明遮罩。
     // attach 在 SpectrumPad 之后 → 绘制于电平条上方且命中测试优先。
     mLevelModeBtn =
         new FlatCycleButton(IRECT(plotR, plotB - kRangeBtnH, plotR + 2.f * kGainBarW, plotB), kLevelMode,
@@ -457,7 +452,7 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     // RESET (右下角, 全量重置): 电平表保持/过载/持久锁存 + 频谱 hold 曲线 +
     // 响度 I/LRA/真峰值锁存, 一次点击全部清除 (原电平表 RESET 与响度计 RESET 合并)
     mLevelResetBtn =
-        MakeMomentary(IRECT(kCol2X, kFreezeRowY, kPanelR, kFreezeRowY + 30.f), [this](IControl *) {
+        MakeMomentary(IRECT(kCol2X, kFreezeRowY, kPanelR, kFreezeRowY + kRowH), [this](IControl *) {
           mLevelResetFlag.store(true);
           mLoudResetFlag.store(true);
           if (mSpectrumPad)
@@ -478,7 +473,7 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     // (英文 FREEZE / 中文 冻结, 随界面语言), 开启时按钮底色变黑 + 文字反白。
     // 冻结时画面完全定格 (UI 停止消费引擎数据), 切换引擎时用冻结时刻的输入缓冲
     // 在新算法下重算并继续定格, 解冻后从定格画面续接实时。
-    mFreezeBtn = new FlatToggleControl(IRECT(kCol1X, kFreezeRowY, kCol1X + kBtnW, kFreezeRowY + 30.f), kFreeze, " ", toggleStyle,
+    mFreezeBtn = new FlatToggleControl(IRECT(kCol1X, kFreezeRowY, kCol1X + kBtnW, kFreezeRowY + kRowH), kFreeze, " ", toggleStyle,
                                        "FREEZE", "FREEZE");
     pGraphics->AttachControl(mFreezeBtn);
     bindText(orm::kTxtFreeze, [this](const char *s) {
@@ -492,7 +487,7 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     // 峰值保持开关 + 时长循环按钮 (替代原 HOLD 滑块): 开关为 BandPass LINK 同款反色开关,
     // 时长按钮移至 HOLD 右侧空位 (尺寸缩小为 kBtnW), 点击循环 0.5s / 2s / ∞ (无限保持)。
     // 两者同时控制电平表 hold 亮线与频谱 hold 曲线; RESET 按钮清除已积累的保持。
-    mLevelHoldBtn = new FlatToggleControl(IRECT(kCol1X, kHoldRowY, kCol1X + kBtnW, kHoldRowY + 30.f), kLevelHoldOn, " ", toggleStyle,
+    mLevelHoldBtn = new FlatToggleControl(IRECT(kCol1X, kHoldRowY, kCol1X + kBtnW, kHoldRowY + kRowH), kLevelHoldOn, " ", toggleStyle,
                                           "HOLD", "HOLD");
     pGraphics->AttachControl(mLevelHoldBtn);
     bindText(orm::kTxtLevelHold, [this](const char *s) {
@@ -504,7 +499,7 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     bindTip(mLevelHoldBtn, orm::kTxtTipLevelHold);
 
     mLevelHoldTimeBtn =
-        new FlatCycleButton(IRECT(kCol2X, kHoldRowY, kPanelR, kHoldRowY + 30.f), kLevelHold, {"0.5s", "2s", "∞"}, btnStyle);
+        new FlatCycleButton(IRECT(kCol2X, kHoldRowY, kPanelR, kHoldRowY + kRowH), kLevelHold, {"0.5s", "2s", "∞"}, btnStyle);
     pGraphics->AttachControl(mLevelHoldTimeBtn);
     bindTip(mLevelHoldTimeBtn, orm::kTxtTipLevelHoldTime);
 
@@ -658,7 +653,6 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     mSentChanMode = (int)GetParam(kChannelMode)->Value();
     mSentWindowFFT = CurrentFFTWindow();
     mSentWindowVQT = CurrentVQTWindow();
-    mSentScopeRange = (int)std::clamp(std::lround(GetParam(kScopeRange)->Value()), 0L, 2L);
     mUIOpen.store(true, std::memory_order_release);
   };
 #endif
@@ -804,6 +798,8 @@ void ORMAnalyzer::ProcessBlock(sample **inputs, sample **outputs, int nFrames) {
     mLoudS.store(ls.shortTerm, std::memory_order_relaxed);
     mLoudI.store(ls.integrated, std::memory_order_relaxed);
     mLoudLra.store(ls.range, std::memory_order_relaxed);
+    mLoudLraMin.store(ls.lraMin, std::memory_order_relaxed); // LRA 直方图下界 (10%) LUFS
+    mLoudLraMax.store(ls.lraMax, std::memory_order_relaxed); // LRA 直方图上界 (95%) LUFS
     mLoudTp.store(ls.tpMax, std::memory_order_relaxed);
     mLoudIValid.store(ls.iValid, std::memory_order_relaxed);
     mLoudLraValid.store(ls.lraValid, std::memory_order_relaxed);
@@ -939,8 +935,6 @@ void ORMAnalyzer::SendSpectrumConfig() {
   SendControlMsgFromDelegate(kCtrlTagScope, StereoFieldControl::kMsgTagSampleRate, sizeof(double), &sr);
   SendControlMsgFromDelegate(kCtrlTagScope, StereoFieldControl::kMsgTagRelease, sizeof(float), &release);
   SendControlMsgFromDelegate(kCtrlTagScope, StereoFieldControl::kMsgTagReleaseMode, sizeof(int), &releaseMode);
-  const float scopeFloor = CurrentScopeFloorDb();
-  SendControlMsgFromDelegate(kCtrlTagScope, StereoFieldControl::kMsgTagRange, sizeof(float), &scopeFloor);
 }
 
 void ORMAnalyzer::SendVQTBandFreqs() {
@@ -1146,12 +1140,10 @@ void ORMAnalyzer::OnIdle() {
     const double lfRes = GetParam(kLfRes)->Value();
     const double slope = EffectiveSlopeDb(); // 斜率档位变化时重发 (冻结中照常: 纯显示参数)
     const int rtaOct = CurrentRtaOctave();
-    const double scopeRange = (double)std::clamp(std::lround(GetParam(kScopeRange)->Value()), 0L, 2L);
     if (sr != mSentSampleRate || fftSize != mSentFFTSize || winFFT != mSentWindowFFT || winVQT != mSentWindowVQT ||
         speed != mSentSpeed || releaseMode != mSentReleaseMode || release != mSentRelease ||
         range != mSentRange ||
-        lfRes != mSentLfRes || slope != mSentSlope || rtaOct != mSentRtaOct ||
-        scopeRange != mSentScopeRange) {
+        lfRes != mSentLfRes || slope != mSentSlope || rtaOct != mSentRtaOct) {
       mSpectrum.SetWindowType(winFFT);
       mVQT.SetWindowType(winVQT);
       // 冻结中 release 派生变化 (速度档/释放模式) 或采样率/窗函数变化需重启回放, 保证确定性;
@@ -1170,7 +1162,6 @@ void ORMAnalyzer::OnIdle() {
       mSentLfRes = lfRes;
       mSentSlope = slope;
       mSentRtaOct = rtaOct;
-      mSentScopeRange = (int)scopeRange;
       SendSpectrumConfig();
       if (restartReplay)
         StartFreezeReplay();
@@ -1250,6 +1241,17 @@ void ORMAnalyzer::OnIdle() {
     SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagLevelMeter, sizeof(d), &d);
   }
 
+  // dBTP/dBFS 幽灵文字 (电平条底部模式按钮) 的信号态: 条上渲染了渐变条体
+  // (主值 > 显示底 dB) → 文字条轨灰; 空轨 (低于显示范围) → 深灰可点提示。
+  // 与 SpectrumPad 的取色条件同源 (DrawMeterBar: val > mBottomDb 才有渐变)。
+  if (mLevelModeBtn) {
+    const bool dbtp = GetParam(kLevelMode)->Value() < 0.5;
+    const float bottomDb = -CurrentRangeDb();
+    const float lvlL = dbtp ? mTrueL.load(std::memory_order_relaxed) : mPeakL.load(std::memory_order_relaxed);
+    const float lvlR = dbtp ? mTrueR.load(std::memory_order_relaxed) : mPeakR.load(std::memory_order_relaxed);
+    mLevelModeBtn->SetGhostSignalActive(lvlL > bottomDb || lvlR > bottomDb);
+  }
+
   // 转发响度计数据 (底部横条; 预设档位与目标值由插件侧算出随帧下发)
   {
     LoudnessUiData d;
@@ -1257,6 +1259,8 @@ void ORMAnalyzer::OnIdle() {
     d.shortTerm = mLoudS.load(std::memory_order_relaxed);
     d.integrated = mLoudI.load(std::memory_order_relaxed);
     d.range = mLoudLra.load(std::memory_order_relaxed);
+    d.lraMin = mLoudLraMin.load(std::memory_order_relaxed); // LRA 下界 (10% LUFS)
+    d.lraMax = mLoudLraMax.load(std::memory_order_relaxed); // LRA 上界 (95% LUFS)
     d.tpMax = mLoudTp.load(std::memory_order_relaxed);
     const int preset = (int)std::clamp(std::lround(GetParam(kLoudPreset)->Value()), 0L,
                                        (long)kNumLoudPresets - 1);
@@ -1267,9 +1271,7 @@ void ORMAnalyzer::OnIdle() {
     d.scaleOff = (int)kLoudScaleOffsets[scaleIdx];
     d.iValid = mLoudIValid.load(std::memory_order_relaxed) ? 1 : 0;
     d.lraValid = mLoudLraValid.load(std::memory_order_relaxed) ? 1 : 0;
-    SendControlMsgFromDelegate(kCtrlTagLoudness, LoudnessMeterControl::kMsgTagLoudnessData,
-                               sizeof(d), &d);
-    // 频谱面板的 M/S 响度条 (右缘, VU 条右侧) 使用同一份响度数据
+    // 频谱面板的 I/S/M 响度条 + LRA bracket 使用同一份响度数据 (右栏控件已移除)
     SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagLoudness, sizeof(d), &d);
   }
 
@@ -1318,7 +1320,6 @@ void ORMAnalyzer::OnUIClose() {
 #endif
   mSpectrumPad = nullptr;
   mScopeCtrl = nullptr;
-  mScopeRangeBtn = nullptr;
   mResBtn = nullptr;
   mPbtLfResBtn = nullptr;
   mGammaBtn = nullptr;
@@ -1335,9 +1336,6 @@ void ORMAnalyzer::OnUIClose() {
   mWindowBtn = nullptr;
   mFreezeBtn = nullptr;
   mSlopeBtn = nullptr;
-  mLoudCtrl = nullptr;
-    mLoudPresetBtn = nullptr;
-    mLoudScaleBtn = nullptr;
   mSettingsPanel = nullptr;
   mTextBindings.clear();
   mTooltipBindings.clear();
@@ -1353,7 +1351,6 @@ void ORMAnalyzer::OnUIClose() {
   mSentSlope = -1e9;
   mSentChanMode = -1;
   mSentRtaOct = -1;
-  mSentScopeRange = -1;
   // 冻结档位快照复位: 重开 UI 后冻结画面与档位重算按新控件状态重新建立
   mFreezeOn = false;
   mFreezeRes = mFreezeWindowFFT = mFreezeWindowVQT = mFreezeLf = mFreezeRtaOct = -1;

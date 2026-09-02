@@ -20,15 +20,20 @@ BEGIN_IGRAPHICS_NAMESPACE
 // - kVuScaleW: 独立 VU 表左侧刻度文字区宽度 (L/R 条与 VU 表之间的间距, 放 VU 刻度文字)
 // - kVuBarW:   独立 VU 表单条宽度 (L/R 两条并排, 总宽 2 × kVuBarW)
 // - kLufsScaleW: 响度条左侧刻度文字区宽度 (VU 条与响度条之间的间距)
-// - kLoudBarW:  响度条宽度 (M/S/I 三条并排, 总宽 3 × kLoudBarW)
+// - kLoudBarW:  S/M 响度条宽度; I 条为强调通道为 2 倍宽 (2 × kLoudBarW),
+//   三条总宽 = 4 × kLoudBarW (排列 I | S | M, 见 SpectrumPad::DrawLoudBars)
+// - kLraZoneW:   响度条右侧 LRA bracket 区宽度 (M 条之后, Pro-L2 模仿);
+//   spine 贴 M 条右缘, caps 向右伸, "LRA / XX.X" 文字落在 bracket 区右端 (见
+//   SpectrumPad::DrawLraBracket)。bracket 整体内嵌入 SpectrumPad, 不影响 plot.R。
 // 电平区总让宽 (kMeterStripW) = 2×kGainBarW + kVuScaleW + 2×kVuBarW
-//                           + kLufsScaleW + 3×kLoudBarW
+//                           + kLufsScaleW + 4×kLoudBarW + kLraZoneW
 constexpr float kGainBarW = 14.f;
 constexpr float kVuScaleW = 28.f;
 constexpr float kVuBarW = 14.f;
 constexpr float kLufsScaleW = 28.f;
 constexpr float kLoudBarW = 14.f;
-constexpr float kMeterStripW = 2.f * kGainBarW + kVuScaleW + 2.f * kVuBarW + kLufsScaleW + 3.f * kLoudBarW;
+constexpr float kLraZoneW = 32.f;
+constexpr float kMeterStripW = 2.f * kGainBarW + kVuScaleW + 2.f * kVuBarW + kLufsScaleW + 4.f * kLoudBarW + kLraZoneW;
 
 // 电平表 UI 数据 (插件 OnIdle 每帧下发; 全 4 字节字段, 打包/解析安全)
 struct LevelMeterUiData {
@@ -49,6 +54,7 @@ struct LoudnessUiData {
   float momentary, shortTerm; // M / S, LUFS
   float integrated;           // I, LUFS
   float range;                // LRA, LU
+  float lraMin, lraMax;       // LRA 直方图 10%/95% 百分位 LUFS 端点 (UI bracket 上下臂 y 映射)
   float tpMax;                // dBTP 锁存
   float target;               // 预设目标 LUFS
   int preset;                 // 预设档位索引

@@ -26,7 +26,6 @@ enum EParams {
   kVQTGamma,      // VQT 低频带宽下限 γ (Hz): bw = fc/q + γ (低/中/高 = 20/10/5, 越小越精细)
   kLoudPreset,    // 响度目标预设档位 (0: -9, 1: -14, 2: -23, 3: -24 LUFS)
   kLoudScale,     // 响度条刻度窗偏移档位 (顶 = 目标+偏移, 1/3 = 目标, 底 = 目标-2×偏移; 0: +9, 1: +18 LU)
-  kScopeRange,    // 声像显示范围档位 (极坐标电平半径 dB 底限: 0: -60, 1: -80, 2: -100)
   kNumParams
 };
 
@@ -67,10 +66,6 @@ constexpr int kNumLoudPresets = 4;
 constexpr double kLoudScaleOffsets[] = {9.0, 18.0};
 constexpr int kNumLoudScaleOptions = 2;
 
-// 声像显示范围档位 (kScopeRange 存索引): 极坐标电平扇形的半径 dB 底限
-constexpr double kScopeRangeDb[] = {-60.0, -80.0, -100.0};
-constexpr int kNumScopeRangeOptions = 3;
-
 // 频谱斜率档位 (kSlopeFFT/kSlopeVQT/kSlopePBT/kSlopeRTA 存索引, 各引擎独立):
 // 显示域每 band 施加 S·log2(f/f_pivot) dB 的倾斜。FFT 按 bin 显示白噪天生平直,
 // 逐 band 能量积分显示 (VQT/PBT/RTA) 白噪天生 +3 dB/oct, 故两组档值相差 -3,
@@ -98,4 +93,4 @@ enum EChannelMode { kChanModePWR = 0, kChanModeLR = 1, kChanModeSUM = 2, kNumCha
 enum ELevelMode { kLevelModeDBTP = 0, kLevelModeDBFS = 1, kNumLevelModes = 2 };
 
 // UI 控件消息标签
-enum EControlTags { kCtrlTagPad = 100, kCtrlTagCpu = 101, kCtrlTagLoudness = 103, kCtrlTagScope = 104 };
+enum EControlTags { kCtrlTagPad = 100, kCtrlTagCpu = 101, kCtrlTagScope = 104 };

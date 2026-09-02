@@ -87,7 +87,6 @@ enum EText {
   kTxtSpeedFast,      // 频谱速度预设按钮: 快速 (FAST, 释放 0.5s)
   kTxtSpeedMax,       // 频谱速度预设按钮: 最快 (MAX, 释放 0.2s)
   kTxtTipSpeed,       // 频谱速度预设 tooltip
-  kTxtTipScopeRange,  // 声像显示范围 tooltip
   kNumTexts
 };
 
@@ -170,7 +169,6 @@ inline const char *Tr(int id, int lang) {
           "FAST",
           "MAX",
           "Analyzer response speed (release time): LOG 4/2/1/0.5/0.2 s for MIN..MAX; LIN ≈ ×1.2 (4.8/2.4/1.2/0.6/0.25 s). Attack fixed 0.05 s. Click cycles slow → fast.",
-          "Stereo display range: click to cycle floor -60 / -80 / -100 dB",
       },
       {
           "释放",
@@ -249,7 +247,6 @@ inline const char *Tr(int id, int lang) {
           "快速",
           "最快",
           "频谱响应速度档位（释放时间）：LOG 下 MIN~MAX 为 4/2/1/0.5/0.2 秒；LIN 下约为 ×1.2（4.8/2.4/1.2/0.6/0.25 秒）。上升时间固定 0.05 秒。点击循环：慢 → 快。",
-          "声像显示范围：点击循环切换底限 -60 / -80 / -100 dB",
       },
   };
   return kTable[lang][id];

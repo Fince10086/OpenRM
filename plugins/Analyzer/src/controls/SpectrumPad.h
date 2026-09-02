@@ -44,8 +44,14 @@ public:
     kMsgTagRTABands,    // RTA 频带中心频率 (Hz)
   };
 
-  // 电平条点击动作 (Analyzer.cpp 绑定回调转成 mLevelReset*Flag)
-  enum EMeterClick { kClickResetPersist, kClickResetMeterHold, kClickResetOver };
+  // 电平条点击动作 (Analyzer.cpp 绑定回调转成 mLevelReset*Flag / 参数循环档位)
+  enum EMeterClick {
+    kClickResetPersist,   // dBTP 模式点击条: 清持久锁存
+    kClickResetMeterHold, // dBFS 模式点击条体: 清峰值保持
+    kClickResetOver,      // dBFS 模式点击顶部 LED: 清过载
+    kClickLoudScale,      // 响度窗顶刻度按钮: 循环刻度窗偏移 (+9/+18 LU)
+    kClickLoudPreset,     // 响度 1/3 目标刻度按钮: 循环目标预设 (-9/-14/-23/-24 LUFS)
+  };
   std::function<void(EMeterClick)> mMeterClickHandler;
 
   SpectrumPad(const IRECT &bounds) : IControl(bounds) {
@@ -254,6 +260,10 @@ public:
       mMomentary = d.momentary;
       mShortTerm = d.shortTerm;
       mIntegrated = d.integrated;
+      mRange = d.range;
+      mLraMin = d.lraMin;
+      mLraMax = d.lraMax;
+      mLraValid = d.lraValid != 0;
       mTarget = d.target;
       mScaleOff = (float)d.scaleOff;
       SetDirty(false);
@@ -266,11 +276,31 @@ public:
     }
   }
 
-  // 电平条点击交互: 命中 L/R 条区域时按模式分发 (dBTP → 清持久锁存;
+  // 点击交互 (按命中优先级): 响度刻度按钮 (窗顶值 → 循环刻度窗偏移 +9/+18;
+  // 1/3 目标值 → 循环目标预设 -9/-14/-23/-24) > L/R 条区域 (dBTP → 清持久锁存;
   // dBFS → 顶部 LED 区清过载 / 下方条体清峰值保持)。模式按钮 attach 在后, 优先命中。
+  // 不做按键位过滤 (与下方 L/R 条区旧逻辑一致, 整个控件按左键交互): 只按坐标命中,
+  // 避免个别平台/事件路径的 IMouseMod.L 位语义差异导致按钮点击被放过。
   void OnMouseDown(float x, float y, const IMouseMod &mod) override {
     if (!mMeterClickHandler)
       return;
+    // 响度 LUFS 刻度列的两个「刻度按钮」: 几何与 DrawLoudBars 同源 (LufsTickRect 外扩块,
+    // 忽略像素对齐的亚像素差), 见 LoudScaleTickBtnRect / LoudPresetTickBtnRect。
+    {
+      const IRECT approxPlot(mRECT.L, mRECT.T, mRECT.R - kMeterStripW, mRECT.B);
+      const IRECT scaleBtnR = LoudScaleTickBtnRect(approxPlot);
+      if (x >= scaleBtnR.L && x <= scaleBtnR.R && y >= scaleBtnR.T && y <= scaleBtnR.B) {
+        mMeterClickHandler(kClickLoudScale);
+        return;
+      }
+      if (mTarget > -100.f) {
+        const IRECT presetBtnR = LoudPresetTickBtnRect(approxPlot);
+        if (x >= presetBtnR.L && x <= presetBtnR.R && y >= presetBtnR.T && y <= presetBtnR.B) {
+          mMeterClickHandler(kClickLoudPreset);
+          return;
+        }
+      }
+    }
     const float totalW = kMeterStripW;
     const float barL0 = mRECT.R - totalW; // 与 Draw 的 plot.R 一致 (忽略像素对齐的亚像素差)
     const float barR = barL0 + 2.f * kGainBarW;
@@ -331,9 +361,13 @@ private:
     //     (与固定刻度同位置同样式, 顶部放不下翻到线下侧);
     //   响度 M/S/I 条: 横线只在本域内, 动态读数 = LUFS 值 (目标锚定窗, 与条体
     //     刻度同一映射), 放在条左侧 LUFS 刻度列内。
-    // VU/LUFS 动态读数比固定刻度宽, 左缘会少量越入邻域条体, 垫一块 COL_100
-    //   芯片 (纯色填充, 无描边) 保证可读; 芯片与本域固定刻度重叠时隐藏该刻度
-    //   让位 (与频谱 dB/Hz 刻度避让同策略)。
+    // VU/LUFS 动态读数直接以刻度样式文字绘制, 背景透明 (不垫任何芯片色块);
+    // 文字框 (chip rect) 仅作避让几何: VU 读数与本域固定刻度重叠时隐藏该刻度让位
+    // (与频谱 dB/Hz 刻度避让同策略); LUFS 读数与任一固定刻度 (顶/中刻度按钮、底
+    // 刻度文字) 重叠时由下方平移逻辑把读数纵向让开, 固定刻度保持完整可见。
+    // VU 表与响度表的 hover 只在各自的「条体」上触发: 鼠标进入刻度文字列 (VU/LUFS
+    // 刻度列) 不激活准线/读数, 避免悬停在刻度上时读数闪烁。刻度列的「刻度按钮」
+    // (窗顶值/目标值, 见 DrawLoudBars) 自带 hover 反馈, 不依赖本准线系统。
     // 竖线 + 频率/音高读数只在频谱区内; dBFS 模式下 L/R 条顶部 over LED 区内
     // 整组准线不显示。
     const float zoneLr = LrZoneR(plot); // 频谱+L/R 域右缘 (L/R 条右缘)
@@ -344,8 +378,10 @@ private:
                          mHoverY >= plot.T && mHoverY <= plot.B;
     const bool inSpectrum = inStrip && mHoverX <= plot.R;
     const bool inZone0 = inStrip && mHoverX <= zoneLr;
-    const bool inZone1 = inStrip && mHoverX > zoneLr && mHoverX <= zoneVu;
-    const bool inZone2 = inStrip && mHoverX > zoneVu;
+    // VU 条体 = 刻度列右缘 (VU 条左缘) 到 VU 域右缘; 刻度列 (VU 条左侧) 不算 hover
+    const bool inZone1 = inStrip && mHoverX > LrZoneR(plot) + kVuScaleW && mHoverX <= zoneVu;
+    // 响度条体 = LUFS 刻度列右缘 (响度条左缘) 之后; LUFS 刻度列不算 hover
+    const bool inZone2 = inStrip && mHoverX > VuZoneR(plot) + kLufsScaleW;
     IRECT hzSkip, dbSkip, vuSkip, lufsSkip; // 默认空矩形 = 不跳过任何刻度
     char hzBuf[16] = "", dbBuf[16] = "";
     char vuBuf[16] = "", lufsBuf[16] = "";
@@ -353,7 +389,7 @@ private:
     IText hzText, dbText, vuText, lufsText;
     IRECT pitchR, freqR;    // 音高/频率标签绘制矩形, inSpectrum 内计算
     IRECT vuBox, lufsBox;   // VU/LUFS 动态读数文字框 (刻度列内, 刻度样式)
-    IRECT vuChip, lufsChip; // VU/LUFS 动态读数芯片 (文字框外扩 2px)
+    IRECT vuChip, lufsChip; // VU/LUFS 动态读数避让矩形 (文字框外扩 2px, 不再填充背景)
     float xLine = 0.f, yLine = 0.f;
     if (inStrip) {
       xLine = mHoverX;
@@ -402,6 +438,34 @@ private:
                           yLine + 1.f + kLabelH);
         g.MeasureText(lufsText, lufsBuf, lufsBox);
         lufsChip = lufsBox.GetPadded(2.f);
+        // 动态读数 (文字框) 与任一固定刻度 (顶窗顶值/中目标值刻度按钮, 以及底部窗底值
+        // 刻度文字) 重叠时, 把读数整体纵向平移让开 (优先上移, 越出条区则下移), 使三个
+        // 固定刻度在任何 hover 下都完整可见 —— 按钮不会被读数文字压住而像「消失」,
+        // 底部纯文字刻度也不会与读数叠字。平移间距 gap。
+        // (按钮位置见 LoudScaleTickBtnRect/LoudPresetTickBtnRect, 与绘制同源。)
+        {
+          const float gap = 3.f;
+          const IRECT btnObstacles[3] = {LoudScaleTickBtnRect(plot),
+                                         (mTarget > -100.f) ? LoudPresetTickBtnRect(plot)
+                                                            : IRECT(),
+                                         LufsTickRect(plot, botL)};
+          for (const IRECT &btn : btnObstacles) {
+            if (btn.Empty() || !lufsChip.Intersects(btn))
+              continue;
+            // 上移: chip.B -> btn.T - gap; 不越出条区上缘
+            float dy = (btn.T - gap) - lufsChip.B;
+            if (lufsChip.T + dy < plot.T) {
+              // 下移: chip.T -> btn.B + gap; 不越出条区下缘
+              dy = (btn.B + gap) - lufsChip.T;
+              if (lufsChip.B + dy > plot.B)
+                continue; // 上下都放不下 (条区极矮), 放弃避让, 由让位逻辑兜底
+            }
+            lufsBox.T += dy;
+            lufsBox.B += dy;
+            lufsChip.T += dy;
+            lufsChip.B += dy;
+          }
+        }
         lufsSkip = lufsChip;
       }
 
@@ -451,6 +515,7 @@ private:
     DrawFreqGrid(g, plot, hzSkip);
     DrawSpectrum(g, plot);
     DrawLevelMeter(g, plot, vuSkip, lufsSkip);
+    DrawLraBracket(g, plot);
 
     if (inZone0) {
       // 准线颜色与刻度文字一致 (COL_700), 1px 细线; 最上层绘制
@@ -463,11 +528,9 @@ private:
       g.DrawText(dbText, dbBuf, dbSkip);
     } else if (inZone1) {
       g.DrawLine(COL_700(), zoneLr, yLine, zoneVu, yLine, nullptr, 1.f);
-      g.FillRect(COL_100(), vuChip);
       g.DrawText(vuText, vuBuf, vuBox);
     } else if (inZone2) {
       g.DrawLine(COL_700(), zoneVu, yLine, mRECT.R, yLine, nullptr, 1.f);
-      g.FillRect(COL_100(), lufsChip);
       g.DrawText(lufsText, lufsBuf, lufsBox);
     }
   }
@@ -717,6 +780,24 @@ private:
     return IRECT(scaleL, y - kLabelH - 1.f, scaleL + kLufsScaleW - kTickRight, y - 1.f);
   }
 
+  // ── 响度刻度按钮 (窗顶值 / 1/3 目标值) ───────────────────────────────
+  // 响度 LUFS 刻度列的顶刻度 (窗顶值 = 目标+偏移) 与 1/3 刻度 (目标值) 兼作按钮:
+  // 文字保持普通刻度的位置/字体/颜色, 仅垫一块浅灰底 (COL_300), 点击分别循环
+  // 刻度窗偏移 (+9/+18, 见 kClickLoudScale) 与目标预设 (-9/-14/-23/-24, 见
+  // kClickLoudPreset)。热区 = 刻度文字矩形上下外扩 1px (左右不越出刻度列), 与
+  // DrawLoudBars 的绘制同源 (LufsTickRect), OnMouseDown 与 hover 高亮共用。
+  static IRECT LoudTickBtnRect(const IRECT &labelR) {
+    return IRECT(labelR.L, labelR.T - 1.f, labelR.R + 1.f, labelR.B + 1.f);
+  }
+  IRECT LoudScaleTickBtnRect(const IRECT &plot) const {
+    float topL, botL;
+    LoudWindow(topL, botL);
+    return LoudTickBtnRect(LufsTickRect(plot, topL));
+  }
+  IRECT LoudPresetTickBtnRect(const IRECT &plot) const {
+    return LoudTickBtnRect(LufsTickRect(plot, mTarget));
+  }
+
   // L/R 双电平表条 + 独立 VU 表 (VU 刻度文字画在两者之间的间距内) + over 指示
   // (dBTP 锁存数字直接绘制在条上, 见 DrawMeterBar)
   void DrawLevelMeter(IGraphics &g, const IRECT &plot, const IRECT &vuSkip, const IRECT &lufsSkip) {
@@ -736,7 +817,7 @@ private:
 
   // 独立 VU 表刻度文字: -20/-10/0/+3 (VU), 右对齐 VU 表左缘, 画在 L/R 条与 VU 表
   // 之间的间距内。样式与 dB 刻度一致 (文字在线上方); +3 贴条顶放不下, 翻到线下侧。
-  // skipRect 非空时 (hover 动态读数芯片), 重叠的固定刻度隐藏让位。
+  // skipRect 非空时 (hover 动态读数), 重叠的固定刻度隐藏让位。
   void DrawVuScale(IGraphics &g, const IRECT &plot, const IRECT &skipRect) {
     const IText t(14, COL_700(), kFontRegular, EAlign::Far, EVAlign::Bottom);
     struct VuTick {
@@ -755,7 +836,7 @@ private:
   // 独立 VU 表双条 (L/R): 常驻显示两声道功率和 VU (0 VU = -18 dBFS), 独立刻度 -20..+3 VU。
   // 渐变 = 两段语义色: -20..-3 VU 深绿→浅绿 (安全区), -3..+3 VU 浅绿→红 (逼近削波,
   // 0 VU 附近自然呈黄绿)。峰值保持线用 VU 表自己的保持值 (mVuHold), 与 L/R 条
-  // (mHold) 相互独立, 同样按 VU 位置取色。
+  // (mHold) 相互独立, 同样按 VU 位置取色。双条底部画 "VU" 水印标识 (见函数尾)。
   void DrawVuBar(IGraphics &g, const IRECT &plot) {
     const float scaleL = plot.R + 2.f * kGainBarW;
     const IRECT barL(scaleL + kVuScaleW, plot.T, scaleL + kVuScaleW + kVuBarW, plot.B);
@@ -855,6 +936,17 @@ private:
     };
     drawBar(barL, mVuL, mVuHoldL);
     drawBar(barR, mVuR, mVuHoldR);
+
+    // "VU" 水印标识 (纯文字, 非按钮, 无 hover, 透明背景): 位于 VU 双条底部, 与 L/R 条
+    // 底部的 dBTP/dBFS 幽灵文字同一水平带 (条底 19px 高, 与 Analyzer.cpp 的 kRangeBtnH
+    // 对齐)、同字体字号 (11px kFontSemiBold, Center/Middle) 居中于双条。文字色随条上
+    // 渐变状态变化 (与 dBTP 幽灵文字同一观感逻辑): 空轨 (VU 值 ≤ 显示范围底部 -20 VU,
+    // 无渐变渲染, 轨道呈浅灰) 时为深灰 COL_700 可辨; 有渐变时退回条轨浅灰 COL_300
+    // 水印, 不抢戏。透明背景, hover 无任何反应。
+    const float vuMaxDb = (mVuL > mVuR) ? mVuL : mVuR; // VU 数据为 dBFS 域 (0 VU = -18 dBFS)
+    const IColor vuLblCol = (vuMaxDb + 18.f > kVuBottomVU) ? COL_300() : COL_700();
+    const IText vuLbl(11.f, vuLblCol, kFontSemiBold, EAlign::Center, EVAlign::Middle);
+    g.DrawText(vuLbl, "VU", IRECT(barL.L, plot.B - 19.f, barR.R, plot.B));
   }
 
   // 语义色降饱和 (固定 RGB 安全色随主题饱和档位; 纯黑白主题下变灰阶; 与声像仪表行同式)
@@ -870,40 +962,77 @@ private:
                        (int)std::lround(c.B * m + lum * (1.f - m)));
   }
 
-  // 响度 M/S/I 三条 (LUFS): 位于 VU 条右侧, 样式与 VU 条一致 (轨道 + 刻度 + 渐变段)。
+  // 响度三条 (LUFS): 位于 VU 条右侧, 样式与 VU 条一致 (轨道 + 渐变段 + 顶部字母标签)。
+  // 排列 (左→右) = I | S | M: I 为 2 倍宽强调 (2×kLoudBarW), S/M 各 kLoudBarW,
+  // 总宽 4×kLoudBarW (kMeterStripW 相应 +1 份, 见 UiUtils.h)。M/S 数值显示已从右栏
+  // 响度读数面板移除 (见 LoudnessMeterControl), 此处三根条即 M/S/I 唯一的实时条体。
   // 竖向刻度以目标为锚 (kMsgTagLoudness 随帧下发的 target + scaleOff):
   //   1/3 高度 = 目标值, 顶部 = 目标+偏移, 底部 = 目标-2×偏移 (窗高 = 3×偏移);
   //   目标无效时退回固定 -60..0 旧制。顶部刻度贴条顶翻到线下侧 (与旧 0 刻度同处理)。
   // 语义色改为目标相对 (与 Δ 读数同三段式): ≤目标-1 黄 (偏安静) / |Δ|≤1 绿 (达标) /
   //   ≥目标+1 红 (偏响); 颜色走 satScale 降饱和, 纯黑白主题下自动变灰阶。
-  // skipRect 非空时 (hover 动态读数芯片), 重叠的固定刻度隐藏让位。
+  // skipRect 非空时 (hover 动态读数), 重叠的固定刻度隐藏让位 —— 仅兜底:
+  // LUFS 侧读数已在 DrawContent 平移避开全部固定刻度, 正常情形不触发。
+  // 顶刻度 (窗顶值) 与 1/3 刻度 (目标值) 兼作「刻度按钮」: 文字位置/字体/颜色与普通
+  // 刻度完全一致 (底刻度仍为纯文字), 无常驻底色 —— hover 时只在文字背后垫一层
+  // 半透明加深遮罩提示可点; 点击分别循环刻度窗偏移 (+9/+18) 与目标预设
+  // (-9/-14/-23/-24, 见 OnMouseDown)。读数与按钮重叠时由 DrawContent 将读数
+  // 平移让开 (读数优先可读), 按钮保持完整可见可点, 不参与让位隐藏。
+  // 三条底部的水印 (同 VU 水印样式, 见函数尾): I 条下显示 I 当前值; S 条下 "LU" 与
+  // M 条下 "FS" 拼成单位 "LUFS", 两段各自随所属条的渐变状态取色 —— 纯文字透明背景
+  // 无 hover。
   void DrawLoudBars(IGraphics &g, const IRECT &plot, const IRECT &skipRect) {
     const float scaleL = VuZoneR(plot);
     const float bar0L = scaleL + kLufsScaleW;
-    const IRECT barM(bar0L, plot.T, bar0L + kLoudBarW, plot.B);
-    const IRECT barS(barM.R, plot.T, barM.R + kLoudBarW, plot.B);
-    const IRECT barI(barS.R, plot.T, barS.R + kLoudBarW, plot.B);
+    // I 最左 (2 倍宽) | S 中 | M 右
+    const IRECT barI(bar0L, plot.T, bar0L + 2.f * kLoudBarW, plot.B);
+    const IRECT barS(barI.R, plot.T, barI.R + kLoudBarW, plot.B);
+    const IRECT barM(barS.R, plot.T, barS.R + kLoudBarW, plot.B);
 
     float topL, botL;
     LoudWindow(topL, botL);
     const bool tgtValid = mTarget > -100.f;
 
-    // 刻度文字: 底 (目标-2·off) / 1/3 (目标) / 顶 (目标+off, 贴条顶翻到线下侧)
+    // 刻度文字样式 (与底刻度 / hover 动态读数一致)
     const IText t(14, COL_700(), kFontRegular, EAlign::Far, EVAlign::Bottom);
-    const float tickVals[3] = {topL, mTarget, botL};
-    for (const float v : tickVals) {
-      const IRECT labelR = LufsTickRect(plot, v);
-      if (!skipRect.Empty() && labelR.Intersects(skipRect))
-        continue;
+    auto drawTickText = [&](float v, const IRECT &labelR) {
       char buf[8];
       std::snprintf(buf, sizeof(buf), "%d", (int)std::lround(v));
       g.DrawText(t, buf, labelR);
+    };
+    auto hiddenByChip = [&](const IRECT &labelR) {
+      return !skipRect.Empty() && labelR.Intersects(skipRect);
+    };
+    // 刻度按钮: 无常驻底色, 按钮身份只由 hover 呈现 —— 悬停时在文字背后垫一层
+    // 半透明加深遮罩 (HoverOverlay, 不染色整列), 文字保持原刻度样式/颜色不变。
+    auto drawTickBtn = [&](float v, const IRECT &labelR) {
+      const IRECT btn = LoudTickBtnRect(labelR);
+      if (mHoverActive && btn.Contains(mHoverX, mHoverY))
+        g.FillRect(HoverOverlay(), btn);
+      drawTickText(v, labelR);
+    };
+
+    // 顶刻度按钮 (窗顶值 = 目标+偏移, 点击循环刻度窗偏移 +9/+18)
+    const IRECT topLabel = LufsTickRect(plot, topL);
+    if (!hiddenByChip(topLabel))
+      drawTickBtn(topL, topLabel);
+
+    // 1/3 目标刻度按钮 (目标值, 点击循环目标预设 -9/-14/-23/-24); 目标无效时不显示
+    if (tgtValid) {
+      const IRECT midLabel = LufsTickRect(plot, mTarget);
+      if (!hiddenByChip(midLabel))
+        drawTickBtn(mTarget, midLabel);
     }
 
-    // 目标线 (跨 M/S/I 三条), 落在 1/3 高度刻度处
+    // 底刻度 (窗底值 = 目标-2×偏移): 保持纯刻度文字
+    const IRECT botLabel = LufsTickRect(plot, botL);
+    if (!hiddenByChip(botLabel))
+      drawTickText(botL, botLabel);
+
+    // 目标线 (跨三条 I|S|M), 落在 1/3 高度刻度处
     if (tgtValid) {
       const float yT = LoudYOf(plot, mTarget);
-      g.FillRect(COL_900(), IRECT(barM.L, yT - 1.f, barI.R, yT + 1.f));
+      g.FillRect(COL_900(), IRECT(barI.L, yT - 1.f, barM.R, yT + 1.f));
     }
 
     // 语义色段 (目标相对, 与 Δ 读数同三段式; satScale 降饱和)
@@ -945,9 +1074,99 @@ private:
       const IText lbl(10.f, COL_500(), kFontRegular, EAlign::Center, EVAlign::Top);
       g.DrawText(lbl, label, IRECT(bar.L, plot.T, bar.R, plot.T + 12.f));
     };
-    drawBar(barM, mMomentary, "M");
-    drawBar(barS, mShortTerm, "S");
     drawBar(barI, mIntegrated, "I");
+    drawBar(barS, mShortTerm, "S");
+    drawBar(barM, mMomentary, "M");
+
+    // ── 底部水印 (样式同 VU 水印, 见 DrawVuBar 尾) ────────────────────────
+    // 纯文字透明背景, 无 hover, 画在条底 19px 水平带 (与 dBTP 幽灵文字/VU 水印同带,
+    // Analyzer.cpp kRangeBtnH); 颜色随条上渐变双态: 值超出窗底 (条上渲染了渐变) 呈
+    // 条轨浅灰 COL_300 水印, 空轨/无效呈深灰 COL_700。I 条下 = I 当前具体值 (%.1f,
+    // 无效 "—"); 单位 "LUFS" 拆成两段 —— "LU" 落在 S 条下、"FS" 落在 M 条下,
+    // 分别随 S (mShortTerm) 与 M (mMomentary) 的渐变状态独立取色 (如 S 有渐变
+    // M 空轨 → LU 浅灰、FS 深灰)。文字先以 11px 试排, MeasureText 越出归属条域时
+    // 逐级降字号 (两字母在 14px 条内通常降至 ~10px, 与顶部字母标签同字号观感)。
+    const float kMarkH = 19.f;
+    auto loudMarkActive = [&](float lufs) { return lufs > -99.f && lufs > botL; };
+    auto drawLoudMark = [&](const IRECT &bar, const char *txt, bool active) {
+      IRECT box(bar.L, plot.B - kMarkH, bar.R, plot.B);
+      float size = 11.f;
+      IColor col = active ? COL_300() : COL_700();
+      IText t(size, col, kFontSemiBold, EAlign::Center, EVAlign::Middle);
+      for (;;) {
+        IRECT m = box;
+        g.MeasureText(t, txt, m);
+        if ((m.L >= box.L - 0.5f && m.R <= box.R + 0.5f) || size <= 8.f)
+          break;
+        size -= 1.f;
+        t = IText(size, col, kFontSemiBold, EAlign::Center, EVAlign::Middle);
+      }
+      g.DrawText(t, txt, box);
+    };
+    // 底值与 botL 已由上方 LoudWindow 解出 (目标无效时退回固定 -60 窗底), 恒适用
+    const bool iAct = loudMarkActive(mIntegrated);
+    const bool sAct = loudMarkActive(mShortTerm);
+    const bool mAct = loudMarkActive(mMomentary);
+    char iBuf[16];
+    if (mIntegrated > -99.f)
+      std::snprintf(iBuf, sizeof(iBuf), "%.1f", mIntegrated);
+    else
+      std::snprintf(iBuf, sizeof(iBuf), "%s", "—");
+    drawLoudMark(barI, iBuf, iAct);
+    // 单位 "LUFS" 拆成两段, 各自落在 S / M 条底并分别取色: "LU" 随 S 条渐变状态
+    // (sAct), "FS" 随 M 条 (mAct)。例: S 有渐变柱子而 M 空轨 → LU 浅灰、FS 深灰。
+    drawLoudMark(barS, "LU", sAct);
+    drawLoudMark(barM, "FS", mAct);
+  }
+
+  // ── LRA bracket (Pro-L2 模仿) ────────────────────────────────────────────
+  // 位于 M 条右侧的 32px 区域 (kLraZoneW), 仅当 mLraValid (≥3s, 首个 3s 块后) 时绘制。
+  // 几何:
+  //   spine  = 垂直线, 贴 M 条右缘 (x = strip 右缘), 跨越 LRA 高/低两点 LUFS 对应的 y
+  //   caps   = 上/下两段水平短线, 从 spine 向右伸出 (Pro-L2 反向风格: bracket 朝向条之外)
+  //   文字   = "LRA" 小标 + "XX.X" 大值, 竖排两行, 右对齐 cap 右端外
+  // 上/下臂 y = LoudYOf(plot, lraMax / lraMin), 即 EBU 3342 直方图 95%/10% 百分位 LUFS;
+  // 不在可见窗内则夹到 [botL, topL]。无 hover/无交互, 颜色走 SemColor(MeterYellow())
+  // (与 VU/LUFS 条体同降饱和链路, 主题黑白模式自动灰化)。
+  void DrawLraBracket(IGraphics &g, const IRECT &plot) {
+    if (!mLraValid)
+      return;
+    float topL, botL;
+    LoudWindow(topL, botL);
+    const float yHi = LoudYOf(plot, std::clamp(mLraMax, botL, topL));
+    const float yLo = LoudYOf(plot, std::clamp(mLraMin, botL, topL));
+    if (yHi - yLo < 1.f)
+      return; // 范围太小, 上下臂重合, 不画
+
+    const float zoneL = plot.R + kMeterStripW - kLraZoneW; // = M 条右缘 = spine 起点
+    const float zoneR = plot.R + kMeterStripW;             // = 频谱面板右缘 = 文字右边界
+    const IColor col = SemColor(MeterYellow());
+
+    // spine + caps (1.5px 粗细; 上下臂居中位于 yHi / yLo)
+    constexpr float kSpineW = 1.5f, kCapH = 1.5f, kCapLen = 6.f;
+    g.FillRect(col, IRECT(zoneL, yHi, zoneL + kSpineW, yLo));
+    g.FillRect(col, IRECT(zoneL, yHi - kCapH * 0.5f, zoneL + kCapLen, yHi + kCapH * 0.5f));
+    g.FillRect(col, IRECT(zoneL, yLo - kCapH * 0.5f, zoneL + kCapLen, yLo + kCapH * 0.5f));
+
+    // 文字: "LRA" (小标) + "XX.X" (值), 竖排, 右对齐 zoneR。字号按当前 LUFS 量程缩放:
+    // 范围窄 (<8 LU) 时两行塞进 [yLo, yHi] 之间; 范围宽 (≥16 LU) 时各自留一行高, 居中。
+    char valBuf[16];
+    std::snprintf(valBuf, sizeof(valBuf), "%.1f", mRange);
+    const float midY = (yHi + yLo) * 0.5f;
+    const float span = yHi - yLo;
+    const float labelSize = std::clamp(span * 0.28f, 9.f, 12.f); // "LRA" 字号随跨度缩
+    const float valSize = std::clamp(span * 0.42f, 11.f, 16.f);  // "XX.X" 字号随跨度缩
+    const float gap = 1.f;
+    const float labelH = labelSize + 2.f;
+    const float valH = valSize + 2.f;
+    // 两行总高: 上下各留 ~6px 内边距, 整体居中于 [yLo+4, yHi-4]
+    const float totalH = labelH + gap + valH;
+    const float blockT = std::clamp(midY - totalH * 0.5f, yLo + 1.f, yHi - totalH - 1.f);
+    const IText labelT(labelSize, col, kFontRegular, EAlign::Far, EVAlign::Middle);
+    g.DrawText(labelT, "LRA", IRECT(zoneL + kCapLen + 1.f, blockT, zoneR - 1.f, blockT + labelH));
+    const IText valT(valSize, col, kFontSemiBold, EAlign::Far, EVAlign::Middle);
+    g.DrawText(valT, valBuf, IRECT(zoneL + kCapLen + 1.f, blockT + labelH + gap, zoneR - 1.f,
+                                   blockT + labelH + gap + valH));
   }
 
   void DrawMeterBar(IGraphics &g, const IRECT &plot, const IRECT &bar, const IColor &chan, int ch) {
@@ -1543,6 +1762,9 @@ private:
   bool mOverL = false, mOverR = false;      // 电平表: 过载锁存
   float mMomentary = -120.f, mShortTerm = -120.f; // 响度 M/S (LUFS)
   float mIntegrated = -120.f;               // 总响度 I (LUFS)
+  float mRange = 0.f;                        // LRA, LU (kMsgTagLoudness 随帧下发; DrawLraBracket 显示)
+  float mLraMin = -120.f, mLraMax = -120.f;  // LRA 直方图 10%/95% LUFS 端点 (bracket 上下臂 y 映射)
+  bool mLraValid = false;                    // LRA 可显示 (≥3s; 统计参考需 60s)
   float mTarget = -14.f;                    // 响度目标 (LUFS)
   float mScaleOff = 9.f;                    // 响度条刻度窗偏移 (LU, kMsgTagLoudness 随帧透传; 顶=目标+off, 1/3=目标, 底=目标-2·off)
   std::vector<int> mBinToBand;     // 预计算: bin -> band 映射 (-1 = 频段外)

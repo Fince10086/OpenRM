@@ -60,8 +60,8 @@ inline IVButtonControl *MakeMomentary(const IRECT &r, std::function<void(IContro
 enum IconAction {
   kIconUndo, // 撤销: assets/icons/undo.svg (环形箭头, 实体填充)
   kIconRedo, // 重做: assets/icons/redo.svg (水平镜像)
-  kIconSave, // 保存: assets/icons/import.svg (存入容器)
-  kIconLoad, // 读取: assets/icons/export.svg (从容器取出)
+  kIconSave, // 保存 (导出到磁盘): assets/icons/export.svg (托盘 + 上箭头取出)
+  kIconLoad, // 读取 (从磁盘导入): assets/icons/import.svg (文件夹 + 下箭头引入)
 };
 
 // SVG 路径命令表 (源: assets/icons/*.svg, 1024×1024 网格, 实心填充)。
@@ -96,7 +96,7 @@ static constexpr SvgPathCmd kRedoIcon[] = {
     {1, {819.141f, 247.066f}},       {1, {702.495f, 130.394f}},
     {1, {778.137f, 54.752f}},        {3, {}},
 };
-static constexpr SvgPathCmd kImportIcon[] = { // 保存: 文件夹 + 下箭头引入托盘
+static constexpr SvgPathCmd kImportIcon[] = { // 导入 (读取进插件): 文件夹 + 下箭头引入托盘
     {0, {849.750f, 419.711f}},       {1, {588.934f, 419.711f}},
     {1, {549.228f, 419.711f}},       {1, {549.228f, 96.167f}},
     {1, {174.250f, 96.167f}},        {1, {174.250f, 907.904f}},
@@ -122,7 +122,7 @@ static constexpr SvgPathCmd kImportIcon[] = { // 保存: 文件夹 + 下箭头�
     {1, {771.797f, 962.690f}},       {1, {778.785f, 955.910f}},
     {1, {675.921f, 856.250f}},       {3, {}},
 };
-static constexpr SvgPathCmd kExportIcon[] = { // 读取: 托盘 + 上箭头取出
+static constexpr SvgPathCmd kExportIcon[] = { // 导出 (保存出插件): 托盘 + 上箭头取出
     {0, {111.884f, 623.884f}},       {1, {111.884f, 890.580f}},
     {1, {111.884f, 917.293f}},       {1, {885.403f, 917.293f}},
     {1, {912.043f, 917.293f}},       {1, {912.043f, 623.884f}},
@@ -179,8 +179,8 @@ public:
     switch (mIcon) {
       case kIconUndo: path = kUndoIcon; nCmds = (int)(sizeof(kUndoIcon) / sizeof(kUndoIcon[0])); break;
       case kIconRedo: path = kRedoIcon; nCmds = (int)(sizeof(kRedoIcon) / sizeof(kRedoIcon[0])); break;
-      case kIconSave: path = kImportIcon; nCmds = (int)(sizeof(kImportIcon) / sizeof(kImportIcon[0])); break;
-      case kIconLoad: path = kExportIcon; nCmds = (int)(sizeof(kExportIcon) / sizeof(kExportIcon[0])); break;
+      case kIconSave: path = kExportIcon; nCmds = (int)(sizeof(kExportIcon) / sizeof(kExportIcon[0])); break;
+      case kIconLoad: path = kImportIcon; nCmds = (int)(sizeof(kImportIcon) / sizeof(kImportIcon[0])); break;
     }
     if (path) {
       for (int i = 0; i < nCmds; ++i) {
@@ -297,9 +297,19 @@ public:
   void SetScaleLabelStyle(bool b) { mScaleStyle = b; }
 
   // 幽灵样式 (电平条底部的 dBTP/dBFS 模式按钮): 无背景方块 —— 按钮退成条上的水印标签,
-  // 不遮挡条体; 文字用条轨浅灰 (COL_300, 与电平条轨道同色), hover 时提亮到刻度灰
-  // (COL_700) 提示可点, 不做任何底面色块 (避免叠层染色底下条体)。
+  // 不遮挡条体。文字色由「条上是否有渐变」驱动 (SetGhostSignalActive): 有信号时用条轨浅灰
+  // (COL_300, 与空轨道同色、叠在渐变上不抢戏); 无信号 (条为空轨, 低于显示范围 dB) 时用
+  // 刻度深灰 (COL_700) 保证按钮清晰可点。hover 不改文字颜色, 只在文字背后垫半透明遮罩。
   void SetGhostStyle(bool b) { mGhostStyle = b; }
+
+  // 电平条当前是否渲染了渐变条体 (由插件 OnIdle 每帧下发, 见 Analyzer.cpp):
+  // true = 条上有 dB 值 → 文字条轨灰; false = 空轨 (低于显示范围) → 文字深灰。
+  void SetGhostSignalActive(bool hasSignal) {
+    if (mGhostSignalActive == hasSignal)
+      return;
+    mGhostSignalActive = hasSignal;
+    SetDirty(false);
+  }
 
   // 缩小按钮文字: 默认样式 20px 字在受窄的按钮里放不下时使用
   // (如电平条底部的模式覆盖按钮)。<=0 表示沿用样式原字号。
@@ -343,11 +353,15 @@ public:
     }
 
     if (mGhostStyle) {
-      // 幽灵样式: 只画模式文字, 无背景; 默认条轨灰, hover 提亮成刻度灰
+      // 幽灵样式: 只画模式文字, 无背景; 有信号 → 条轨浅灰, 空轨 → 刻度深灰 (可点提示)。
+      // hover 不改文字颜色, 只在文字背后垫一层半透明遮罩 (不染色整条/渐变)。
       if (idx >= 0 && idx < num) {
-        IText t(12, GetMouseIsOver() ? COL_700() : COL_300(), kFontSemiBold, EAlign::Center, EVAlign::Middle);
+        IText t(12, mGhostSignalActive ? COL_300() : COL_700(), kFontSemiBold, EAlign::Center,
+                EVAlign::Middle);
         if (mTextSize > 0.f)
           t.mSize = mTextSize;
+        if (GetMouseIsOver())
+          g.FillRect(HoverOverlay(), b);
         g.DrawText(t, mLabels[idx], b);
       }
       return;
@@ -385,7 +399,8 @@ private:
   bool mSplitChannels = false;
   int mSplitIdx = -1;   // 分半样式锚点 (标签位置, 见构造注释)
   bool mScaleStyle = false;
-  bool mGhostStyle = false; // 幽灵样式开关 (SetGhostStyle): 无背景 + 条轨灰文字
+  bool mGhostStyle = false; // 幽灵样式开关 (SetGhostStyle): 无背景 + 文字色随信号态
+  bool mGhostSignalActive = false; // 幽灵文字「条上有渐变」态 (SetGhostSignalActive): 有信号 → 条轨灰
   float mTextSize = 0.f; // >0 时覆盖样式字号 (窄按钮场景)
 };
 

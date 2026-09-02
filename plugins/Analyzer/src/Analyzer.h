@@ -36,7 +36,6 @@ class StereoFieldControl;
 class ORMSlider;
 class SettingsPanelControl;
 class CpuMeterControl;
-class LoudnessMeterControl;
 class FlatToggleControl;
 class FlatCycleButton;
 } // namespace igraphics
@@ -96,6 +95,7 @@ private:
   // 响度计输出快照 (音频线程写入, UI 线程 OnIdle 读取; 与电平表同模式)
   LoudnessMeter mLoudness;
   std::atomic<float> mLoudM{0.f}, mLoudS{0.f}, mLoudI{0.f}, mLoudLra{0.f}, mLoudTp{0.f};
+  std::atomic<float> mLoudLraMin{0.f}, mLoudLraMax{0.f}; // LRA 直方图 10%/95% LUFS 端点 (频谱面板 bracket 用)
   std::atomic<bool> mLoudIValid{false}, mLoudLraValid{false};
   std::atomic<bool> mLoudResetFlag{false};  // UI 线程置位, 音频线程下一 block Reset (+清 TP 锁存)
   std::atomic<double> mLoudSetSR{-1.0};     // UI 线程置位, 音频线程下一 block 执行 SetSampleRate+Reset
@@ -113,7 +113,6 @@ private:
 
   SpectrumPad *mSpectrumPad = nullptr;
   StereoFieldControl *mScopeCtrl = nullptr;   // 声像显示面板 (频谱下方空闲区, PAZ 式极坐标电平)
-  FlatCycleButton *mScopeRangeBtn = nullptr;  // 声像显示范围循环按钮 (基线下仪表行右端)
   FlatCycleButton *mResBtn = nullptr;      // STFT 分辨率循环按钮 (LOW/MID/HIGH)
   FlatCycleButton *mWindowBtn = nullptr;   // 窗函数循环按钮 (SHARP/CLEAN, STFT 与 VQT 各自独立档位, 按模式改绑参数)
   FlatCycleButton *mPbtLfResBtn = nullptr; // PBT 低频分辨率循环按钮 (40/20/10 Hz)
@@ -131,15 +130,16 @@ private:
   FlatToggleControl *mLevelHoldBtn = nullptr;   // 峰值保持开关 (HOLD, 反色开关样式)
   FlatCycleButton *mLevelHoldTimeBtn = nullptr; // 峰值保持时长循环按钮 (0.5s / 2s / ∞)
   FlatToggleControl *mFreezeBtn = nullptr; // 冻结开关 (FREEZE, 反色开关样式, 同 HOLD)
-  LoudnessMeterControl *mLoudCtrl = nullptr;    // 响度计读数 (右栏上方: I 大读数 + Δ/LRA 迷你条 + M/S 行)
-  FlatCycleButton *mLoudPresetBtn = nullptr;    // 响度目标预设循环按钮 (-9 / -14 / -23 / -24 LUFS)
-  FlatCycleButton *mLoudScaleBtn = nullptr;     // 响度条刻度窗偏移循环按钮 (+9 / +18 LU)
+  // 响度目标预设 (-9/-14/-23/-24) 与刻度窗偏移 (+9/+18) 按钮已并入响度条刻度
+  // (窗顶值/1/3 目标值, SpectrumPad 内绘制), 此处不再持有独立按钮。
+  // 右栏响度读数面板 (LoudnessMeterControl) 已删除: LRA 移到频谱面板 M 条右侧的
+  // Pro-L2 式 bracket (见 SpectrumPad::DrawLraBracket), I 当前值与 M/S 单位水印
+  // 已在频谱条底部呈现, 右栏不再需要独立读数控件。
 
   int mSentMode = -1;
   int mSentWindowFFT = -1; // STFT 窗函数档位 (kFFTWindow), OnIdle 增量去重
   int mSentWindowVQT = -1; // VQT 窗函数档位 (kWindowVQT), OnIdle 增量去重
   int mSentRtaOct = -1;    // RTA 分数倍频程档位 (kRtaOctave), OnIdle 增量去重
-  int mSentScopeRange = -1; // 声像显示范围档位 (kScopeRange), OnIdle 增量去重
 
   // ── Freeze (冻结/保持), 确定性回放方案 ─────────────────────────────
   // 音频线程把最近输入滚环记录进 mFreezeRing (freeze 后停止写入, 即冻结时刻快照),
@@ -246,12 +246,6 @@ private:
     const int idx = (int)std::clamp(std::lround(GetParam(kRange)->Value()), 0L, 2L);
     static constexpr float kRangeDb[3] = {80.f, 100.f, 120.f};
     return kRangeDb[idx];
-  }
-  // 声像显示范围 (极坐标电平半径 dB 底限): 离散三档 -60/-80/-100
-  float CurrentScopeFloorDb() const {
-    const int idx = (int)std::clamp(std::lround(GetParam(kScopeRange)->Value()), 0L,
-                                    (long)kNumScopeRangeOptions - 1);
-    return (float)kScopeRangeDb[idx];
   }
   // 峰值保持有效时长 (s): 开关关闭 -> 0 (LevelMeter 不保持, UI 不画 hold 线/曲线);
   // 开启 -> kHoldTimeSecs 档位值 (∞ 档为 1e9, 超时永不触发 = 无限保持)。

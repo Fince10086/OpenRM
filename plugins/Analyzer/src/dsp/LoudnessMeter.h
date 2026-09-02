@@ -6,7 +6,8 @@
 //   M  Momentary   400ms 滑动窗 (100ms 步进, 无门限), LUFS
 //   S  Short-Term  3000ms 滑动窗 (100ms 步进, 无门限), LUFS
 //   I  Integrated  400ms 窗双门限 (绝对 -70 LUFS + 相对 均值-10 LU), LUFS
-//   LRA            EBU 3342: 3s 块分布 10%..95% 最近秩百分位差 (素材 ≥ 60s 才有效), LU
+//   LRA            EBU 3342: 3s 块分布 10%..95% 最近秩百分位差, LU (首个 3s 块后即显示;
+//                  统计参考需 ≥ 60s, 插件惯例提前显示)
 //   TP Max         真峰值锁存 dBTP (由调用方喂入 4x 过采样真峰值, 见 LevelMeter;
 //                  本引擎不做重复的过采样计算)
 //
@@ -36,9 +37,11 @@ public:
     float shortTerm = -120.f;  // S, LUFS
     float integrated = -120.f; // I, LUFS
     float range = 0.f;         // LRA, LU
+    float lraMin = -120.f;     // LRA 下界 (10% 百分位 LUFS, EBU 3342); UI 用作 bracket 下臂 y
+    float lraMax = -120.f;     // LRA 上界 (95% 百分位 LUFS, EBU 3342); UI 用作 bracket 上臂 y
     float tpMax = -120.f;      // dBTP
     bool iValid = false;       // I 已有有效值 (≥1 个通过门限的 400ms 窗)
-    bool lraValid = false;     // 素材 ≥ 60s (EBU 3342 最短有效时长)
+    bool lraValid = false;     // LRA 可显示 (≥3s; 统计参考需 60s)
   };
 
   void SetSampleRate(double sr) {
@@ -68,6 +71,7 @@ public:
       v = 0;
     mCurM = mCurS = mCurI = -120.f;
     mCurLra = 0.f;
+    mCurLraMin = mCurLraMax = -120.f;
     mTpMax = -120.f;
     mIValid = false;
     mLraValid = false;
@@ -96,6 +100,8 @@ public:
     s.shortTerm = mCurS;
     s.integrated = mCurI;
     s.range = mCurLra;
+    s.lraMin = mCurLraMin;
+    s.lraMax = mCurLraMax;
     s.tpMax = mTpMax;
     s.iValid = mIValid;
     s.lraValid = mLraValid;
@@ -161,7 +167,7 @@ private:
   static constexpr int kMomentaryBlocks = 4; // 400ms
   static constexpr int kShortBlocks = 30;    // 3000ms
   static constexpr int kRingSize = kShortBlocks;
-  static constexpr int kLraMinHops = 600;                // 60s (EBU 3342 最短有效时长)
+  static constexpr int kLraMinHops = 30;                 // 3s: 首个 3s 块后即开始显示 (60s 起才有统计意义)
   static constexpr int kLraBins = 1200;                  // LUFS -120..0, 0.1 LU 步进
   static constexpr double kAbsGateZ = 1.172443196018975e-7; // 10^((-70+0.691)/10), 绝对门限
   static constexpr double kRelGateFactor = 0.1;          // I 相对门限: 均值 -10 LU
@@ -233,13 +239,23 @@ private:
         ++mHist[BinOf(LoudnessFromEnergy(zS))];
     }
     if (mHops >= kLraMinHops) {
-      mCurLra = LraFromHist();
+      auto r = LraFromHist();
+      mCurLra = r.range;
+      mCurLraMin = r.lraMin;
+      mCurLraMax = r.lraMax;
       mLraValid = true;
     }
   }
 
   // EBU 3342: 剔除低于 (均值-20 LU) 的 3s 块后, 取 10%..95% 最近秩百分位差
-  float LraFromHist() const {
+  // 同时暴露端点 lraMin/lraMax (10%/95% 百分位的 LUFS 值) 供 UI 用作
+  // bracket 上下臂的 y 坐标映射 (见 SpectrumPad::DrawLraBracket)。
+  struct LraResult {
+    float range;  // LU (hBin - lBin) * 0.1
+    float lraMin; // LUFS (10% 百分位, BinOf 反函数: bin/10 - 120)
+    float lraMax; // LUFS (95% 百分位)
+  };
+  LraResult LraFromHist() const {
     static const std::array<double, kLraBins> kEnergy = [] {
       std::array<double, kLraBins> e{};
       for (int i = 0; i < kLraBins; ++i)
@@ -253,7 +269,7 @@ private:
       n += mHist[i];
     }
     if (n == 0)
-      return 0.f;
+      return {0.f, -120.f, -120.f};
     meanP /= (double)n;
     const double relThr = kLraGateFactor * meanP;
     uint64_t kept = 0;
@@ -261,7 +277,7 @@ private:
       if (kEnergy[i] >= relThr)
         kept += mHist[i];
     if (kept <= 1)
-      return 0.f;
+      return {0.f, -120.f, -120.f};
     const double p10 = (double)(kept - 1) * 0.10 + 0.5;
     const double p95 = (double)(kept - 1) * 0.95 + 0.5;
     uint64_t cum = 0;
@@ -278,8 +294,8 @@ private:
       }
     }
     if (lBin < 0 || hBin < 0)
-      return 0.f;
-    return (float)((hBin - lBin) * 0.1);
+      return {0.f, -120.f, -120.f};
+    return {(float)((hBin - lBin) * 0.1), (float)lBin * 0.1f - 120.f, (float)hBin * 0.1f - 120.f};
   }
 
   double mSR = 48000.0;
@@ -296,6 +312,7 @@ private:
   double mGateSum = 0.0;
   std::array<uint32_t, kLraBins> mHist{};
   float mCurM = -120.f, mCurS = -120.f, mCurI = -120.f, mCurLra = 0.f, mTpMax = -120.f;
+  float mCurLraMin = -120.f, mCurLraMax = -120.f; // LRA 直方图 10%/95% 百分位 LUFS 端点 (UI bracket 用)
   bool mIValid = false, mLraValid = false;
 };
 

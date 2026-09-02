@@ -47,7 +47,6 @@ openrm_add_plugin(${PROJECT_NAME}
     src/controls/SettingsPanelControl.h
     src/controls/SpectrumPad.h
     src/controls/StereoFieldControl.h
-    src/controls/LoudnessMeterControl.h
     src/StateFileIO.h
     src/SettingsFileIO.h
     ${IPLUG2_DIR}/WDL/fft.c
