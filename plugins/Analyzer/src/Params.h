@@ -36,11 +36,9 @@ enum EFFTWindow { kFFTWindowHann = 0, kFFTWindowClean = 1, kNumFFTWindows = 2 };
 // 频谱响应速度预设档位 (kSpeed): MIN 最慢 .. MAX 最快。每档的释放时间常数按释放
 // 模式取两套值: LOG = 0.2~4s (Pro-Q 五档实测值); LIN = LOG ×2 (0.5~9.6s,
 // 匀速档视觉恒速, 拉慢一档体感: 同档位下匀速回落比对数回落慢 ~2 倍, 对齐档位体感)。
-// 上升时间常数全部档位固定 0.05s。
 enum ESpeed { kSpeedMIN = 0, kSpeedSLOW, kSpeedMED, kSpeedFAST, kSpeedMAX, kNumSpeedOptions = 5 };
 constexpr double kSpeedReleaseLog[] = {4.0, 2.0, 1.0, 0.5, 0.2};  // LOG 档释放时间 (s), 按档位索引
 constexpr double kSpeedReleaseLin[] = {9.6, 4.8, 2.4, 1.2, 0.5}; // LIN 档释放时间 (s) = LOG ×2
-constexpr double kSpeedAttackSec = 0.05;                          // 固定上升时间常数 (s)
 
 using ParamSnapshot = std::array<double, kNumParams>;
 

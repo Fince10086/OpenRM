@@ -107,7 +107,6 @@ private:
   int mSentReleaseMode = -1; // 释放回落模式 (0/1), 用于 OnIdle 增量去重
   int mSentSpeed = -1; // 频谱响应速度预设档位 (0=MIN..4=MAX), 用于 OnIdle 增量去重
   double mSentRange = -1.0;
-  double mSentAttack = -1.0; // 固定 0.05s
   double mSentLfRes = -1.0;
   double mSentSlope = -1e9; // 当前模式生效斜率 (dB/oct), 用于 OnIdle 增量去重
   int mSentChanMode = -1; // 存储三态值 (0=LR,1=PWR,2=SUM), 用于 OnIdle 增量去重

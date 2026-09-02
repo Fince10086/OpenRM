@@ -652,7 +652,6 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     mSentReleaseMode = (int)GetParam(kReleaseMode)->Value();
     mSentRelease = SpeedReleaseSec(mSentSpeed, mSentReleaseMode);
     mSentRange = (double)std::clamp(std::lround(GetParam(kRange)->Value()), 0L, 2L);
-    mSentAttack = kSpeedAttackSec;
     mSentLfRes = GetParam(kLfRes)->Value();
     mSentSlope = EffectiveSlopeDb();
     mSentMode = (int)GetParam(kMode)->Value();
@@ -915,7 +914,6 @@ void ORMAnalyzer::SendSpectrumConfig() {
   const int releaseMode = (int)GetParam(kReleaseMode)->Value();
   const float release = (float)SpeedReleaseSec(speedIdx, releaseMode);
   const float range = CurrentRangeDb();
-  const float attack = (float)kSpeedAttackSec; // 上升时间固定 0.05s (全部速度档一致)
   const float slopeDb = (float)EffectiveSlopeDb(); // 当前模式生效斜率 (档值随模式)
   const int chanTri = (int)GetParam(kChannelMode)->Value();
   const int chanMode = (chanTri == kChanModeLR) ? 0 : 1;
@@ -937,9 +935,8 @@ void ORMAnalyzer::SendSpectrumConfig() {
   else if (mode == kModeRTA)
     SendRTABandFreqs();
 
-  // 声像面板配置 (弹道参数与频谱共用一份; holdSec 由 OnIdle 每 tick 透传)
+  // 声像面板配置 (弹道参数与频谱共用一份)
   SendControlMsgFromDelegate(kCtrlTagScope, StereoFieldControl::kMsgTagSampleRate, sizeof(double), &sr);
-  SendControlMsgFromDelegate(kCtrlTagScope, StereoFieldControl::kMsgTagAttack, sizeof(float), &attack);
   SendControlMsgFromDelegate(kCtrlTagScope, StereoFieldControl::kMsgTagRelease, sizeof(float), &release);
   SendControlMsgFromDelegate(kCtrlTagScope, StereoFieldControl::kMsgTagReleaseMode, sizeof(int), &releaseMode);
   const float scopeFloor = CurrentScopeFloorDb();
@@ -1146,14 +1143,13 @@ void ORMAnalyzer::OnIdle() {
     if (GetParam(kRange)->Value() != (double)rangeIdx)
       SetParamFromEditor(kRange, (double)rangeIdx);
     const double range = (double)rangeIdx;
-    const double attack = kSpeedAttackSec; // 固定 0.05s
     const double lfRes = GetParam(kLfRes)->Value();
     const double slope = EffectiveSlopeDb(); // 斜率档位变化时重发 (冻结中照常: 纯显示参数)
     const int rtaOct = CurrentRtaOctave();
     const double scopeRange = (double)std::clamp(std::lround(GetParam(kScopeRange)->Value()), 0L, 2L);
     if (sr != mSentSampleRate || fftSize != mSentFFTSize || winFFT != mSentWindowFFT || winVQT != mSentWindowVQT ||
         speed != mSentSpeed || releaseMode != mSentReleaseMode || release != mSentRelease ||
-        range != mSentRange || attack != mSentAttack ||
+        range != mSentRange ||
         lfRes != mSentLfRes || slope != mSentSlope || rtaOct != mSentRtaOct ||
         scopeRange != mSentScopeRange) {
       mSpectrum.SetWindowType(winFFT);
@@ -1162,7 +1158,6 @@ void ORMAnalyzer::OnIdle() {
       // Range/斜率纯显示参数不参与计算, 不重启。窗函数按引擎各查各的档位。
       const bool restartReplay =
           frozen && (sr != mSentSampleRate || release != mSentRelease || releaseMode != mSentReleaseMode ||
-                     attack != mSentAttack ||
                      (mode == kModeFFT && winFFT != mSentWindowFFT) || (mode == kModeVQT && winVQT != mSentWindowVQT));
       mSentSampleRate = sr;
       mSentFFTSize = fftSize;
@@ -1172,7 +1167,6 @@ void ORMAnalyzer::OnIdle() {
       mSentReleaseMode = releaseMode;
       mSentRelease = release;
       mSentRange = range;
-      mSentAttack = attack;
       mSentLfRes = lfRes;
       mSentSlope = slope;
       mSentRtaOct = rtaOct;
@@ -1254,9 +1248,6 @@ void ORMAnalyzer::OnIdle() {
     d.overL = mOverL.load(std::memory_order_relaxed);
     d.overR = mOverR.load(std::memory_order_relaxed);
     SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagLevelMeter, sizeof(d), &d);
-    // 声像面板: 峰值保持时长透传 (与电平表 hold 共用开关/档位, 每 tick 随帧下发)
-    const float scopeHoldSec = (float)CurrentHoldSec();
-    SendControlMsgFromDelegate(kCtrlTagScope, StereoFieldControl::kMsgTagHold, sizeof(float), &scopeHoldSec);
   }
 
   // 转发响度计数据 (底部横条; 预设档位与目标值由插件侧算出随帧下发)
@@ -1358,7 +1349,6 @@ void ORMAnalyzer::OnUIClose() {
   mSentRelease = -1.0;
   mSentMode = -1;
   mSentRange = -1.0;
-  mSentAttack = -1.0;
   mSentLfRes = -1.0;
   mSentSlope = -1e9;
   mSentChanMode = -1;

@@ -24,11 +24,9 @@ public:
 
   enum MsgTags {
     kMsgTagSampleRate = 1,
-    kMsgTagAttack,
     kMsgTagRelease,
     kMsgTagReleaseMode,
     kMsgTagRange, // 显示 dB 底限 (float, 负值)
-    kMsgTagHold,  // 峰值保持时长 (s, 0 = 关) —— 矢量制式下保留接口, 不再绘制
     kMsgTagReset, // 清空带状态/相关性窗口 (配置重建/冻结回放前)
   };
 
@@ -48,10 +46,6 @@ public:
       ProcessPacket(d);
     } else if (msgTag == kMsgTagSampleRate) {
       stream.Get(&mSampleRate, 0);
-    } else if (msgTag == kMsgTagAttack) {
-      float v;
-      stream.Get(&v, 0);
-      mAttackSec = std::clamp(v, 0.001f, 0.1f);
     } else if (msgTag == kMsgTagRelease) {
       float v;
       stream.Get(&v, 0);
@@ -64,19 +58,13 @@ public:
       float v;
       stream.Get(&v, 0);
       mFloorDb = std::clamp(v, -120.f, -30.f);
-    } else if (msgTag == kMsgTagHold) {
-      float v;
-      stream.Get(&v, 0);
-      mHoldSec = v; // 保留接口 (无视觉)
     } else if (msgTag == kMsgTagReset) {
       ResetDisplay();
     }
   }
 
-  // hover 十字指针: IGraphics 对悬停控件每次鼠标移动都会回调 OnMouseOver,
-  // 这里实时记录位置并请求重绘; 离开控件时清除。仅显示用途, 不捕获鼠标。
+  // hover 指针: 记录位置并请求重绘 (仅显示, 不捕获鼠标)
   void OnMouseOver(float x, float y, const IMouseMod &mod) override {
-    mMouseIsOver = true;
     if (!mHoverActive || mHoverX != x || mHoverY != y) {
       mHoverX = x;
       mHoverY = y;
@@ -86,7 +74,6 @@ public:
   }
 
   void OnMouseOut() override {
-    mMouseIsOver = false;
     if (mHoverActive) {
       mHoverActive = false;
       SetDirty(false);
@@ -95,17 +82,16 @@ public:
 
   void Draw(IGraphics &g) override {
     g.FillRect(COL_100(), mRECT);
-    const IRECT cv = mRECT;
-    // hover 读数标签矩形先算好 (与刻度避让, 同频谱准线逻辑)
+    // hover 读数标签先算好, 供刻度避让
     IRECT skipRect, labelBox;
-    const bool hov = ComputeHover(g, cv, labelBox);
+    const bool hov = ComputeHover(g, mRECT, labelBox);
     skipRect = hov ? labelBox : IRECT();
-    DrawGridLayer(g, cv);
-    DrawTicks(g, cv, skipRect);
-    DrawVectors(g, cv);
-    DrawGauges(g, cv);
+    DrawGridLayer(g, mRECT);
+    DrawTicks(g, mRECT, skipRect);
+    DrawVectors(g, mRECT);
+    DrawGauges(g, mRECT);
     if (hov)
-      DrawHover(g, cv, labelBox);
+      DrawHover(g, mRECT, labelBox);
   }
 
 private:
@@ -116,24 +102,23 @@ private:
   static constexpr float kFftAttackSec = 0.003f; // 电平攻击 (基本直跳, PAZ Peak 响度观感)
   static constexpr float kAntiWinFrames = 4.f;   // 反相权重窗帧数 (固定短窗, 闪频 ≈ PAZ)
   static constexpr int kImgBins = 64;            // 方位直方图 bin 数 (≈2.8°/bin)
+  static inline const float kImgStep = (float)PI / (float)kImgBins; // 直方图角步进 (PI 非 constexpr, 故用 inline const)
   static constexpr float kImgKernelBins = 1.f;   // 注入核半宽 (bin)
   static constexpr float kImgDecaySec = 0.7f;    // 直方图时间衰减 (s, 射线持留)
   static constexpr float kImgDomeFrac = 0.10f;   // 穹顶半径占 rMax 比例
   static constexpr float kImgAntiPow = 2.f;      // 反相注入权重指数
   static constexpr float kImgWinFrames = 8.f;    // 同相组方位窗帧数 (中心锥宽)
-  static constexpr int kImgBinsMax = 512;        // 直方图 bin 数上限 (mImg 固定尺寸)
   static constexpr double kFftCal = 0.375 * (double)kFftN * (double)kFftN; // 满幅正弦 = 0 dB 的 FFT 标定
 
-  static constexpr float kBaseGap = 76.f;     // 圆心距画布底缘 (基线 → L/R 标 → 仪表行)
-  static constexpr float kRimLabelH = 19.f;   // 弧外角度刻度行高 (扇顶之上留白)
-  static constexpr float kGaugeRowH = 48.f;   // 仪表行高 (读数 18 + 轨道 6 + 刻度 16 + 边距)
+  static constexpr float kBaseGap = 76.f;     // 圆心距画布底缘 (基线下方留白 → 仪表行)
+  static constexpr float kRimLabelH = 19.f;   // 扇形顶部留白
+  static constexpr float kGaugeRowH = 48.f;   // 仪表行高
   static constexpr float kGaugeW = 118.f;     // 单个仪表宽
-  static constexpr float kGaugeGap = 4.f;     // 仪表间距 (与右栏按钮 kBtnGap 一致)
-  static constexpr float kCxN = 0.28f;        // 圆心 x = 画布宽 × 0.28 (内容靠左, 右侧留白)
+  static constexpr float kGaugeGap = 4.f;     // 仪表间距
+  static constexpr float kCxN = 0.28f;        // 圆心 x = 画布宽 × 0.28 (右侧留白)
 
-  // 16 个对数频带的分 bin 表 (含两端; FFT 1024 @48k 时 bin ≈ 46.875 Hz, 逐带
-  // 约 ×1.477 ≈ 0.56 倍频程): 47 Hz..23.9 kHz 对数铺开, 足以分开相差一个
-  // 倍频程的成分 (如 440/880 谐波对, 对齐 PAZ 的分带观感)。
+  // 16 个对数频带的分 bin 表 (FFT 1024 @48k, bin ≈ 46.9 Hz; 逐带 ×1.477 ≈ 0.56 倍频程,
+  // 47 Hz..23.9 kHz, 足以分开相差一个倍频程的成分, 对齐 PAZ 分带观感)。
   static constexpr int kBandBins[kScopeBands][2] = {
       {1, 1},   {2, 2},   {3, 3},   {4, 4},   {5, 7},   {8, 10},   {11, 15},  {16, 22},
       {23, 33}, {34, 49}, {50, 72}, {73, 107}, {108, 158}, {159, 234}, {235, 345}, {346, 510}};
@@ -157,18 +142,15 @@ private:
     FftRadix2(reL.data(), imL.data(), kFftN);
     FftRadix2(reR.data(), imR.data(), kFftN);
 
-    // 分带帧级聚合: E = Σ(|L|²+|R|²), DL = Σ(|R|²−|L|²), LRC = ΣRe(L·conj R);
-    double eB[kScopeBands] = {}, dlB[kScopeBands] = {}, rcB[kScopeBands] = {};
+    // 分带帧级聚合: E = Σ(|L|²+|R|²), DL = Σ(|R|²−|L|²), RC = ΣRe(L·conj R);
+    // 每 bin 按 rck 符号分组: ≥0 同相组 (含静音侧 bin → 硬 pan 有确定方位), <0 反相组
     double eInB[kScopeBands] = {}, dlInB[kScopeBands] = {}, rcInB[kScopeBands] = {};
     double eAntiB[kScopeBands] = {}, dlAntiB[kScopeBands] = {}, rcAntiB[kScopeBands] = {};
     for (int b = 0; b < kScopeBands; ++b) {
       for (int k = kBandBins[b][0]; k <= kBandBins[b][1]; ++k) {
         const double l2 = reL[k] * reL[k] + imL[k] * imL[k];
         const double r2 = reR[k] * reR[k] + imR[k] * imR[k];
-        eB[b] += l2 + r2;
-        dlB[b] += r2 - l2;
         const double rck = reL[k] * reR[k] + imL[k] * imR[k];
-        rcB[b] += rck;
         if (rck >= 0.0) {
           eInB[b] += l2 + r2;
           dlInB[b] += r2 - l2;
@@ -180,8 +162,15 @@ private:
         }
       }
     }
+    // 全带量 = 两组合成 (每 bin 必落一组)
+    double eB[kScopeBands], dlB[kScopeBands], rcB[kScopeBands];
+    for (int b = 0; b < kScopeBands; ++b) {
+      eB[b] = eInB[b] + eAntiB[b];
+      dlB[b] = dlInB[b] + dlAntiB[b];
+      rcB[b] = rcInB[b] + rcAntiB[b];
+    }
 
-    // 相关性/宽度/平衡: kCorrWin hop 滑窗 (全带时域聚合) + 150ms 显示平滑
+    // 相关性/宽度/平衡: kCorrWin hop 滑窗 (全带时域) + 150ms 显示平滑
     double lr = 0.0, l2 = 0.0, r2 = 0.0;
     for (int i = 0; i < kFftN; ++i) {
       const double l = inL[i], r = inR[i];
@@ -212,7 +201,7 @@ private:
       mCorrValid = false;
     }
 
-    // 每带: 电平弹道 + 主射线方位 + 侧翼比例
+    // 每带: 电平弹道 + 连续方位 + 分组窗口更新
     for (int b = 0; b < kScopeBands; ++b) {
       const double e = eB[b];
       const float rawDb = (e > 1e-12) ? orm::FastPwrToDb((float)(e / kFftCal), -120.f) : -120.f;
@@ -232,14 +221,13 @@ private:
     }
 
     const float imgCoef = (float)std::exp(-hopSec / kImgDecaySec);
-    const float imgStep = (float)PI / (float)kImgBins;
     for (int i = 0; i < kImgBins; ++i)
       mImg[i] *= imgCoef;
     auto injectLvl = [&](float th, float db) {
       if (db <= mFloorDb + 0.5f)
         return;
-      const float rNorm = std::clamp((db - mFloorDb) / (0.f - mFloorDb), 0.f, 1.f);
-      const float fc = (th + 0.5f * (float)PI) / imgStep - 0.5f;
+      const float rNorm = RadiusFor(db, 1.f); // 0..1 归一化电平
+      const float fc = (th + 0.5f * (float)PI) / kImgStep - 0.5f;
       const int i0 = std::max(0, (int)std::ceil(fc - kImgKernelBins));
       const int i1 = std::min(kImgBins - 1, (int)std::floor(fc + kImgKernelBins));
       for (int i = i0; i <= i1; ++i) {
@@ -251,19 +239,17 @@ private:
       return std::clamp(0.5f * std::atan2(dl, 2.0f * rc), -0.5f * (float)PI, 0.5f * (float)PI);
     };
     for (int b = 0; b < kScopeBands; ++b) {
-      if (eInB[b] > 1e-12) {
-        const float thIn = groupTh((float)mDlInWin[b], (float)mRcInWin[b]);
-        const float dbIn = orm::FastPwrToDb((float)(eInB[b] / kFftCal), -120.f);
-        injectLvl(thIn, dbIn);
-      }
+      // 同相组: 窗内方位直接注入 (噪声相位被窗口平均掉 → 中心锥; 相干内容方位不受窗影响)
+      if (eInB[b] > 1e-12)
+        injectLvl(groupTh((float)mDlInWin[b], (float)mRcInWin[b]),
+                  orm::FastPwrToDb((float)(eInB[b] / kFftCal), -120.f));
+      // 反相组: 窗内相关越负权重越大 (指数 kImgAntiPow), 仅电平衰减, 方位不变
       if (eB[b] > 1e-12 && mEWin[b] > 1e-12) {
-        const double corrW = mRcWin[b] / (0.5 * mEWin[b]); // 窗内聚合相关
-        const float w = (float)std::pow(std::clamp((float)(-corrW), 0.f, 1.f), kImgAntiPow);
-        if (w > 1e-4f) {
-          const float dbA = orm::FastPwrToDb((float)(eAntiB[b] / kFftCal), -120.f) +
-                            20.f * std::log10(w);
-          injectLvl(groupTh((float)dlAntiB[b], (float)rcAntiB[b]), dbA);
-        }
+        const float w = (float)std::pow(
+            std::clamp((float)(-mRcWin[b] / (0.5 * mEWin[b])), 0.f, 1.f), kImgAntiPow);
+        if (w > 1e-4f)
+          injectLvl(groupTh((float)dlAntiB[b], (float)rcAntiB[b]),
+                    orm::FastPwrToDb((float)(eAntiB[b] / kFftCal), -120.f) + 20.f * std::log10(w));
       }
     }
     SetDirty(false);
@@ -293,8 +279,6 @@ private:
   }
 
   // ── 几何 ──────────────────────────────────────────────────────────────
-  IRECT Canvas() const { return mRECT; }
-
   void FanGeom(const IRECT &cv, float &cx, float &cy, float &rMax) const {
     cx = cv.L + cv.W() * kCxN;
     cy = cv.B - kBaseGap;
@@ -319,8 +303,7 @@ private:
   }
 
   // ── 绘制 ──────────────────────────────────────────────────────────────
-  // 静态极坐标色块场离屏 Layer: 只依赖范围底限与主题三值, 任一变化才重建
-  // (与频谱网格同策略); 刻度文字动态绘制 (供 hover 读数避让), 见 DrawTicks。
+  // 静态色块场离屏层: 底限与主题三值任一变化才重建 (刻度文字动态绘制, 见 DrawTicks)
   void DrawGridLayer(IGraphics &g, const IRECT &cv) {
     const int hue = ThemeHue(), sat = ThemeSatMax(), mode = ThemeMode();
     if (!g.CheckLayer(mGridLayer) || mFloorDb != mGridFloor || hue != mGridHue || sat != mGridSat ||
@@ -336,11 +319,9 @@ private:
     g.DrawLayer(mGridLayer);
   }
 
-  // 极坐标色块场: 12 个 15° 角扇区 × 每 20 dB 一圈环带。
-  // 每格亮度 = 角度维 × dB 维平均 (与频谱 DrawBackground 同常数同函数):
-  //   dB 维: 外圈亮 (245) → 圆心暗 (172), 随 Range 行数变化;
-  //   角度维: 同相区 (|θ|≤45°) 向中心渐亮 (205→235), 两侧翼区压暗一档 (195);
-  //   ±45° 处的亮度台阶 = 反相区分界 (无线条、无颜色标记, 黑白主题成立)。
+  // 色块场: 12 个 15° 扇区 × 每 20 dB 一环; 亮度 = 角度维 × dB 维平均:
+  // dB 维外圈亮 (245) → 圆心暗 (172); 角度维同相区向中心渐亮 (205→235)、翼区压暗 (195);
+  // ±45° 亮度台阶即反相区分界 (无线条/颜色标记, 黑白主题成立)。
   void DrawGridContent(IGraphics &g, const IRECT &cv) {
     float cx, cy, rMax;
     FanGeom(cv, cx, cy, rMax);
@@ -367,9 +348,7 @@ private:
     }
   }
 
-  // 环带扇形填充 (折线逼近弧, 3.75°/步 → 弦高 <0.1px 无锯齿感);
-  // 内缘外扩 0.75px、两侧角向各外扩 ~0.17°, 消除相邻填充的抗锯齿接缝
-  // (与频谱色块 1px 重叠同策略)。
+  // 扇形填充 (折线逼近弧: 内缘外扩 0.75px、角向外扩 ~0.17°, 消除相邻填充的抗锯齿接缝)
   static void FillSector(IGraphics &g, float cx, float cy, float rLo, float rHi, float a0, float a1,
                          const IColor &c) {
     if (rHi - rLo <= 0.5f)
@@ -400,10 +379,8 @@ private:
     g.PathFill(IPattern(c));
   }
 
-  // 场内文字标注 (动态绘制, 供 hover 读数避让; 无任何刻度线):
-  //   L/R 通道标在 ±45° 射线内侧 (弧缘内 14px, 通道色);
-  //   Anti Phase 在 ±90° 基线内侧两端 (反相区);
-  //   dB 刻度沿中轴内侧竖排 (0/−20/−40/… 随 Range, 贴环下缘中轴右侧)。
+  // 场内标注 (动态绘制, 供 hover 读数避让): L/R 在 ±45° 射线内侧, Anti Phase 在 ±90°
+  // 基线内侧两端, dB 刻度沿中轴竖排 (0/−20/−40/… 随 Range)。
   void DrawTicks(IGraphics &g, const IRECT &cv, const IRECT &skipRect) {
     float cx, cy, rMax;
     FanGeom(cv, cx, cy, rMax);
@@ -414,7 +391,7 @@ private:
       g.DrawText(it, txt, box);
     };
 
-    // L / R 在 ±45° 射线内侧 (弧缘内 14px, 通道色, 与图例色块呼应)
+    // L / R (弧缘内 14px, 通道色)
     IColor cL, cR, cM;
     GetChannelColors(cL, cR, cM);
     const float d45 = (rMax - 14.f) / (float)std::sqrt(2.f);
@@ -423,13 +400,13 @@ private:
     draw(IText(14, cR, kFontSemiBold, EAlign::Center, EVAlign::Middle), "R",
          IRECT(cx + d45 - 18.f, cy - d45 - 9.f, cx + d45 + 18.f, cy - d45 + 9.f));
 
-    // Anti Phase 在 ±90° 基线内侧两端 (反相区)
+    // Anti Phase (两端对称绘制)
     const IText apT(14, COL_700(), kFontSemiBold, EAlign::Center, EVAlign::Middle);
     const float ax = rMax - 50.f;
     draw(apT, "Anti Phase", IRECT(cx - ax - 36.f, cy - 19.f, cx - ax + 36.f, cy - 5.f));
     draw(apT, "Anti Phase", IRECT(cx + ax - 36.f, cy - 19.f, cx + ax + 36.f, cy - 5.f));
 
-    // dB 刻度 (沿中轴内侧, 标在环位下方; 底限环 r=0 不标)
+    // dB 刻度 (沿中轴内侧; 底限环 r=0 不标)
     const IText dbT(14, COL_700(), kFontRegular, EAlign::Near, EVAlign::Top);
     const int floorInt = (int)mFloorDb;
     for (int db = 0; db >= floorInt; db -= 20) {
@@ -446,9 +423,8 @@ private:
     }
   }
 
-  // 方位直方图轮廓: 每角度 bin 一个采样点, 连成单一闭合路径填充 —— 没有楔形
-  // 四边形也没有轮廓折线, 跨缝连线从结构上不可能出现。针尖是点, 宽核把近距针
-  // 融并成山丘; 底部穹顶是分离针的底座。填充仍为锚定峰值半径的径向渐变。
+  // 方位直方图: 每角度 bin 一个采样点连成单一闭合路径 —— 无楔形/折线, 结构上杜绝
+  // 跨缝连线; 穹顶为分离针底座; 填充为锚定峰值半径的径向渐变。
   void DrawVectors(IGraphics &g, const IRECT &cv) {
     float cx, cy, rMax;
     FanGeom(cv, cx, cy, rMax);
@@ -464,8 +440,7 @@ private:
     const float rDome = std::max(3.f, rMax * kImgDomeFrac);
     const float rPeak = std::max(maxImg * rMax, rDome + 1.f);
 
-    // 径向渐变 (频谱 DrawFill 同源): 停靠点铺在 [穹顶, 峰值半径] 区间,
-    //   alpha = minA + (255-minA)·exp(-3.5·(1-s)), 穹顶处最透, 峰值半径处实色。
+    // 径向渐变 (同频谱公式): alpha = 15 + 240·exp(-3.5(1-s)), 穹顶最透, 峰值半径实色
     IPattern fill = IPattern::CreateRadialGradient(cx, cy, rPeak);
     {
       constexpr int kN = 8;
@@ -478,10 +453,9 @@ private:
       }
     }
 
-    const float step = (float)PI / (float)kImgBins;
     g.PathClear();
     for (int i = 0; i < kImgBins; ++i) {
-      const float th = -0.5f * (float)PI + (i + 0.5f) * step;
+      const float th = -0.5f * (float)PI + (i + 0.5f) * kImgStep;
       const float r = std::max(mImg[i] * rMax, rDome);
       const float x = cx + std::sin(th) * r;
       const float y = cy - std::cos(th) * r;
@@ -585,11 +559,6 @@ private:
   }
 
   // ── hover 径向指针 + 复合读数 ────────────────────────────────────────────
-  struct HoverInfo {
-    bool active = false;
-    float th = 0.f; // 指针方位角 (弧度, −π/2..+π/2, 0 = 正上)
-  };
-
   bool ComputeHover(IGraphics &g, const IRECT &cv, IRECT &labelBox) {
     labelBox = IRECT();
     if (!mHoverActive)
@@ -601,7 +570,7 @@ private:
       return false; // 光标不在半扇内
     mHoverTh = std::atan2(dx, std::max(dyUp, 0.001f));
 
-    // 最近频带 (按绘制方位角; 仅统计阈值以上的带)
+    // 拼读数: 最近频带 (仅阈值以上, 容差 0.14 rad ≈ 8°)
     float maxDb = mFloorDb;
     for (int b = 0; b < kScopeBands; ++b)
       maxDb = std::max(maxDb, mBand[b].db);
@@ -611,59 +580,7 @@ private:
     for (int b = 0; b < kScopeBands; ++b) {
       if (mBand[b].db < thr)
         continue;
-      const float th = mBand[b].ang;
-      const float d = std::fabs(th - mHoverTh);
-      if (d < best) {
-        best = d;
-        bi = b;
-      }
-    }
-
-    char buf[64];
-    if (bi >= 0 && best < 0.14f) { // 命中容差 ~8°
-      const float hz = (float)(0.5 * (kBandBins[bi][0] + kBandBins[bi][1])) * mSampleRate / kFftN;
-      char fb[16];
-      if (hz < 1000.f)
-        std::snprintf(fb, sizeof(fb), "%.0f Hz", hz);
-      else
-        std::snprintf(fb, sizeof(fb), "%.2f kHz", hz / 1000.f);
-      std::snprintf(buf, sizeof(buf), "%.1f°  %s  %.1f dB", mHoverTh * 180.f / (float)PI, fb,
-                    mBand[bi].db);
-    } else {
-      std::snprintf(buf, sizeof(buf), "%.1f°", mHoverTh * 180.f / (float)PI);
-    }
-
-    // 标签放弧缘外侧沿指针方向, 超出画布左右缘时平移回画布内
-    const IText t(14, COL_700(), kFontRegular, EAlign::Center, EVAlign::Bottom);
-    const float px = cx + (rMax + 18.f) * std::sin(mHoverTh);
-    const float py = cy - (rMax + 18.f) * std::cos(mHoverTh);
-    IRECT box(px - 60.f, py - 17.f, px + 60.f, py - 1.f);
-    g.MeasureText(t, buf, box); // box 缩为文字实际宽度 (保持中心)
-    const float w = box.W();
-    const float cxL = std::clamp(px - w * 0.5f, cv.L + 2.f, cv.R - 2.f - w);
-    labelBox = IRECT(cxL, py - 17.f, cxL + w, py - 1.f);
-    return true;
-  }
-
-  void DrawHover(IGraphics &g, const IRECT &cv, const IRECT &labelBox) {
-    float cx, cy, rMax;
-    FanGeom(cv, cx, cy, rMax);
-    g.DrawLine(COL_700(), cx, cy, cx + std::sin(mHoverTh) * rMax, cy - std::cos(mHoverTh) * rMax,
-               nullptr, 1.f);
-    // 复合读数文字 (框已算好)
-    const IText t(14, COL_700(), kFontRegular, EAlign::Near, EVAlign::Bottom);
-    char buf[64];
-    float maxDb = mFloorDb;
-    for (int b = 0; b < kScopeBands; ++b)
-      maxDb = std::max(maxDb, mBand[b].db);
-    const float thr = std::max(maxDb - 35.f, mFloorDb + 0.5f);
-    float best = 1e9f;
-    int bi = -1;
-    for (int b = 0; b < kScopeBands; ++b) {
-      if (mBand[b].db < thr)
-        continue;
-      const float th = mBand[b].ang;
-      const float d = std::fabs(th - mHoverTh);
+      const float d = std::fabs(mBand[b].ang - mHoverTh);
       if (d < best) {
         best = d;
         bi = b;
@@ -676,12 +593,30 @@ private:
         std::snprintf(fb, sizeof(fb), "%.0f Hz", hz);
       else
         std::snprintf(fb, sizeof(fb), "%.2f kHz", hz / 1000.f);
-      std::snprintf(buf, sizeof(buf), "%.1f°  %s  %.1f dB", mHoverTh * 180.f / (float)PI, fb,
-                    mBand[bi].db);
+      std::snprintf(mHoverBuf, sizeof(mHoverBuf), "%.1f°  %s  %.1f dB",
+                    mHoverTh * 180.f / (float)PI, fb, mBand[bi].db);
     } else {
-      std::snprintf(buf, sizeof(buf), "%.1f°", mHoverTh * 180.f / (float)PI);
+      std::snprintf(mHoverBuf, sizeof(mHoverBuf), "%.1f°", mHoverTh * 180.f / (float)PI);
     }
-    g.DrawText(t, buf, labelBox);
+
+    // 标签沿指针方向放弧缘外侧, 超出画布左右缘时平移回画布内
+    const IText t(14, COL_700(), kFontRegular, EAlign::Center, EVAlign::Bottom);
+    const float px = cx + (rMax + 18.f) * std::sin(mHoverTh);
+    const float py = cy - (rMax + 18.f) * std::cos(mHoverTh);
+    IRECT box(px - 60.f, py - 17.f, px + 60.f, py - 1.f);
+    g.MeasureText(t, mHoverBuf, box); // box 缩为文字实际宽度 (保持中心)
+    const float w = box.W();
+    const float cxL = std::clamp(px - w * 0.5f, cv.L + 2.f, cv.R - 2.f - w);
+    labelBox = IRECT(cxL, py - 17.f, cxL + w, py - 1.f);
+    return true;
+  }
+
+  void DrawHover(IGraphics &g, const IRECT &cv, const IRECT &labelBox) {
+    float cx, cy, rMax;
+    FanGeom(cv, cx, cy, rMax);
+    g.DrawLine(COL_700(), cx, cy, cx + std::sin(mHoverTh) * rMax, cy - std::cos(mHoverTh) * rMax,
+               nullptr, 1.f);
+    g.DrawText(IText(14, COL_700(), kFontRegular, EAlign::Near, EVAlign::Bottom), mHoverBuf, labelBox);
   }
 
   // 1024 点基 2 FFT (迭代, bit 反转 + 蝶形), 正变换无缩放; UI 线程每 hop 一次
@@ -724,29 +659,27 @@ private:
     float ang = 0.f;    // 连续方位 (0.5·atan2 全带聚合, 弧度; hover 读数用)
   };
   std::array<Band, kScopeBands> mBand{};
-  std::array<float, kImgBinsMax> mImg{}; // 方位直方图 (0..1 归一化电平, max 包络 + 每 hop 衰减)
+  std::array<float, kImgBins> mImg{}; // 方位直方图 (0..1 归一化电平, max 包络 + 每 hop 衰减)
 
   struct HopSum {
     double lr, l2, r2;
   };
-  std::array<HopSum, kCorrWin> mCorrRing{}; // 相关性滑窗 (每 hop 标量和)
+  std::array<HopSum, kCorrWin> mCorrRing{};       // 相关性滑窗 (每 hop 标量和)
   int mCorrHead = 0;
   double mSumLR = 0.0, mSumL2 = 0.0, mSumR2 = 0.0; // 滑窗内累计
   bool mCorrValid = false;                         // 窗内有能量 (静音显示 "—")
   float mCorrDisp = 0.f, mWidthDisp = 0.f, mBalDisp = 0.f; // 显示平滑值
 
   double mSampleRate = 48000.0;
-  float mAttackSec = 0.05f;          // 接收保留 (电平攻击固定 3ms, 此值仅存档)
-  float mReleaseSec = 0.2f;          // 释放时间常数 (LOG/LIN 档位, 与频谱同源)
-  int mReleaseMode = 0;              // 0=LOG 对数域, 1=LIN 匀速
-  float mFloorDb = -80.f;            // 半径 dB 底限 (外缘 = 0 dB)
-  float mHoldSec = 2.f;              // 峰值保持时长 (s, 接口保留, 矢量制式不绘制)
-  std::array<double, kScopeBands> mRcWin{};   // 反相权重窗: 聚合相关/能量单极点
-  std::array<double, kScopeBands> mEWin{};    // (kAntiWinFrames 帧)
-  std::array<double, kScopeBands> mDlInWin{}; // 同相组方位窗: 组聚合单极点
-  std::array<double, kScopeBands> mRcInWin{}; // (kImgWinFrames 帧)
+  float mReleaseSec = 0.2f;      // 释放时间常数 (LOG/LIN 档位, 与频谱同源)
+  int mReleaseMode = 0;          // 0=LOG 对数域, 1=LIN 匀速
+  float mFloorDb = -80.f;        // 半径 dB 底限 (外缘 = 0 dB)
 
-  // hover 十字指针 (OnMouseOver/OnMouseOut 维护)
+  std::array<double, kScopeBands> mRcWin{}, mEWin{};      // 反相权重窗: 聚合相关/能量单极点 (kAntiWinFrames 帧)
+  std::array<double, kScopeBands> mDlInWin{}, mRcInWin{}; // 同相组方位窗: 组聚合单极点 (kImgWinFrames 帧)
+  char mHoverBuf[64] = "";       // hover 读数串 (ComputeHover 生成)
+
+  // hover 指针 (OnMouseOver/OnMouseOut 维护)
   bool mHoverActive = false;
   float mHoverX = 0.f, mHoverY = 0.f;
   float mHoverTh = 0.f;

@@ -32,7 +32,6 @@ public:
     kMsgTagRelease,
     kMsgTagReleaseMode, // 释放回落模式 (0: 对数域单极点, 1: 匀速 dB 速率)
     kMsgTagRange,
-    kMsgTagAttack,
     kMsgTagSlope,       // 频谱斜率 (dB/oct, 当前模式生效值; FFT 与逐 band 引擎档值不同)
     kMsgTagMode,
     kMsgTagVQTBands,
@@ -157,10 +156,6 @@ public:
       float rangeDb;
       stream.Get(&rangeDb, 0);
       mBottomDb = -std::clamp(rangeDb, 80.f, 120.f);
-    } else if (msgTag == kMsgTagAttack) {
-      float attackSec;
-      stream.Get(&attackSec, 0);
-      mAttackSec = std::clamp(attackSec, 0.001f, 0.1f);
     } else if (msgTag == kMsgTagSlope) {
       float slopeDb;
       stream.Get(&slopeDb, 0);
@@ -292,10 +287,8 @@ public:
     }
   }
 
-  // hover 十字准线: IGraphics 对悬停控件每次鼠标移动都会回调 OnMouseOver (带新坐标),
-  // 这里实时记录位置并请求重绘; 离开控件时清除。仅显示用途, 不捕获鼠标。
+  // hover 十字准线: 记录位置并请求重绘; 离开控件时清除 (仅显示, 不捕获鼠标)
   void OnMouseOver(float x, float y, const IMouseMod &mod) override {
-    mMouseIsOver = true;
     if (!mHoverActive || mHoverX != x || mHoverY != y) {
       mHoverX = x;
       mHoverY = y;
@@ -305,7 +298,6 @@ public:
   }
 
   void OnMouseOut() override {
-    mMouseIsOver = false;
     if (mHoverActive) {
       mHoverActive = false;
       SetDirty(false);
