@@ -1,7 +1,6 @@
 #pragma once
 
-// 扁平按钮族: FlatActionButton (瞬时按钮) / InvertToggleControl (反色开关) / FlatToggleControl。
-// MakeMomentary() 为瞬时按钮封装: 点击回调后立即复位值。
+// 扁平按钮族: 瞬时按钮 / 反色开关 / 普通开关
 
 #include "IControls.h"
 #include "../Theme.h"

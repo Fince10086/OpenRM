@@ -6,10 +6,7 @@
 #include <fstream>
 #include <string>
 
-// 插件全局 UI 偏好持久化
-// 文件位置:
-//   macOS: ~/Library/Application Support/OpenRM/<Plugin>.settings
-//   Windows: %APPDATA%/OpenRM/<Plugin>.settings
+// 插件全局 UI 偏好持久化 (~/Library/Application Support/OpenRM/ 或 %APPDATA%/OpenRM/)
 
 constexpr const char *kSettingsFileName = "ORMBandPass.settings";
 

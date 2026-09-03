@@ -214,8 +214,7 @@ private:
   IRECT CutValueRect(int id) const { return mCutValueRect[id == kCornerHigh]; }
 
   void GetCutValue(int id, WDL_String &out, bool withUnit) const {
-    // 注意: 这里显示的是未调制 (base) 的低切/高切值; FilterNodePad 会叠加随机调制量显示实时值,
-    // 两者口径不同是有意为之 —— 本滑杆表示"目标参数", pad 表示"当前实际值"。
+    // 显示未调制的目标值; FilterNodePad 显示叠加随机调制后的实时值
     const IParam *pf = GetParam(0);
     const double c = pf->FromNormalized(GetValue(0));
     const double bw = GetParam(1)->FromNormalized(GetValue(1));

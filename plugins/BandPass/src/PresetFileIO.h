@@ -8,8 +8,7 @@
 #include <utility>
 #include <vector>
 
-// ORM 系列预设统一 .orm 后缀; 文件头 magic 标识插件类型,
-// 不同插件 magic 不同 (BandPass = "bandpass"), 防止预设跨插件误载。
+// .orm 预设文件; magic 头标识插件类型, 防止跨插件误载
 constexpr const char *kPresetMagic = "bandpass";
 
 struct PresetFileData {
@@ -49,7 +48,6 @@ inline bool ReadPresetFile(const std::string &path, PresetFileData &out, std::st
   }
   const std::string content((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
 
-  // 校验识别头, 拒绝其他插件/非 ORM 预设
   if (content.rfind(kPresetMagic, 0) != 0) {
     err = std::string("Not an ORM BandPass preset file (missing '") + kPresetMagic + "' header)";
     return false;

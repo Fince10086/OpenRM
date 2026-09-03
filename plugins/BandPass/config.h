@@ -1,4 +1,4 @@
-#define PLUG_NAME "ORM BandPass"  // 显示名 (DAW 列表 / app 标题), 允许空格
+#define PLUG_NAME "ORM BandPass"
 #define PLUG_MFR "OpenRM"
 #define PLUG_VERSION_HEX 0x00000400
 #define PLUG_VERSION_STR "0.5.1"
@@ -36,8 +36,7 @@
 #define AUV2_VIEW_CLASS ORMBandPass_View
 #define AUV2_VIEW_CLASS_STR "ORMBandPass_View"
 
-// 注: AAX / CLAP 目标未构建, 对应的 AAX_* / CLAP_* 配置已移除 (iPlug2 仅在对应
-// 格式编译时才要求这些宏, CLAP 有 #ifndef 兜底)。若将来启用, 参照 iPlug2 示例补回。
+// AAX / CLAP 目标未构建, 对应宏已移除; 若将来启用参照 iPlug2 示例补回。
 
 #define VST3_SUBCATEGORY "Fx"
 

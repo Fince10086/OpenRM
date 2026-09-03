@@ -66,7 +66,6 @@ private:
   std::array<sample, kMaxBlock> mWetR{};
   std::array<sample, kMaxBlock> mMonoIn{};
 
-  // 频谱配置去重: 仅当采样率/FFT 尺寸变化时才向 UI 控件重发 (OnIdle 节流)
   double mSentSampleRate = 0.0;
   int mSentFFTSize = 0;
 

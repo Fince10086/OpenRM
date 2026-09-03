@@ -1,8 +1,6 @@
 #pragma once
 
-// 参数枚举与全局常量。
-// 独立成头的原因: UI 控件 (controls/*) 与插件本体 (BandPass.h) 都要引用 EParams,
-// 若留在 BandPass.h 会导致控件头反向依赖插件头; 这里只依赖 <array>, 双方安全包含。
+// 参数枚举与全局常量 (独立成头避免控件与插件本体循环依赖)
 
 #include <array>
 
@@ -47,7 +45,7 @@ enum EParams {
 using ParamSnapshot = std::array<double, kNumParams>;
 
 constexpr int kNumPresets = 24;
-constexpr int kNumQuick = 8; // 底部快速槽数量（= 渐变滑杆刻度数）
+constexpr int kNumQuick = 8;
 
 constexpr int kSpectrumFFTSize = 4096;
 constexpr int kSpectrumOverlap = 4;

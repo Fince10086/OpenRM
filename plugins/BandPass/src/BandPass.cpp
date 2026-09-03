@@ -65,7 +65,6 @@ static double BwMultToOct(double m) {
 }
 
 ORMBandPass::ORMBandPass(const InstanceInfo &info) : Plugin(info, MakeConfig(kNumParams, 1)) {
-  // 读取全局 UI 偏好 (语言/主题), 使界面首次渲染即用用户设置
   {
     SettingsData s;
     if (LoadSettings(s)) {
@@ -149,7 +148,7 @@ ORMBandPass::ORMBandPass(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     s[kBwR] = std::sqrt(highR / lowR);
   };
 
-  // 出厂预设 0..13: 低切/高切 (L, R) 数据表 (14..23 保持构造时的默认参数)
+  // 出厂预设 0..13 (14..23 保持默认)
   static const struct {
     double loL, hiL, loR, hiR;
   } kFactoryBands[] = {
@@ -209,7 +208,7 @@ ORMBandPass::ORMBandPass(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
       if ((sysFontOk = loadFontFile(pGraphics, kFontSystem, p)))
         break;
 #else
-    // Windows: 系统字体 fallback 链, 必须落在含完整 CJK 的字体上。
+    // Windows 字体 fallback: 优先含完整 CJK 的字体
     sysFontOk = pGraphics->LoadFont(kFontSystem, "Microsoft YaHei", ETextStyle::Normal);
     if (!sysFontOk)
       sysFontOk = pGraphics->LoadFont(kFontSystem, "Microsoft YaHei UI", ETextStyle::Normal);
@@ -217,10 +216,10 @@ ORMBandPass::ORMBandPass(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
       sysFontOk = pGraphics->LoadFont(kFontSystem, "Segoe UI", ETextStyle::Normal);
     if (!sysFontOk) {
       static const char *kSysFontFiles[] = {
-          "C:\\Windows\\Fonts\\msyh.ttc",   // 微软雅黑 (Vista+, TTC 集合)
+          "C:\\Windows\\Fonts\\msyh.ttc",
           "C:\\Windows\\Fonts\\msyh.ttf",
-          "C:\\Windows\\Fonts\\Deng.ttf",   // 等线 (Win8+, TTF)
-          "C:\\Windows\\Fonts\\Nsimsun.ttf", // 新宋体 (TTF)
+          "C:\\Windows\\Fonts\\Deng.ttf",
+          "C:\\Windows\\Fonts\\Nsimsun.ttf",
       };
       for (const char *p : kSysFontFiles)
         if ((sysFontOk = loadFontFile(pGraphics, kFontSystem, p)))
@@ -249,16 +248,15 @@ ORMBandPass::ORMBandPass(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     constexpr float kBtnH = 30.f;
     constexpr float kPanelR = kCol2X + kBtnW;
 
-    // 预设槽与渐变滑杆布局（同一组槽位的几何唯一来源）
-    constexpr float kSlotW = 39.f;     // 槽位宽
-    constexpr float kGridSlotH = 32.f; // 4x4 网格槽位高
+    constexpr float kSlotW = 39.f;
+    constexpr float kGridSlotH = 32.f;
     constexpr float kGridX = kCol1X;
     constexpr float kGridY = 56.f;
-    constexpr float kBottomSlotH = 30.f; // 底部快速槽高
+    constexpr float kBottomSlotH = 30.f;
     constexpr float kBottomSlotsY = 552.f;
-    constexpr float kBottomTick0 = 39.5f; // 底部槽中心刻度起点（历史布局值, 与渐变轨道端点略有偏移, 保持原样）
+    constexpr float kBottomTick0 = 39.5f;
     constexpr float kBottomTickSpan = 609.f;
-    constexpr float kFadeTrackL = 31.5f; // 渐变滑杆轨道
+    constexpr float kFadeTrackL = 31.5f;
     constexpr float kFadeTrackR = 656.5f;
     constexpr float kFadeY = 592.f;
     constexpr float kFadeH = 24.f;
@@ -605,7 +603,6 @@ ORMBandPass::ORMBandPass(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
 
 #if IPLUG_DSP
 void ORMBandPass::ProcessBlock(sample **inputs, sample **outputs, int nFrames) {
-  // 宿主块尺寸可能超过 kMaxBlock（定长缓冲上限），统一在此钳制，避免后续 memcpy / 湿声缓冲越界。
   nFrames = std::min(nFrames, kMaxBlock);
 
   orm::BandPassCore::Params p;
@@ -748,8 +745,7 @@ void ORMBandPass::PublishParamsToCore() {
 
 void ORMBandPass::SetParamFromEditor(int idx, double value) {
   GetParam(idx)->Set(value);
-  // 渐变插值期间每 tick 应用全部参数: 逐参数通知宿主过重 (42 次/帧)。
-  // 渐变结束的最终 ApplySnapshot 走正常路径, 会把终值通知给宿主。
+  // 渐变插值期间不逐参数通知宿主 (42 次/帧过重), 终值由 ApplySnapshot 通知
   if (!mInFadeApply)
     InformHostOfParamChange(idx, GetParam(idx)->GetNormalized());
   PublishParamsToCore();
@@ -1041,7 +1037,7 @@ void ORMBandPass::OnIdle() {
   mSpectrumL.TransmitData(*this);
   mSpectrumR.TransmitData(*this);
 
-  // 仅在采样率/FFT 尺寸变化时重发 (如 UI 在 OnReset 之后才打开的场景)
+  // 采样率/FFT 尺寸变化时重发 (如 UI 在 OnReset 后才打开)
   const double sr = GetSampleRate();
   if (sr != mSentSampleRate || kSpectrumFFTSize != mSentFFTSize) {
     mSentSampleRate = sr;
