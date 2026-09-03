@@ -32,9 +32,7 @@
 #include <ctime>
 #endif
 
-// 线程 CPU 时间 (纳秒): 只累计本线程实际执行时间, 排除被抢占/调度延迟。
-// CPU 占用测量用它替代墙钟, 避免系统瞬时负载 (其他进程抢占) 导致读数虚高。
-// 非 mac/win/linux 平台回退墙钟 (等效旧行为)。
+// 线程 CPU 时间（纳秒）：只计实际执行时间，排除被抢占/调度延迟，避免系统负载导致读数虚高
 static uint64_t ThreadCpuNs() {
 #if defined(OS_MAC)
   thread_basic_info_data_t tbi;
@@ -63,11 +61,10 @@ static uint64_t ThreadCpuNs() {
 #endif
 }
 
-// 手势撤销的时间窗: 两次 UI 改动间隔超过该值时, 下一次改动前推一次撤销快照
+// 手势撤销时间窗：两次 UI 改动间隔超过该值时，下一次改动前推一次撤销快照
 static constexpr double kGestureGapSec = 0.4;
 
-// FFT 档位 overlap 规则: hop 恒 1024 (2048/2, 4096/4, 8192/8), 与其余引擎 kHop 一致 ——
-// 四引擎帧进给同格, pad 平滑时间常数跨档位同源, 冻结回放帧格对齐无需按档位分支
+// hop 恒 1024，四引擎帧进给同格，冻结回放帧格对齐无需按档位分支
 static inline int FFTOverlapForSize(int fftSize) {
   return std::max(1, fftSize / 1024);
 }
@@ -100,15 +97,14 @@ int orm::DetectSystemLanguage() {
 #endif
 }
 
-// 速度档 × 释放模式 → 释放时间常数 (s): LOG 0.2~4s (Pro-Q 五档实测),
-// LIN = LOG×2 (0.5~9.6s, 匀速回落按 2τ 跨一屏, 体感与对数档位对齐)
+// 速度档 × 释放模式 -> 释放时间常数（s）：LOG 0.2~4s，LIN = LOG×2
 static double SpeedReleaseSec(int speedIdx, int releaseMode) {
   const int s = std::clamp(speedIdx, 0, kNumSpeedOptions - 1);
   return (releaseMode == 1) ? kSpeedReleaseLin[s] : kSpeedReleaseLog[s];
 }
 
 ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNumParams, 1)) {
-  // 读取全局 UI 偏好设置 (语言与主题)
+  // 读取全局 UI 偏好
   SettingsData s;
   {
     if (LoadSettings(s)) {
@@ -128,32 +124,31 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
 #endif
     }
   }
-  // 初始化参数（默认值、范围与步长）
-  GetParam(kReleaseMode)->InitInt("ReleaseMode", 0, 0, 1, ""); // 释放回落模式: 0=对数域单极点, 1=匀速 dB 速率
-  GetParam(kSpeed)->InitInt("Speed", kSpeedMAX, 0, kNumSpeedOptions - 1, ""); // 响应速度预设, 默认 MAX (0.2s, 保持原默认手感)
-  GetParam(kRange)->InitInt("Range", 0, 0, 2, ""); // 档位索引: 0=80, 1=100, 2=120 (刻度底部 dB), 默认 80
-  GetParam(kRes)->InitInt("Res", 1, 0, kNumResOptions - 1, ""); // 默认 MID (4096)
-  GetParam(kLfRes)->InitInt("LfRes", 2, 0, kNumPbtLfResOptions - 1, ""); // 默认高档 10Hz (索引 2)
+  // 初始化参数
+  GetParam(kReleaseMode)->InitInt("ReleaseMode", 0, 0, 1, "");
+  GetParam(kSpeed)->InitInt("Speed", kSpeedMAX, 0, kNumSpeedOptions - 1, "");
+  GetParam(kRange)->InitInt("Range", 0, 0, 2, "");
+  GetParam(kRes)->InitInt("Res", 1, 0, kNumResOptions - 1, "");
+  GetParam(kLfRes)->InitInt("LfRes", 2, 0, kNumPbtLfResOptions - 1, "");
   GetParam(kMode)->InitInt("Mode", kModeFFT, 0, kNumModes - 1, "");
   GetParam(kChannelMode)->InitInt("ChanMode", kChanModePWR, 0, kNumChanModes - 1, "");
   GetParam(kLevelMode)->InitInt("LevelMode", kLevelModeDBTP, 0, kNumLevelModes - 1, "");
-  GetParam(kLevelHold)->InitInt("LevelHold", 1, 0, kNumHoldTimeOptions - 1, ""); // 档位: 0=0.5s 1=2s 2=∞
-  GetParam(kLevelHoldOn)->InitBool("LevelHoldOn", false); // 默认关闭; 用户开关状态持久化于全局设置文件
+  GetParam(kLevelHold)->InitInt("LevelHold", 1, 0, kNumHoldTimeOptions - 1, "");
+  GetParam(kLevelHoldOn)->InitBool("LevelHoldOn", false);
   if (s.holdOn >= 0)
-    GetParam(kLevelHoldOn)->Set(s.holdOn > 0 ? 1.0 : 0.0); // 恢复用户上次的保持开关状态
-  GetParam(kFreeze)->InitBool("Freeze", false); // 0=实时, 1=FREEZE 定格
-  GetParam(kVQTGamma)->InitInt("VQTGamma", 2, 0, kNumVQTGammaOptions - 1, ""); // VQT 低频带宽下限 γ (低/中/高 = 20/10/5 Hz, 越小越精细, 默认高档 5Hz)
-  // 频谱斜率档位 (各引擎独立保存; 默认档 1: STFT = 3 dB/oct, 逐 band 引擎 = 0 dB/oct)
+    GetParam(kLevelHoldOn)->Set(s.holdOn > 0 ? 1.0 : 0.0);
+  GetParam(kFreeze)->InitBool("Freeze", false);
+  GetParam(kVQTGamma)->InitInt("VQTGamma", 2, 0, kNumVQTGammaOptions - 1, "");
   GetParam(kSlopeFFT)->InitInt("SlopeFFT", 1, 0, kNumSlopeOptions - 1, "");
   GetParam(kSlopeVQT)->InitInt("SlopeVQT", 1, 0, kNumSlopeOptions - 1, "");
   GetParam(kSlopePBT)->InitInt("SlopePBT", 1, 0, kNumSlopeOptions - 1, "");
   GetParam(kSlopeRTA)->InitInt("SlopeRTA", 1, 0, kNumSlopeOptions - 1, "");
-  // 窗函数档位 STFT (默认 Hann/锐利) 与 VQT (默认 纯净/BH5) 各自独立 (kFFTWindow / kWindowVQT)
+  // STFT 与 VQT 窗函数档位各自独立
   GetParam(kFFTWindow)->InitInt("WindowFFT", kFFTWindowHann, 0, kNumFFTWindows - 1, "");
   GetParam(kWindowVQT)->InitInt("WindowVQT", kFFTWindowClean, 0, kNumFFTWindows - 1, "");
-  GetParam(kRtaOctave)->InitInt("RtaOctave", 0, 0, kNumRtaOctaveOptions - 1, ""); // 默认 1/6 Oct (索引 0; 档位: 1/6, 1/12, 1/24)
-  GetParam(kLoudPreset)->InitInt("LoudPreset", 1, 0, kNumLoudPresets - 1, ""); // 响度目标预设, 默认 -14 (索引 1)
-  GetParam(kLoudScale)->InitInt("LoudScale", 0, 0, kNumLoudScaleOptions - 1, ""); // 响度条刻度窗偏移, 默认 +9
+  GetParam(kRtaOctave)->InitInt("RtaOctave", 0, 0, kNumRtaOctaveOptions - 1, "");
+  GetParam(kLoudPreset)->InitInt("LoudPreset", 1, 0, kNumLoudPresets - 1, "");
+  GetParam(kLoudScale)->InitInt("LoudScale", 0, 0, kNumLoudScaleOptions - 1, "");
   mDefaultSnapshot = Snapshot();
   mStableSnapshot = Snapshot();
 
@@ -196,7 +191,7 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
       if ((sysFontOk = loadFontFile(pGraphics, kFontSystem, p)))
         break;
 #else
-    // Windows: 系统字体 fallback 链, 必须落在含完整 CJK 的字体上。
+    // Windows 系统字体 fallback 链，需含完整 CJK
     sysFontOk = pGraphics->LoadFont(kFontSystem, "Microsoft YaHei", ETextStyle::Normal);
     if (!sysFontOk)
       sysFontOk = pGraphics->LoadFont(kFontSystem, "Microsoft YaHei UI", ETextStyle::Normal);
@@ -204,10 +199,10 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
       sysFontOk = pGraphics->LoadFont(kFontSystem, "Segoe UI", ETextStyle::Normal);
     if (!sysFontOk) {
       static const char *kSysFontFiles[] = {
-          "C:\\Windows\\Fonts\\msyh.ttc",    // 微软雅黑 (Vista+, TTC 集合)
+          "C:\\Windows\\Fonts\\msyh.ttc",
           "C:\\Windows\\Fonts\\msyh.ttf",
-          "C:\\Windows\\Fonts\\Deng.ttf",    // 等线 (Win8+, TTF)
-          "C:\\Windows\\Fonts\\Nsimsun.ttf", // 新宋体 (TTF)
+          "C:\\Windows\\Fonts\\Deng.ttf",
+          "C:\\Windows\\Fonts\\Nsimsun.ttf",
       };
       for (const char *p : kSysFontFiles)
         if ((sysFontOk = loadFontFile(pGraphics, kFontSystem, p)))
@@ -219,7 +214,7 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
 
     const IVStyle style = MakeORMStyle();
     const IVStyle btnStyle = MakeButtonStyle();
-    IVStyle toggleStyle = btnStyle; // 反色开关 (HOLD): 隐藏标签/值, 绘制全由控件自绘接管
+    IVStyle toggleStyle = btnStyle;
     toggleStyle.showLabel = false;
     toggleStyle.showValue = false;
 
@@ -230,71 +225,59 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     };
     auto bindTip = [this](IControl *c, int id) { mTooltipBindings.push_back({c, id}); };
 
-    // 右栏锚定窗口右下 (窗口 960x720): 右缘 kPanelR=940 距右 20, 底部标题区到底 36。
-    // 按钮无绘制内缩 (mRECT = 实际显示尺寸), 并排按钮间用 kBtnGap 补偿原内缩间距。
+    // 右栏布局常量
     constexpr float kCol1X = 784.f;
-    constexpr float kBtnW = 76.f;  // 按钮显示宽度
-    constexpr float kBtnGap = 4.f; // 并排按钮间隙 (替代原 BLOCK_GAP 内缩间距)
-    constexpr float kCol2X = kCol1X + kBtnW + kBtnGap; // 右列按钮左缘
+    constexpr float kBtnW = 76.f;
+    constexpr float kBtnGap = 4.f;
+    constexpr float kCol2X = kCol1X + kBtnW + kBtnGap;
     constexpr float kPanelR = kCol2X + kBtnW;
 
-    // 顶行按钮 (PWR/LR/SUM · STFT·VQT·PBT·RTA · RES · 窗 · LOG/LIN · 斜率) 统一尺寸:
-    // 宽 62 高 26 (斜率按钮因标签带单位加宽至 116), 容纳 HIGH/PWR 文字 + 基础内边距
+    // 顶行按钮
     constexpr float kTopBtnW = 62.f;
     constexpr float kTopBtnH = 26.f;
     constexpr float kTopBtnY = 22.f;
-    constexpr float kTopBtnGap = 6.f; // LR 与 FFT 之间留空隙, FFT 与 RES 紧贴
+    constexpr float kTopBtnGap = 6.f;
 
-    // 电平表带顶部的图例行已移除 (原 True Peak 读数合并进 dBTP 条的锁存数字显示)
-
-    // 声道显示模式循环按钮 (三态: PWR / L/R / SUM).
-    // L/R 样式: 左半 L 色右半 R 色; PWR/SUM 样式: 整块 M 色 (Merge 色) + 居中标签。
+    // 声道模式（PWR / L/R / SUM）
     mChanModeBtn = new FlatCycleButton(IRECT(20.f, kTopBtnY, 20.f + kTopBtnW, kTopBtnY + kTopBtnH),
                                        kChannelMode, {"PWR", "L/R", "SUM"}, btnStyle, true);
     pGraphics->AttachControl(mChanModeBtn);
     bindTip(mChanModeBtn, orm::kTxtTipChanMode);
 
-    // 分析引擎切换按钮 (STFT / VQT / PBT / RTA) — LR 右侧, 留 kTopBtnGap 空隙
+    // 分析引擎（STFT / VQT / PBT / RTA）
     constexpr float kModeX = 20.f + kTopBtnW + kTopBtnGap;
     mModeBtn = new FlatCycleButton(IRECT(kModeX, kTopBtnY, kModeX + kTopBtnW, kTopBtnY + kTopBtnH),
                                    kMode, {"STFT", "VQT", "PBT", "RTA"}, btnStyle);
     pGraphics->AttachControl(mModeBtn);
     bindTip(mModeBtn, orm::kTxtTipMode);
 
-    // 分辨率槽位宽度: 各档位按钮 (FFT 分辨率 / RTA 倍频程 / PBT 低频 / VQT γ) 标签均为
-    // 单字符 L/M/H (低/中/高), 槽位宽度在 kTopBtnW 基础上缩至一半, 右侧按钮整体左移.
+    // 分辨率槽位（L/M/H），各模式按钮互斥可见
     constexpr float kResBtnW = 31.f;
-    // FFT 分辨率循环按钮 (L/M/H = 2048/4096/8192) — 紧贴 Mode 按钮右侧, 仅 FFT 模式可见
     constexpr float kResX = kModeX + kTopBtnW;
     mResBtn = new FlatCycleButton(IRECT(kResX, kTopBtnY, kResX + kResBtnW, kTopBtnY + kTopBtnH), kRes,
                                   {"L", "M", "H"}, btnStyle);
     pGraphics->AttachControl(mResBtn);
     bindTip(mResBtn, orm::kTxtTipRes);
 
-    // PBT 低频分辨率循环按钮 (L/M/H = 40/20/10 Hz, 越小越精细) — 同位置, 仅 PBT 模式可见
     mPbtLfResBtn = new FlatCycleButton(IRECT(kResX, kTopBtnY, kResX + kResBtnW, kTopBtnY + kTopBtnH), kLfRes,
                                        {"L", "M", "H"}, btnStyle);
     pGraphics->AttachControl(mPbtLfResBtn);
     bindTip(mPbtLfResBtn, orm::kTxtTipLfRes);
     mPbtLfResBtn->Hide(true);
 
-    // VQT 低频带宽下限循环按钮 (γ: L/M/H = 20/10/5 Hz, 越小越精细) — 与 STFT 分辨率/PBT 低频档同槽位, 按模式互斥可见
     mGammaBtn = new FlatCycleButton(IRECT(kResX, kTopBtnY, kResX + kResBtnW, kTopBtnY + kTopBtnH),
                                     kVQTGamma, {"L", "M", "H"}, btnStyle);
     pGraphics->AttachControl(mGammaBtn);
     bindTip(mGammaBtn, orm::kTxtTipVQTGamma);
     mGammaBtn->Hide(true);
 
-    // RTA 分数倍频程循环按钮 (L/M/H = 1/6/1/12/1/24, 标签同 STFT 分辨率档) — 同槽位, 仅 RTA 模式可见
     mRtaOctBtn = new FlatCycleButton(IRECT(kResX, kTopBtnY, kResX + kResBtnW, kTopBtnY + kTopBtnH),
                                      kRtaOctave, {"L", "M", "H"}, btnStyle);
     pGraphics->AttachControl(mRtaOctBtn);
     bindTip(mRtaOctBtn, orm::kTxtTipRtaOctave);
     mRtaOctBtn->Hide(true);
 
-    // 窗函数循环按钮 (SHARP/CLEAN) — RES 分辨率按钮右侧 (即原 VQT 金字塔按钮位 B1 的槽位,
-    // 尺寸随分辨率槽位左移; 纯净档 = 5阶 Blackman-Harris). STFT 与 VQT 各自独立保存
-    // 档位 (kFFTWindow / kWindowVQT), 按当前模式改绑参数 (见 OnIdle 模式块)。
+    // 窗函数（SHARP/CLEAN），STFT 与 VQT 按模式改绑参数
     constexpr float kWinX = kResX + kResBtnW + kTopBtnGap;
     const int initMode = (int)GetParam(kMode)->Value();
     mWindowBtn = new FlatCycleButton(IRECT(kWinX, kTopBtnY, kWinX + kTopBtnW, kTopBtnY + kTopBtnH),
@@ -304,7 +287,7 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     bindTip(mWindowBtn, orm::kTxtTipWindow);
     mWindowBtn->Hide(initMode != kModeFFT && initMode != kModeVQT);
 
-    // 释放回落模式循环按钮 (LOG 对数域单极点 / LIN 线性 dB 速率): 窗按钮右侧, 同尺寸
+    // 释放模式（LOG / LIN）
     constexpr float kLogX = kWinX + kTopBtnW + kTopBtnGap;
     mReleaseModeBtn =
         new FlatCycleButton(IRECT(kLogX, kTopBtnY, kLogX + kTopBtnW, kTopBtnY + kTopBtnH), kReleaseMode,
@@ -312,8 +295,7 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     pGraphics->AttachControl(mReleaseModeBtn);
     bindTip(mReleaseModeBtn, orm::kTxtTipReleaseMode);
 
-    // 频谱斜率循环按钮: LOG 右侧 (标签带单位 "4.5 dB/Oct", 加宽至 116 容纳; 各引擎独立
-    // 保存档位, 切引擎时改绑参数并换标签, 见 OnIdle 模式块)
+    // 频谱斜率（标签带单位，加宽）
     constexpr float kSlopeTopX = kLogX + kTopBtnW + kTopBtnGap;
     constexpr float kSlopeTopW = 116.f;
     mSlopeBtn = new FlatCycleButton(
@@ -324,26 +306,18 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     pGraphics->AttachControl(mSlopeBtn);
     bindTip(mSlopeBtn, orm::kTxtTipSlope);
 
-    // 频谱响应速度预设循环按钮 (MIN 最慢 .. MAX 最快, 决定释放时间常数): 斜率按钮右侧
+    // 响应速度（MIN..MAX）
     constexpr float kSpeedX = kSlopeTopX + kSlopeTopW + kTopBtnGap;
     mSpeedBtn = new FlatCycleButton(IRECT(kSpeedX, kTopBtnY, kSpeedX + kTopBtnW, kTopBtnY + kTopBtnH),
                                     kSpeed, {"MIN", "SLOW", "MED", "FAST", "MAX"}, btnStyle);
     pGraphics->AttachControl(mSpeedBtn);
     bindTip(mSpeedBtn, orm::kTxtTipSpeed);
 
-    // 主频谱绘制区域: 右缘 784 (= 频谱区右缘 584 + 电平表带总宽 kMeterStripW=200,
-    // 含 LRA bracket 区 kLraZoneW=32)。
-    // 电平表带 (L/R 条 + VU 刻度 + VU 双条 + LUFS 刻度 + I/S/M 响度条 + LRA bracket)
-    // 整体位于频谱右侧腾出的空区; I 条为 2 倍宽后表带总宽由 154 → 168, 加 LRA bracket
-    // 后再 → 200, 频谱绘图区右缘 plot.R 锚定 584 不变, 其余各条带几何全部锚定 plot.R
-    // 相对推导, 自动跟随。
+    // 主频谱区
     mSpectrumPad = new SpectrumPad(IRECT(20, 58, 784, 328));
     pGraphics->AttachControl(mSpectrumPad, kCtrlTagPad);
 
-    // 电平条点击交互 (SpectrumPad::OnMouseDown 命中电平条区域时回调):
-    // dBTP 模式点击条 → 清真峰值持久锁存; dBFS 模式点击条体 → 清峰值保持, 点击顶部 LED → 清过载;
-    // 响度窗顶刻度按钮 → 循环刻度窗偏移 (+9/+18); 响度 1/3 目标刻度按钮 → 循环目标预设
-    // (-9/-14/-23/-24)。档位循环与 FlatCycleButton 同一行为 (undo 分组见 MaybePushGestureUndo)。
+    // 电平条点击交互
     mSpectrumPad->mMeterClickHandler = [this](SpectrumPad::EMeterClick c) {
       switch (c) {
       case SpectrumPad::kClickResetPersist:
@@ -362,35 +336,21 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
         MaybePushGestureUndo();
         const int cur = (int)std::clamp(std::lround(GetParam(param)->Value()), 0L, (long)num - 1);
         const int next = (cur + 1) % num;
-        // 传 plain 档位值 (SetParamFromEditor 内部 GetParam()->Set(value) 期望 plain,
-        // 见 SetParamFromEditor 实现; 传 normalized 会在多档参数上把非整小数写进 plain 域,
-        // 下次 lround 又回到原档, 循环被吞 —— 2 档 (norm=0/1) 侥幸等价, 4 档预设必现)。
+        // 必须传 plain 档位值，否则多档参数循环会被吞
         SetParamFromEditor(param, (double)next);
         break;
       }
       }
     };
 
-    // ── 声像显示面板 (频谱下方空闲区): PAZ 式极坐标电平扇形 ─────────────────
-    // 数据: StereoScope 引擎 (音频线程攒 hop 样本包) → OnIdle TransmitData;
-    // 弹道与频谱共用速度预设 (MIN..MAX) × LOG/LIN 释放, 峰值保持共用 HOLD 开关。
+    // 声像面板（频谱下方）
     mScopeCtrl = new StereoFieldControl(IRECT(20.f, 336.f, 784.f, 604.f));
     pGraphics->AttachControl(mScopeCtrl, kCtrlTagScope);
 
-    // ── 响度计读数面板 (右栏 LoudnessMeterControl) 已删除 ──────────────────
-    // LRA 整体迁移到频谱面板 M 条右侧的 Pro-L2 式 bracket (SpectrumPad::DrawLraBracket);
-    // I 当前值以水印形式落在频谱 I 条底部, M/S 单位 "LUFS" 拆为 "LU"/"FS" 分色落
-    // S/M 条底部。右栏不再需要独立读数控件, 释放的空间可在后续填充其他内容。
-
-    // 响度目标预设 (-9/-14/-23/-24) 与刻度窗偏移 (+9/+18) 已并入 M/S/I 响度条的
-    // 刻度按钮 (窗顶值 / 1/3 目标值, SpectrumPad 内部绘制与分发), 不再需要独立按钮。
-    // 动态范围循环按钮: 位于频谱图底部右缘 (电平表竖条左侧), 顶替最底部刻度标签
-    // (DrawDbGrid 跳过底部一条的文字)。右下角与频谱图右下对齐不留缝, 文字样式/位置
-    // 与刻度文字完全一致 (刻度样式), 仅多一个背景方块。点击循环切换 80/100/120 dB。
-    // attach 在 pad 之后 → 覆盖于频谱之上, 命中测试优先。
-    constexpr float kRangeBtnW = 38.f; // 收紧方块: 仅比文字 (-120 @14px ≈ 31px) 多出少量左右 padding
-    constexpr float kRangeBtnH = 19.f; // 贴住文字行高 (14px 字 ≈ 17px 高)
-    const float plotR = 784.f - kMeterStripW; // 频谱图形区右缘 (与 pad 内几何一致, = spectrum panel R 784 - kMeterStripW 200 = 584)
+    // 动态范围按钮（频谱底部右缘）
+    constexpr float kRangeBtnW = 38.f;
+    constexpr float kRangeBtnH = 19.f;
+    const float plotR = 784.f - kMeterStripW;
     const float plotB = 328.f;
     mRangeBtn = new FlatCycleButton(IRECT(plotR - kRangeBtnW, plotB - kRangeBtnH, plotR, plotB), kRange,
                                     {"-80", "-100", "-120"}, btnStyle);
@@ -398,24 +358,17 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     mRangeBtn->SetScaleLabelStyle(true);
     bindTip(mRangeBtn, orm::kTxtTipRange);
 
-    // CPU 占用率显示
-    // 右栏控件组: 底部锚定标题区上方 (标题上缘 615, 留 5px), 纵向行距与横向并排间距一致
-    // (kBtnGap), 自上而下 = CPU / FREEZE·RESET / HOLD·时长 / 图标行 (撤销|重做 · 保存|读取,
-    // 图标行移到最下面一排)。行高统一 kRowH = 26, 与顶排通道模式按钮 (能量和) 一致。
+    // 右栏控件组
     constexpr float kRowGap = kBtnGap;
     constexpr float kRowH = 26.f;
-    constexpr float kIconRowY = 610.f - kRowH; // 最下面一排 = 图标行
+    constexpr float kIconRowY = 610.f - kRowH;
     constexpr float kHoldRowY = kIconRowY - kRowGap - kRowH;
     constexpr float kFreezeRowY = kHoldRowY - kRowGap - kRowH;
     constexpr float kCpuY = kFreezeRowY - kRowGap - kRowH;
     mCpuMeter = new CpuMeterControl(IRECT(kCol1X, kCpuY, kPanelR, kCpuY + kRowH));
     pGraphics->AttachControl(mCpuMeter, kCtrlTagCpu);
 
-    // 频谱斜率与释放回落模式按钮已移至顶行 (窗按钮右侧), 见上方创建处
-
-    // 撤销/重做/保存/读取: 小图标按钮, 两两一组 (撤销|重做, 保存|读取).
-    // 单个宽 (kBtnW-kBtnGap)/2=36, 高 kRowH; 组内组间空隙均 kBtnGap, 整排
-    // 4×36+3×4=156 铺满右栏。位于控件组最下面一排 (y=kIconRowY)。
+    // 撤销/重做/保存/读取图标行
     constexpr float kIconBtnW = (kBtnW - kBtnGap) / 2.f;
     constexpr float kIconBtnY = kIconRowY;
     constexpr float kIconStep = kIconBtnW + kBtnGap;
@@ -435,12 +388,7 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
         [this](IControl *) { LoadFile(); }, kIconLoad);
     pGraphics->AttachControl(loadBtn);
 
-    // 电平表模式循环按钮 (dBTP <-> dBFS): 移入电平条内部底部, 显示覆盖在两条电平条之上,
-    // 宽度 = 两条电平条总宽 (2 × kGainBarW, 与 VU 条同窄), 高度与左侧 Range 循环按钮一致
-    // (kRangeBtnH)。幽灵样式: 无背景方块, 不遮挡条体; 文字色随条上渐变状态驱动
-    // (OnIdle 每帧 SetGhostSignalActive): 空轨 (低于显示范围) 呈深灰可点, 有 dB 值退回
-    // 条轨浅灰水印; hover 只在文字背后垫半透明遮罩。
-    // attach 在 SpectrumPad 之后 → 绘制于电平条上方且命中测试优先。
+    // 电平表模式按钮（dBTP/dBFS，幽灵样式覆盖在电平条上）
     mLevelModeBtn =
         new FlatCycleButton(IRECT(plotR, plotB - kRangeBtnH, plotR + 2.f * kGainBarW, plotB), kLevelMode,
                             {"dBTP", "dBFS"}, btnStyle);
@@ -449,8 +397,7 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     pGraphics->AttachControl(mLevelModeBtn);
     bindTip(mLevelModeBtn, orm::kTxtTipLevelMode);
 
-    // RESET (右下角, 全量重置): 电平表保持/过载/持久锁存 + 频谱 hold 曲线 +
-    // 响度 I/LRA/真峰值锁存, 一次点击全部清除 (原电平表 RESET 与响度计 RESET 合并)
+    // RESET（全量重置：电平表 + 频谱 hold + 响度）
     mLevelResetBtn =
         MakeMomentary(IRECT(kCol2X, kFreezeRowY, kPanelR, kFreezeRowY + kRowH), [this](IControl *) {
           mLevelResetFlag.store(true);
@@ -469,10 +416,7 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     });
     bindTip(mLevelResetBtn, orm::kTxtTipReset);
 
-    // Freeze 冻结开关 (RESET 左侧空位): 反色开关样式, 与 HOLD 开关一致——始终显示冻结文字
-    // (英文 FREEZE / 中文 冻结, 随界面语言), 开启时按钮底色变黑 + 文字反白。
-    // 冻结时画面完全定格 (UI 停止消费引擎数据), 切换引擎时用冻结时刻的输入缓冲
-    // 在新算法下重算并继续定格, 解冻后从定格画面续接实时。
+    // Freeze 开关
     mFreezeBtn = new FlatToggleControl(IRECT(kCol1X, kFreezeRowY, kCol1X + kBtnW, kFreezeRowY + kRowH), kFreeze, " ", toggleStyle,
                                        "FREEZE", "FREEZE");
     pGraphics->AttachControl(mFreezeBtn);
@@ -484,9 +428,7 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     });
     bindTip(mFreezeBtn, orm::kTxtTipFreeze);
 
-    // 峰值保持开关 + 时长循环按钮 (替代原 HOLD 滑块): 开关为 BandPass LINK 同款反色开关,
-    // 时长按钮移至 HOLD 右侧空位 (尺寸缩小为 kBtnW), 点击循环 0.5s / 2s / ∞ (无限保持)。
-    // 两者同时控制电平表 hold 亮线与频谱 hold 曲线; RESET 按钮清除已积累的保持。
+    // 峰值保持开关 + 时长
     mLevelHoldBtn = new FlatToggleControl(IRECT(kCol1X, kHoldRowY, kCol1X + kBtnW, kHoldRowY + kRowH), kLevelHoldOn, " ", toggleStyle,
                                           "HOLD", "HOLD");
     pGraphics->AttachControl(mLevelHoldBtn);
@@ -503,7 +445,7 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     pGraphics->AttachControl(mLevelHoldTimeBtn);
     bindTip(mLevelHoldTimeBtn, orm::kTxtTipLevelHoldTime);
 
-    // 底部标题栏：ORM 标识、设置齿轮与版本号
+    // 底部标题栏
     IText ormText(32, COL_900(), kFontBold, EAlign::Near, EVAlign::Bottom);
     pGraphics->AttachControl(new SectionTitleControl(IRECT(kCol1X, 618, kCol1X + 120, 652), "ORM", ormText, 0));
     IRECT ormInk(kCol1X, 618, kCol1X + 120, 652);
@@ -543,8 +485,7 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
       SaveSettingsToDisk();
     };
 #if ORM_ENABLE_TEST_GEN
-    // 内置测试信号发生器 (开发者工具): 只改原子标量, 音频线程下一 block 生效。
-    // 频率/电平拖动不逐像素写盘 —— 打 pending 标记, 由 OnIdle 稳定 0.5 s 后落盘。
+    // 频率/电平拖动不逐像素写盘，打 pending 标记由 OnIdle 稳定后落盘
     auto markGenSave = [this]() {
       mGenSavePending.store(true, std::memory_order_relaxed);
       mGenSaveTp = std::chrono::steady_clock::now();
@@ -576,7 +517,6 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     };
     settingsHooks.gen.onRestart = [this]() { mGenRestartReq.store(true, std::memory_order_relaxed); };
     settingsHooks.gen.onReseed = [this]() {
-      // 换种子: 每次取一个新的非零值, 音频线程下一 block 生效
       const auto ticks = std::chrono::steady_clock::now().time_since_epoch().count();
       mGenSeedReq.store((int)(((uint32_t)ticks | 1u) & 0x7FFFFFFFu), std::memory_order_relaxed);
     };
@@ -613,9 +553,7 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
 
     pGraphics->EnableTooltips(true);
 
-    // 方案0 性能测量快捷键 (无修饰键; 未被控件消费的按键落到这里):
-    //   F: iPlug2 帧间耗时显示 (帧节奏 wall-time; 点击小图循环 FPS / ms / 占比样式)
-    //   P: 频谱面板绘制耗时 HUD (pad 单帧 CPU 毫秒, data/hover 帧分类)
+    // 快捷键：F=帧间耗时显示，P=频谱绘制耗时 HUD
     pGraphics->SetKeyHandlerFunc([this, pGraphics](const IKeyPress &key, bool isUp) {
       if (isUp || key.C || key.A || key.S)
         return false;
@@ -636,10 +574,8 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
 
     ApplyLanguage();
 
-    // UI 控件已全部就绪: 立即同步一次频谱配置并更新去重标记。
-    // App 模式下 OnIdle 首帧可能早于控件 attach 运行, SendControlMsgFromDelegate
-    // 对不存在的控件会静默丢弃消息 (不排队), 频谱将停留在默认范围 (如 -90)
-    // 直到参数变化才重发——这里保证 UI 打开即同步, VST/App 行为一致。
+    // 立即同步一次频谱配置：App 模式下 OnIdle 首帧可能早于控件 attach，
+    // SendControlMsgFromDelegate 对不存在的控件会静默丢弃
     SendSpectrumConfig();
     mSentSampleRate = GetSampleRate();
     mSentFFTSize = CurrentFFTSize();
@@ -660,13 +596,13 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
 
 #if IPLUG_DSP
 void ORMAnalyzer::ProcessBlock(sample **inputs, sample **outputs, int nFrames) {
-  const uint64_t cpuT0 = ThreadCpuNs(); // 线程实际 CPU 时间基线 (不含被抢占)
+  const uint64_t cpuT0 = ThreadCpuNs();
   nFrames = std::min(nFrames, kMaxBlock);
 
   const int nOuts = NOutChansConnected();
   const int nIns = NInChansConnected();
 
-  // 音频直通（分析器不改变音频信号）
+  // 音频直通（分析器不改变信号）
   if (nOuts >= 2 && nIns >= 2) {
     if (outputs[0] != inputs[0])
       std::memcpy(outputs[0], inputs[0], nFrames * sizeof(sample));
@@ -693,7 +629,7 @@ void ORMAnalyzer::ProcessBlock(sample **inputs, sample **outputs, int nFrames) {
     }
   }
 
-  // 若 UI 未打开 (或处于后台休眠状态), 挂起所有高开销分析 (FFT/VQT/PBT/LevelMeter), 耗时直接归零
+  // UI 未打开时挂起所有分析
   if (!mUIOpen.load(std::memory_order_relaxed)) {
     const double processMs = (double)(ThreadCpuNs() - cpuT0) / 1e6;
     const double blockMs = (double)nFrames / std::max(GetSampleRate(), 1.0) * 1000.0;
@@ -702,19 +638,11 @@ void ORMAnalyzer::ProcessBlock(sample **inputs, sample **outputs, int nFrames) {
     return;
   }
 
-  // 采集输入数据到当前分析引擎
   const int mode = (int)GetParam(kMode)->Value();
-  const bool frozen = GetParam(kFreeze)->Value() > 0.5; // Freeze 激活: 挂起采集, 画面定格
+  const bool frozen = GetParam(kFreeze)->Value() > 0.5;
 
 #if ORM_ENABLE_TEST_GEN
-  // ── 内置测试信号发生器 (开发者工具) ──────────────────────────────────
-  // 开启时用内部生成的已知信号替换宿主输入:
-  //   · 固定 seed → 逐样本可复现;
-  //   · 与引擎共用同一 nFrames → 脉冲/扫频的时间对齐是样本级精确的;
-  //   · 正弦可吸附到 bin 中心或 bin 之间 → scalloping loss 成为可测量的量;
-  //   · 生成的信号同样写进冻结环形缓冲 —— 于是"冻结 + 切引擎"就是拿同一段
-  //     信号跑不同算法, 这是外部音源给不了的公平对比。
-  // 冻结 + HOLD 时停止推进样本索引, 保证重算的始终是同一段信号。
+  // 内置测试信号：用已知信号替换宿主输入，冻结+切引擎可做公平对比
   const bool genOn = mGenType.load(std::memory_order_relaxed) != orm::kGenOff;
   if (genOn) {
     if (mGenRestartReq.exchange(false, std::memory_order_relaxed))
@@ -725,16 +653,15 @@ void ORMAnalyzer::ProcessBlock(sample **inputs, sample **outputs, int nFrames) {
     gc.type = mGenType.load(std::memory_order_relaxed);
     gc.freqHz = (double)mGenFreq.load(std::memory_order_relaxed);
     gc.levelDb = (double)mGenLevel.load(std::memory_order_relaxed);
-    gc.fftSize = mSpectrum.GetFFTSize(); // bin 吸附网格跟随 FFT 引擎实际尺寸
+    gc.fftSize = mSpectrum.GetFFTSize();
     mTestGen.SetConfig(gc);
     const bool advance = !(frozen && mGenHold.load(std::memory_order_relaxed));
     mTestGen.Fill(mSpecInL.data(), mSpecInR.data(), nFrames, GetSampleRate(), advance);
     for (int s = 0; s < nFrames; ++s)
       mSpecInM[s] = (mSpecInL[s] + mSpecInR[s]) * 0.7071067811865475;
     if (mGenToOutput.load(std::memory_order_relaxed) && nOuts >= 1) {
-      // 输出路由 (默认关闭): 便于外录或与第三方分析器交叉验证。
-      // 硬限幅 -1 dBFS —— 脉冲与白噪以满量程直送监听是危险的。
-      constexpr sample kOutCeil = (sample)0.8912504381337891; // -1 dBFS
+      // 硬限幅 -1 dBFS，脉冲/白噪满量程直送监听危险
+      constexpr sample kOutCeil = (sample)0.8912504381337891;
       for (int s = 0; s < nFrames; ++s) {
         outputs[0][s] = std::clamp(mSpecInL[s], -kOutCeil, kOutCeil);
         if (nOuts >= 2)
@@ -750,7 +677,7 @@ void ORMAnalyzer::ProcessBlock(sample **inputs, sample **outputs, int nFrames) {
 
   sample *spec[3] = {mSpecInL.data(), mSpecInR.data(), mSpecInM.data()};
   if (genOn) {
-    // 输入已由发生器填充 (mSpecInL/R/M 就绪)
+    // 已由发生器填充
   } else if (nIns >= 2) {
     std::memcpy(mSpecInL.data(), inputs[0], nFrames * sizeof(sample));
     std::memcpy(mSpecInR.data(), inputs[1], nFrames * sizeof(sample));
@@ -763,9 +690,7 @@ void ORMAnalyzer::ProcessBlock(sample **inputs, sample **outputs, int nFrames) {
       mSpecInM[s] = mSpecInL[s] * 0.7071067811865475;
   }
   if (!frozen) {
-    // 冻结环形缓冲: 常驻记录最近 kFreezeRingLen 样本; freeze on 后停止写入, 即冻结时刻快照。
-    // (UI 线程 Read + 音频线程 Write 由 kFreeze 参数 (原子) 协调: 写入先停, 读取后才开始,
-    // 边缘至多混入冻结生效前最后一块输入, 无碍。)
+    // 冻结环形缓冲：常驻记录最近输入，freeze 后停止写入
     for (int s = 0; s < nFrames; ++s) {
       const int p = mFreezeRingPos.load(std::memory_order_relaxed);
       mFreezeRing[0][p] = mSpecInL[s];
@@ -787,19 +712,19 @@ void ORMAnalyzer::ProcessBlock(sample **inputs, sample **outputs, int nFrames) {
       mEngineHopPhase[kModeFFT].store(mSpectrum.HopPhase(), std::memory_order_relaxed);
     }
 
-    // 声像显示引擎 (与频谱引擎并行、模式无关; 只攒原始样本 hop 包, 几何计算全在 UI 线程)
+    // 声像引擎常驻，与频谱模式无关
     sample *scopeIn[2] = {mSpecInL.data(), mSpecInR.data()};
     mScope.ProcessBlock(scopeIn, nFrames, kCtrlTagScope);
   }
 
-  // 电平表测量 (冻结中挂起: 保持最后快照, 画面随频谱一起定格; 重置请求仍被消费, 避免解冻后误触发)
+  // 电平表 + 响度计（冻结中挂起测量，重置请求仍消费）
   auto publishLoudness = [this](const LoudnessMeter::Snapshot &ls) {
     mLoudM.store(ls.momentary, std::memory_order_relaxed);
     mLoudS.store(ls.shortTerm, std::memory_order_relaxed);
     mLoudI.store(ls.integrated, std::memory_order_relaxed);
     mLoudLra.store(ls.range, std::memory_order_relaxed);
-    mLoudLraMin.store(ls.lraMin, std::memory_order_relaxed); // LRA 直方图下界 (10%) LUFS
-    mLoudLraMax.store(ls.lraMax, std::memory_order_relaxed); // LRA 直方图上界 (95%) LUFS
+    mLoudLraMin.store(ls.lraMin, std::memory_order_relaxed);
+    mLoudLraMax.store(ls.lraMax, std::memory_order_relaxed);
     mLoudTp.store(ls.tpMax, std::memory_order_relaxed);
     mLoudIValid.store(ls.iValid, std::memory_order_relaxed);
     mLoudLraValid.store(ls.lraValid, std::memory_order_relaxed);
@@ -858,8 +783,7 @@ void ORMAnalyzer::ProcessBlock(sample **inputs, sample **outputs, int nFrames) {
       mOverL.store(s.overL, std::memory_order_relaxed);
       mOverR.store(s.overR, std::memory_order_relaxed);
 
-      // 响度计测量 (冻结中挂起同上): K 加权 M/S/I/LRA + 真峰值锁存。
-      // 真峰值复用同块 LevelMeter 快照的 4x 过采样结果 (不重复计算 FIR)。
+      // 响度计：真峰值复用 LevelMeter 的 4x 过采样结果
       const double loudSR = mLoudSetSR.exchange(-1.0, std::memory_order_relaxed);
       if (loudSR > 0.0)
         mLoudness.SetSampleRate(loudSR);
@@ -873,7 +797,7 @@ void ORMAnalyzer::ProcessBlock(sample **inputs, sample **outputs, int nFrames) {
     }
   }
 
-  // 统计音频线程耗时（一阶平滑）: 用线程 CPU 时间差值, 抢占/调度延迟不纳入
+  // 音频线程耗时（一阶平滑）
   {
     const double processMs = (double)(ThreadCpuNs() - cpuT0) / 1e6;
     const double blockMs = (double)nFrames / std::max(GetSampleRate(), 1.0) * 1000.0;
@@ -886,31 +810,30 @@ void ORMAnalyzer::OnReset() {
   mSpectrum.SetFFTSizeAndOverlap(CurrentFFTSize(), FFTOverlapForSize(CurrentFFTSize()), CurrentFFTWindow());
   mVQT.SetSampleRate(GetSampleRate());
   mVQT.SetWindowType(CurrentVQTWindow());
-  mVQT.SetGamma(CurrentVQTGamma()); // VQT 低频带宽下限 γ (GAMMA 按钮)
-  mVQT.SetBpo(kVQTBpo);       // VQT 固定 BPO = 24
+  mVQT.SetGamma(CurrentVQTGamma());
+  mVQT.SetBpo(kVQTBpo);
   mPBT.SetSampleRate(GetSampleRate());
   mPBT.SetLfWidth(CurrentPbtLfRes());
   mRTA.SetSampleRate(GetSampleRate());
   mRTA.SetOctaveMode(CurrentRtaOctave());
-  mLevelSetSR.store(GetSampleRate(), std::memory_order_relaxed); // 音频线程下一 block 执行 SetSampleRate+Reset
-  mLoudSetSR.store(GetSampleRate(), std::memory_order_relaxed); // 响度计同机制 (含滤波器系数重算)
+  mLevelSetSR.store(GetSampleRate(), std::memory_order_relaxed);
+  mLoudSetSR.store(GetSampleRate(), std::memory_order_relaxed);
   mPeakL.store(0.f, std::memory_order_relaxed);
   mPeakR.store(0.f, std::memory_order_relaxed);
 #if ORM_ENABLE_TEST_GEN
-  mTestGen.Restart(); // 采样率/缓冲变化后信号从头开始, 保证可复现
+  mTestGen.Restart();
 #endif
 }
 
 void ORMAnalyzer::SendSpectrumConfig() {
   const double sr = GetSampleRate();
-  // 下发引擎实际生效的 FFT 尺寸 (而非参数名义值): 若将来钳制逻辑变化,
-  // pad 的 bin 数与平滑更新周期必须始终跟随引擎真实尺寸, 否则高频段空白 + 时间常数偏差。
+  // 下发引擎实际生效的 FFT 尺寸，而非参数名义值
   const int fftSize = mSpectrum.GetFFTSize();
   const int speedIdx = (int)GetParam(kSpeed)->Value();
   const int releaseMode = (int)GetParam(kReleaseMode)->Value();
   const float release = (float)SpeedReleaseSec(speedIdx, releaseMode);
   const float range = CurrentRangeDb();
-  const float slopeDb = (float)EffectiveSlopeDb(); // 当前模式生效斜率 (档值随模式)
+  const float slopeDb = (float)EffectiveSlopeDb();
   const int chanTri = (int)GetParam(kChannelMode)->Value();
   const int chanMode = (chanTri == kChanModeLR) ? 0 : 1;
   const int mergeAlgo = (chanTri == kChanModeSUM) ? 1 : 0;
@@ -931,7 +854,7 @@ void ORMAnalyzer::SendSpectrumConfig() {
   else if (mode == kModeRTA)
     SendRTABandFreqs();
 
-  // 声像面板配置 (弹道参数与频谱共用一份)
+  // 声像面板弹道参数与频谱共用
   SendControlMsgFromDelegate(kCtrlTagScope, StereoFieldControl::kMsgTagSampleRate, sizeof(double), &sr);
   SendControlMsgFromDelegate(kCtrlTagScope, StereoFieldControl::kMsgTagRelease, sizeof(float), &release);
   SendControlMsgFromDelegate(kCtrlTagScope, StereoFieldControl::kMsgTagReleaseMode, sizeof(int), &releaseMode);
@@ -970,10 +893,8 @@ void ORMAnalyzer::SendResetToPad() {
 }
 
 void ORMAnalyzer::OnParamChange(int paramIdx, EParamSource source, int sampleOffset) {
-  // 冻结中抑制 SendResetToPad: 画面保持定格; 引擎配置 (PBT 低频档等) 照常更新,
-  // 解冻后由 OnIdle 防抖重发完整配置与 band 表。
+  // 冻结中抑制 SendResetToPad，画面保持定格
   const bool frozen = GetParam(kFreeze)->Value() > 0.5;
-  // 参数变化时更新分析引擎配置
   if (paramIdx == kRes)
     mSpectrum.SetFFTSizeAndOverlap(CurrentFFTSize(), FFTOverlapForSize(CurrentFFTSize()), CurrentFFTWindow());
   else if (paramIdx == kFFTWindow) {
@@ -983,22 +904,22 @@ void ORMAnalyzer::OnParamChange(int paramIdx, EParamSource source, int sampleOff
       SendResetToPad();
   }
   else if (paramIdx == kLfRes) {
-    if (GetParam(kMode)->Value() > 1.5 && GetParam(kMode)->Value() < 2.5) { // PBT 模式
+    if (GetParam(kMode)->Value() > 1.5 && GetParam(kMode)->Value() < 2.5) {
       if (mPBT.SetLfWidth(CurrentPbtLfRes()) && !frozen)
         SendResetToPad();
     }
   } else if (paramIdx == kVQTGamma) {
-    if (GetParam(kMode)->Value() < 1.5) { // VQT 模式
+    if (GetParam(kMode)->Value() < 1.5) {
       if (mVQT.SetGamma(CurrentVQTGamma()) && !frozen)
         SendResetToPad();
     }
   } else if (paramIdx == kRtaOctave) {
-    if (GetParam(kMode)->Value() > 2.5) { // RTA 模式
+    if (GetParam(kMode)->Value() > 2.5) {
       if (mRTA.SetOctaveMode(CurrentRtaOctave()) && !frozen)
         SendResetToPad();
     }
   } else if (paramIdx == kLevelMode) {
-    // 电平表模式切换: 清除峰值保持 (过载锁存保留, 直到手动 RESET); 由音频线程执行
+    // 模式切换清除峰值保持（过载锁存保留）
     mLevelResetHoldFlag.store(true, std::memory_order_relaxed);
   }
 }
@@ -1007,7 +928,7 @@ void ORMAnalyzer::OnParamChangeUI(int paramIdx, EParamSource source) {
   if (source == EParamSource::kUI) {
     MaybePushGestureUndo();
     if (paramIdx == kLevelHoldOn)
-      SaveSettingsToDisk(); // 用户切换保持开关: 写入全局设置文件, 重启后保持用户状态
+      SaveSettingsToDisk();
   }
 }
 #endif
@@ -1035,16 +956,15 @@ void ORMAnalyzer::OnIdle() {
   const auto wallNow = steady_clock::now();
   const double idleGapMs = duration<double, std::milli>(wallNow - mLastIdleTp).count();
   mLastIdleTp = wallNow;
-  const uint64_t workT0 = ThreadCpuNs(); // UI 线程实际 CPU 时间基线 (不含被抢占)
+  const uint64_t workT0 = ThreadCpuNs();
 
   // 按需重建频带配置
   mVQT.CheckRebuild();
   mPBT.CheckRebuild();
   mRTA.CheckRebuild();
 
-  const bool frozen = GetParam(kFreeze)->Value() > 0.5; // Freeze 激活: 画面定格
+  const bool frozen = GetParam(kFreeze)->Value() > 0.5;
 
-  // 冻结档位快照同步 (冻结中已重算的档位索引)
   auto syncFreezeSnapshot = [this]() {
     mFreezeRes = (int)std::lround(GetParam(kRes)->Value());
     mFreezeWindowFFT = CurrentFFTWindow();
@@ -1053,7 +973,7 @@ void ORMAnalyzer::OnIdle() {
     mFreezeRtaOct = CurrentRtaOctave();
   };
 
-  // 模式切换 (冻结中: 跳过 reset 不清屏, 改用冻结缓冲在新算法下重算后直显定格)
+  // 模式切换
   const int mode = (int)GetParam(kMode)->Value();
   if (mode != mSentMode) {
     mSentMode = mode;
@@ -1064,13 +984,10 @@ void ORMAnalyzer::OnIdle() {
       if (mRtaOctBtn)
         mRtaOctBtn->Hide(mode != kModeRTA);
     }
-    // 窗函数按钮: STFT 与 VQT 各自独立档位, 按模式改绑参数 (仅两引擎模式可见)
     if (mWindowBtn) {
       mWindowBtn->Hide(mode != kModeFFT && mode != kModeVQT);
       mWindowBtn->SetParamIdx(mode == kModeFFT ? kFFTWindow : kWindowVQT);
     }
-    // 斜率按钮: 档位随引擎不同 (FFT 0/3/4.5, 其余 -3/0/1.5, 单位 dB/Oct);
-    // 改绑当前引擎参数并换标签
     if (mSlopeBtn) {
       mSlopeBtn->SetParamIdx(SlopeParamForMode(mode));
       if (mode == kModeFFT)
@@ -1078,7 +995,6 @@ void ORMAnalyzer::OnIdle() {
       else
         mSlopeBtn->SetLabels({"-3 dB/Oct", "0 dB/Oct", "1.5 dB/Oct"});
     }
-    // 模式切换会改变生效斜率 (档值表不同), 与 mode 一起立即下发
     const float slopeDb = (float)EffectiveSlopeDb();
     mSentSlope = slopeDb;
     SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagSlope, sizeof(float), &slopeDb);
@@ -1090,8 +1006,6 @@ void ORMAnalyzer::OnIdle() {
     else if (mode == kModeRTA)
       SendRTABandFreqs();
     if (frozen) {
-      // 冻结中: 用冻结输入快照在 (新) 引擎与档位下确定性回放, 画面随分 tick 泵送
-      // 收敛到 "冻结音频 × 当前配置" 并继续定格。同步档位快照, 避免同 tick 重复触发。
       StartFreezeReplay();
       syncFreezeSnapshot();
     } else {
@@ -1099,15 +1013,13 @@ void ORMAnalyzer::OnIdle() {
     }
   }
 
-  // 窗/斜率按钮本地值与参数值同步 (每 tick; 改绑 SetParamIdx 与 UI 重开都不会更新本地值,
-  // 点击路径 SetValueFromUserInput 的本地值等值检查会把下一次切换吞掉 —— 必须保持两者一致;
-  // SetValueFromDelegate 带捕获锁, 点击/拖动期间不会覆写)
+  // 窗/斜率按钮本地值与参数值同步（改绑后必须保持一致，否则下一次切换会被吞）
   if (mWindowBtn && mWindowBtn->GetParam())
     mWindowBtn->SetValueFromDelegate(mWindowBtn->GetParam()->GetNormalized(), 0);
   if (mSlopeBtn && mSlopeBtn->GetParam())
     mSlopeBtn->SetValueFromDelegate(mSlopeBtn->GetParam()->GetNormalized(), 0);
 
-  // 声道显示模式
+  // 声道模式
   const int chanTri = (int)GetParam(kChannelMode)->Value();
   mSpectrum.SetChannelMode(chanTri);
   mVQT.SetChannelMode(chanTri);
@@ -1120,11 +1032,10 @@ void ORMAnalyzer::OnIdle() {
     SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagChanMode, sizeof(int), &chanMode);
     SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagMergeAlgo, sizeof(int), &mergeAlgo);
     if (frozen)
-      StartFreezeReplay(); // 声道模式影响分析通道选择: 冻结画面按新声道回放
+      StartFreezeReplay();
   }
 
-  // 检查并下发参数变动 (冻结中照常: Range 等显示参数即时生效, band 表随档位变化重发;
-  // SendResetToPad 已被冻结抑制, 画面不会被清空)
+  // 参数变动去重下发
   {
     const double sr = GetSampleRate();
     const int fftSize = CurrentFFTSize();
@@ -1132,13 +1043,13 @@ void ORMAnalyzer::OnIdle() {
     const int winVQT = CurrentVQTWindow();
     const int speed = (int)GetParam(kSpeed)->Value();
     const int releaseMode = (int)GetParam(kReleaseMode)->Value();
-    const double release = SpeedReleaseSec(speed, releaseMode); // 速度档×模式派生 (LOG 0.2~4s / LIN 0.5~9.6s)
+    const double release = SpeedReleaseSec(speed, releaseMode);
     const int rangeIdx = (int)std::clamp(std::lround(GetParam(kRange)->Value()), 0L, 2L);
     if (GetParam(kRange)->Value() != (double)rangeIdx)
       SetParamFromEditor(kRange, (double)rangeIdx);
     const double range = (double)rangeIdx;
     const double lfRes = GetParam(kLfRes)->Value();
-    const double slope = EffectiveSlopeDb(); // 斜率档位变化时重发 (冻结中照常: 纯显示参数)
+    const double slope = EffectiveSlopeDb();
     const int rtaOct = CurrentRtaOctave();
     if (sr != mSentSampleRate || fftSize != mSentFFTSize || winFFT != mSentWindowFFT || winVQT != mSentWindowVQT ||
         speed != mSentSpeed || releaseMode != mSentReleaseMode || release != mSentRelease ||
@@ -1146,8 +1057,7 @@ void ORMAnalyzer::OnIdle() {
         lfRes != mSentLfRes || slope != mSentSlope || rtaOct != mSentRtaOct) {
       mSpectrum.SetWindowType(winFFT);
       mVQT.SetWindowType(winVQT);
-      // 冻结中 release 派生变化 (速度档/释放模式) 或采样率/窗函数变化需重启回放, 保证确定性;
-      // Range/斜率纯显示参数不参与计算, 不重启。窗函数按引擎各查各的档位。
+      // 冻结中影响计算的参数变化需重启回放，Range/斜率等纯显示参数不重启
       const bool restartReplay =
           frozen && (sr != mSentSampleRate || release != mSentRelease || releaseMode != mSentReleaseMode ||
                      (mode == kModeFFT && winFFT != mSentWindowFFT) || (mode == kModeVQT && winVQT != mSentWindowVQT));
@@ -1168,10 +1078,7 @@ void ORMAnalyzer::OnIdle() {
     }
   }
 
-  // 冻结中: 同一算法内档位变化 (STFT 尺寸 / 窗函数 / VQT 金字塔 / PBT LF / RTA 倍频程)
-  // → 引擎配置已在音频线程更新 (OnParamChange), band 表已由上方防抖重发 (先于回放帧),
-  // 这里用冻结缓冲确定性回放, 画面 = 冻结音频 × 当前档位。刚冻结 (mFreezeOn 边沿) 只同步
-  // 快照不回放: 画面保持按下瞬间的实时定格, 避免不必要的跳变与回放开销。
+  // 冻结中档位变化 -> 用冻结缓冲确定性回放
   if (frozen) {
     if (!mFreezeOn) {
       mFreezeOn = true;
@@ -1197,14 +1104,13 @@ void ORMAnalyzer::OnIdle() {
       mFreezeLf = lfIdx;
       mFreezeRtaOct = rtaOctIdx;
     }
-    // 冻结回放泵送: 每 tick 回放一批帧 (kUpdateMessage → pad 实时平滑), 收敛后定格
     PumpFreezeReplay();
   } else {
     mFreezeOn = false;
-    mReplayMode = -1; // 解冻中止未完成的回放, 引擎带部分预热历史续接实时 (仅分析侧)
+    mReplayMode = -1;
   }
 
-  // 分发激活引擎数据 (冻结中跳过: 画面定格; 引擎队列保持, 解冻后继续消费续接实时)
+  // 分发引擎数据（冻结中跳过）
   if (!frozen) {
     if (mode == kModeVQT)
       mVQT.TransmitData(*this);
@@ -1214,10 +1120,10 @@ void ORMAnalyzer::OnIdle() {
       mRTA.TransmitData(*this);
     else
       mSpectrum.TransmitData(*this);
-    mScope.TransmitData(*this); // 声像引擎常驻 (与频谱引擎模式无关)
+    mScope.TransmitData(*this);
   }
 
-  // 转发电平表数据给表头区 (LevelMeterUiData, 含模式/保持时长/过载锁存)
+  // 转发电平表数据
   {
     LevelMeterUiData d;
     d.peakL = mPeakL.load(std::memory_order_relaxed);
@@ -1241,9 +1147,7 @@ void ORMAnalyzer::OnIdle() {
     SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagLevelMeter, sizeof(d), &d);
   }
 
-  // dBTP/dBFS 幽灵文字 (电平条底部模式按钮) 的信号态: 条上渲染了渐变条体
-  // (主值 > 显示底 dB) → 文字条轨灰; 空轨 (低于显示范围) → 深灰可点提示。
-  // 与 SpectrumPad 的取色条件同源 (DrawMeterBar: val > mBottomDb 才有渐变)。
+  // dBTP/dBFS 幽灵文字信号态：有条体渐变时退回条轨灰，空轨时深灰可点
   if (mLevelModeBtn) {
     const bool dbtp = GetParam(kLevelMode)->Value() < 0.5;
     const float bottomDb = -CurrentRangeDb();
@@ -1252,15 +1156,15 @@ void ORMAnalyzer::OnIdle() {
     mLevelModeBtn->SetGhostSignalActive(lvlL > bottomDb || lvlR > bottomDb);
   }
 
-  // 转发响度计数据 (底部横条; 预设档位与目标值由插件侧算出随帧下发)
+  // 转发响度计数据
   {
     LoudnessUiData d;
     d.momentary = mLoudM.load(std::memory_order_relaxed);
     d.shortTerm = mLoudS.load(std::memory_order_relaxed);
     d.integrated = mLoudI.load(std::memory_order_relaxed);
     d.range = mLoudLra.load(std::memory_order_relaxed);
-    d.lraMin = mLoudLraMin.load(std::memory_order_relaxed); // LRA 下界 (10% LUFS)
-    d.lraMax = mLoudLraMax.load(std::memory_order_relaxed); // LRA 上界 (95% LUFS)
+    d.lraMin = mLoudLraMin.load(std::memory_order_relaxed);
+    d.lraMax = mLoudLraMax.load(std::memory_order_relaxed);
     d.tpMax = mLoudTp.load(std::memory_order_relaxed);
     const int preset = (int)std::clamp(std::lround(GetParam(kLoudPreset)->Value()), 0L,
                                        (long)kNumLoudPresets - 1);
@@ -1271,11 +1175,10 @@ void ORMAnalyzer::OnIdle() {
     d.scaleOff = (int)kLoudScaleOffsets[scaleIdx];
     d.iValid = mLoudIValid.load(std::memory_order_relaxed) ? 1 : 0;
     d.lraValid = mLoudLraValid.load(std::memory_order_relaxed) ? 1 : 0;
-    // 频谱面板的 I/S/M 响度条 + LRA bracket 使用同一份响度数据 (右栏控件已移除)
     SendControlMsgFromDelegate(kCtrlTagPad, SpectrumPad::kMsgTagLoudness, sizeof(d), &d);
   }
 
-  // 统计 UI 线程耗时并计算综合 CPU 占用率: 工作量为线程 CPU 时间差值 (抢占不计), 分母为墙钟窗口
+  // UI 线程耗时 + 综合 CPU
   {
     const double uiMs = (double)(ThreadCpuNs() - workT0) / 1e6;
     mUiWorkMs += uiMs;
@@ -1290,7 +1193,7 @@ void ORMAnalyzer::OnIdle() {
   SendControlMsgFromDelegate(kCtrlTagCpu, CpuMeterControl::kMsgTagCpu, sizeof(double), &mCpuPct);
 
 #if ORM_ENABLE_TEST_GEN
-  // 发生器频率/电平拖动稳定 0.5 s 后落盘 (避免拖动过程中逐像素写文件)
+  // 发生器频率/电平稳定 0.5s 后落盘
   if (mGenSavePending.load(std::memory_order_relaxed) &&
       duration<double, std::milli>(steady_clock::now() - mGenSaveTp).count() > 500.0) {
     mGenSavePending.store(false, std::memory_order_relaxed);
@@ -1316,7 +1219,7 @@ void ORMAnalyzer::OnUIClose() {
   mUIOpen.store(false, std::memory_order_release);
 #if ORM_ENABLE_TEST_GEN
   if (mGenSavePending.exchange(false, std::memory_order_relaxed))
-    SaveSettingsToDisk(); // 关 UI 前补写未落盘的发生器设置
+    SaveSettingsToDisk();
 #endif
   mSpectrumPad = nullptr;
   mScopeCtrl = nullptr;
@@ -1339,7 +1242,7 @@ void ORMAnalyzer::OnUIClose() {
   mSettingsPanel = nullptr;
   mTextBindings.clear();
   mTooltipBindings.clear();
-  // 重开 UI 后控件是新的, 重置去重标记让下一次 OnIdle 重发完整配置与模式同步
+  // 重置去重标记，重开 UI 后重发完整配置
   mSentSampleRate = 0.0;
   mSentFFTSize = 0;
   mSentWindowFFT = -1;
@@ -1351,26 +1254,18 @@ void ORMAnalyzer::OnUIClose() {
   mSentSlope = -1e9;
   mSentChanMode = -1;
   mSentRtaOct = -1;
-  // 冻结档位快照复位: 重开 UI 后冻结画面与档位重算按新控件状态重新建立
   mFreezeOn = false;
   mFreezeRes = mFreezeWindowFFT = mFreezeWindowVQT = mFreezeLf = mFreezeRtaOct = -1;
   mReplayMode = -1;
 }
 
-// 冻结回放 (确定性): "冻结音频 × 当前算法/档位" 的谱由纯函数计算——
-//   display(cfg) = ballistics( replay( ring, cfg ) )
-// 启动时引擎运行态复位 (等价冷启动)、pad 平滑缓冲清零, 因此同样的 (环, 配置) 永远
-// 得到同一画面: 冻结中切走再切回, 结果逐字节一致。帧格与实时对齐: 最新回放帧起点 =
-// 环尾 - hop 相位 - hop, 即冻结瞬间实时显示的最后一帧; 从它向最旧方向铺满整圈
-// (1<<18 环 = 255/256 帧)。帧经 kUpdateMessage 下发, pad 侧攻击/释放平滑照常生效
-// (与实时同一弹道学、单一来源), 画面随回放逐 tick 收敛定格。
-// 注: hop 恒 1024 由 FFT overlap 规则 (2048/2, 4096/4, 8192/8) 与各引擎 kHop 保证。
+// 冻结回放：display(cfg) = ballistics(replay(ring, cfg)) 为纯函数，
+// 同样的环+配置永远得到同一画面。帧格与实时对齐：最新回放帧 = 冻结瞬间实时显示的最后一帧。
 void ORMAnalyzer::StartFreezeReplay() {
   const int mode = (int)GetParam(kMode)->Value();
   constexpr int kHop = 1024;
-  const int p = mFreezeRingPos.load(std::memory_order_relaxed); // 下一个写入位置 (= 最旧样本)
-  // 冻结时该引擎输入侧 pending 的 b 个样本尚未成帧 (实时同样未显示), 故最新"已显示"
-  // 帧终点在环尾前 b 个样本处, 起点再退一个 hop
+  const int p = mFreezeRingPos.load(std::memory_order_relaxed);
+  // 该引擎 pending 的 b 个样本尚未成帧，最新已显示帧终点在环尾前 b 个样本
   const int b = mEngineHopPhase[mode].load(std::memory_order_relaxed);
   mReplayLastStart = (p - b - kHop) & (kFreezeRingLen - 1);
   mReplayNFrames = (((mReplayLastStart - p + kFreezeRingLen) & (kFreezeRingLen - 1)) / kHop) + 1;
@@ -1382,28 +1277,25 @@ void ORMAnalyzer::StartFreezeReplay() {
     case kModeRTA: mRTA.ResetRuntimeState(); break;
     default: mSpectrum.ResetRuntimeState(); break;
   }
-  // pad 平滑缓冲确定性清零: 回放从零收敛, 显示与切换历史无关
   SendResetToPad();
-  // 声像面板同步清零: 冻结环同帧喂两条显示链路, 回放语义一致
   const int scopeDummy = 0;
   SendControlMsgFromDelegate(kCtrlTagScope, StereoFieldControl::kMsgTagReset, sizeof(int), &scopeDummy);
 }
 
-// 每 OnIdle 泵送一批回放帧 (kReplayFramesPerTick): 引擎逐帧分析后走实时同款
-// kUpdateMessage 通道 (pad 攻击/释放平滑生效), 收敛完成后回放结束、画面定格。
+// 每 OnIdle 泵送一批回放帧，走实时同款 kUpdateMessage 通道
 void ORMAnalyzer::PumpFreezeReplay() {
   if (mReplayMode < 0)
     return;
   constexpr int kHop = 1024;
   const int mask = kFreezeRingLen - 1;
-  using FPkt = std::array<float, 8192>; // 与四引擎 Data / pad TDataPacket 同构
+  using FPkt = std::array<float, 8192>;
   ISenderData<3, FPkt> d;
   d.ctrlTag = kCtrlTagPad;
   d.nChans = 3;
   d.chanOffset = 0;
   const int end = std::min(mReplayFrame + kReplayFramesPerTick, mReplayNFrames);
   for (; mReplayFrame < end; ++mReplayFrame) {
-    // 帧序 0 = 最旧 → nFrames-1 = 最新 (实时定格帧)
+    // 帧序 0=最旧 -> nFrames-1=最新
     const int start = (mReplayLastStart - (mReplayNFrames - 1 - mReplayFrame) * kHop) & mask;
     for (int c = 0; c < 3; ++c) {
       const float *src = mFreezeRing[c].data();
@@ -1411,7 +1303,7 @@ void ORMAnalyzer::PumpFreezeReplay() {
       if (start + kHop <= kFreezeRingLen) {
         std::memcpy(dst, src + start, kHop * sizeof(float));
       } else {
-        const int n1 = kFreezeRingLen - start; // 跨环尾部分两段拷贝
+        const int n1 = kFreezeRingLen - start;
         std::memcpy(dst, src + start, n1 * sizeof(float));
         std::memcpy(dst + n1, src, (kHop - n1) * sizeof(float));
       }
@@ -1424,7 +1316,7 @@ void ORMAnalyzer::PumpFreezeReplay() {
     }
     SendControlMsgFromDelegate(kCtrlTagPad, ISender<>::kUpdateMessage,
                                sizeof(ISenderData<3, FPkt>), &d);
-    // 同帧喂声像面板 (与实时同一 kUpdateMessage 通道, 冻结回放确定性)
+    // 同帧喂声像面板
     StereoScope<>::Data sd;
     sd.ctrlTag = kCtrlTagScope;
     sd.nChans = 2;
@@ -1564,7 +1456,6 @@ void ORMAnalyzer::ReadStateFileFrom(const std::string &path, std::string &err) {
   if (!ReadStateFile(path, data, err))
     return;
 
-  // 未发布版本: 状态文件参数数必须与当前枚举完全一致
   if ((int)data.values.size() != kNumParams) {
     err = "Parameter count mismatch (expected " + std::to_string(kNumParams) + ")";
     return;
@@ -1582,40 +1473,40 @@ void ORMAnalyzer::ApplyLanguage() {
   for (auto &binding : mTextBindings)
     if (binding.second)
       binding.second(orm::Tr(binding.first, orm::UILang()));
-  if (mResBtn) { // FFT 分辨率档 (L/M/H = 2048/4096/8192)
+  if (mResBtn) {
     mResBtn->SetLabels({orm::Tr(orm::kTxtLfLow, orm::UILang()),
                         orm::Tr(orm::kTxtLfMid, orm::UILang()),
                         orm::Tr(orm::kTxtLfHigh, orm::UILang())});
   }
-  if (mRtaOctBtn) { // RTA 分辨率档 (L/M/H = 1/6/1/12/1/24), 标签与 STFT 分辨率档一致
+  if (mRtaOctBtn) {
     mRtaOctBtn->SetLabels({orm::Tr(orm::kTxtLfLow, orm::UILang()),
                            orm::Tr(orm::kTxtLfMid, orm::UILang()),
                            orm::Tr(orm::kTxtLfHigh, orm::UILang())});
   }
-  if (mPbtLfResBtn) { // PBT 低频分辨率 (L/M/H = 40/20/10 Hz), 标签同上
+  if (mPbtLfResBtn) {
     mPbtLfResBtn->SetLabels({orm::Tr(orm::kTxtLfLow, orm::UILang()),
                              orm::Tr(orm::kTxtLfMid, orm::UILang()),
                              orm::Tr(orm::kTxtLfHigh, orm::UILang())});
   }
-  if (mGammaBtn) { // VQT 低频带宽下限 γ (L/M/H = 20/10/5 Hz), 标签同上
+  if (mGammaBtn) {
     mGammaBtn->SetLabels({orm::Tr(orm::kTxtLfLow, orm::UILang()),
                           orm::Tr(orm::kTxtLfMid, orm::UILang()),
                           orm::Tr(orm::kTxtLfHigh, orm::UILang())});
   }
-  if (mWindowBtn) { // 窗函数 (锐利/纯净)
+  if (mWindowBtn) {
     mWindowBtn->SetLabels({orm::Tr(orm::kTxtWinSharp, orm::UILang()),
                            orm::Tr(orm::kTxtWinClean, orm::UILang())});
   }
-  if (mChanModeBtn) { // 声道显示模式 (PWR 能量和 / L/R 左右 / SUM 信号和), 顺序与创建一致
+  if (mChanModeBtn) {
     mChanModeBtn->SetLabels({orm::Tr(orm::kTxtChanPWR, orm::UILang()),
                              orm::Tr(orm::kTxtChanLR, orm::UILang()),
                              orm::Tr(orm::kTxtChanSUM, orm::UILang())});
   }
-  if (mReleaseModeBtn) { // 释放回落模式 (LOG 对数 / LIN 线性), 顺序与创建一致
+  if (mReleaseModeBtn) {
     mReleaseModeBtn->SetLabels({orm::Tr(orm::kTxtRelLog, orm::UILang()),
                                 orm::Tr(orm::kTxtRelLin, orm::UILang())});
   }
-  if (mSpeedBtn) { // 频谱响应速度预设 (MIN 最慢 / SLOW 慢速 / MED 中速 / FAST 快速 / MAX 最快), 顺序与创建一致
+  if (mSpeedBtn) {
     mSpeedBtn->SetLabels({orm::Tr(orm::kTxtSpeedMin, orm::UILang()),
                           orm::Tr(orm::kTxtSpeedSlow, orm::UILang()),
                           orm::Tr(orm::kTxtSpeedMed, orm::UILang()),
@@ -1665,7 +1556,7 @@ void ORMAnalyzer::SaveSettingsToDisk() {
   s.hue = ThemeHue();
   s.satMax = ThemeSatMax();
   s.themeMode = mThemeMode;
-  s.holdOn = GetParam(kLevelHoldOn)->Value() > 0.5 ? 1 : 0; // 峰值保持开关状态持久化
+  s.holdOn = GetParam(kLevelHoldOn)->Value() > 0.5 ? 1 : 0;
 #if ORM_ENABLE_TEST_GEN
   s.genType = mGenType.load(std::memory_order_relaxed);
   s.genFreq = (double)mGenFreq.load(std::memory_order_relaxed);

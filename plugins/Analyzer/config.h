@@ -1,4 +1,4 @@
-#define PLUG_NAME "ORM Analyzer"  // 显示名 (DAW 列表 / app 标题), 允许空格
+#define PLUG_NAME "ORM Analyzer"
 #define PLUG_MFR "OpenRM"
 #define PLUG_VERSION_HEX 0x00000100
 #define PLUG_VERSION_STR "0.1.0"
@@ -36,8 +36,7 @@
 #define AUV2_VIEW_CLASS ORMAnalyzer_View
 #define AUV2_VIEW_CLASS_STR "ORMAnalyzer_View"
 
-// 注: AAX / CLAP 目标未构建, 对应的 AAX_* / CLAP_* 配置已移除 (iPlug2 仅在对应
-// 格式编译时才要求这些宏, CLAP 有 #ifndef 兜底)。若将来启用, 参照 iPlug2 示例补回。
+// AAX / CLAP 目标未构建，对应配置已移除；启用时参照 iPlug2 示例补回
 
 #define VST3_SUBCATEGORY "Fx"
 
@@ -51,9 +50,7 @@
 #define MIXED_SB_FN "Mixed-SemiBold.ttf"
 #define MIXED_BD_FN "Mixed-Bold.ttf"
 
-// 内置测试信号发生器 (开发者工具, 用于对比不同频谱算法):
-// 1 = 编译进插件, 设置面板出现 DEVELOPER 分区; 0 = 完全裁掉 (发布包建议 0)。
-// 可用 CMake 选项 ORM_ENABLE_TEST_GEN 覆盖, 无需改这里。
+// 内置测试信号发生器（开发者工具）：1=编译进插件，0=裁掉。可用 CMake 选项 ORM_ENABLE_TEST_GEN 覆盖
 #ifndef ORM_ENABLE_TEST_GEN
 #define ORM_ENABLE_TEST_GEN 1
 #endif

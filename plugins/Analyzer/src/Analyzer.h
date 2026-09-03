@@ -64,18 +64,18 @@ private:
   VQTAnalyzer<3> mVQT;
   PBTAnalyzer<3> mPBT;
   RTAAnalyzer<3> mRTA;
-  StereoScope<> mScope; // 声像显示引擎: 音频线程只攒 hop 样本包 (方位角/弹道/相关性全在 UI 线程)
+  StereoScope<> mScope; // 音频线程只攒 hop 样本包，方位角/弹道计算在 UI 线程
 
   static constexpr int kMaxBlock = 16384;
   std::array<sample, kMaxBlock> mSpecInL{};
   std::array<sample, kMaxBlock> mSpecInR{};
   std::array<sample, kMaxBlock> mSpecInM{};
 
-  // 时域峰值 (音频线程按 block 计算并做 attack/release 平滑, UI 线程 OnIdle 读取转发给 Gain 条)
+  // 时域峰值：音频线程计算，UI 线程读取
   std::atomic<float> mPeakL{0.f};
   std::atomic<float> mPeakR{0.f};
 
-  // 电平表输出快照 (音频线程写入, UI 线程 OnIdle 读取)
+  // 电平表快照（音频线程写，UI 线程读）
   LevelMeter mLevelMeter;
   std::atomic<float> mTrueL{0.f}, mTrueR{0.f};
   std::atomic<float> mRmsL{0.f}, mRmsR{0.f};
@@ -85,112 +85,96 @@ private:
   std::atomic<float> mPersistL{0.f}, mPersistR{0.f};
   std::atomic<int> mOverL{0}, mOverR{0};
   std::atomic<float> mHoldSec{2.f};
-  std::atomic<bool> mLevelResetFlag{false};          // UI 线程置位, 音频线程下一 block 清除 hold/over/persist
-  std::atomic<bool> mLevelResetHoldFlag{false};      // UI 线程置位, 音频线程下一 block 清除峰值保持 (模式切换)
-  std::atomic<bool> mLevelResetPersistFlag{false};   // UI 线程置位: 清除 dBTP 持久锁存 (点击 dBTP 条)
-  std::atomic<bool> mLevelResetMeterHoldFlag{false}; // UI 线程置位: 清除 L/R 条峰值保持 (dBFS 点击条体)
-  std::atomic<bool> mLevelResetOverFlag{false};      // UI 线程置位: 清除过载锁存 (dBFS 点击 LED)
-  std::atomic<double> mLevelSetSR{-1.0};        // UI 线程置位, 音频线程下一 block 执行 SetSampleRate+Reset (-1=无请求)
+  // 以下 flag 均为 UI 线程置位、音频线程下一 block 消费
+  std::atomic<bool> mLevelResetFlag{false};
+  std::atomic<bool> mLevelResetHoldFlag{false};
+  std::atomic<bool> mLevelResetPersistFlag{false};
+  std::atomic<bool> mLevelResetMeterHoldFlag{false};
+  std::atomic<bool> mLevelResetOverFlag{false};
+  std::atomic<double> mLevelSetSR{-1.0}; // 采样率变更请求，-1=无
 
-  // 响度计输出快照 (音频线程写入, UI 线程 OnIdle 读取; 与电平表同模式)
+  // 响度计快照（同电平表模式）
   LoudnessMeter mLoudness;
   std::atomic<float> mLoudM{0.f}, mLoudS{0.f}, mLoudI{0.f}, mLoudLra{0.f}, mLoudTp{0.f};
-  std::atomic<float> mLoudLraMin{0.f}, mLoudLraMax{0.f}; // LRA 直方图 10%/95% LUFS 端点 (频谱面板 bracket 用)
+  std::atomic<float> mLoudLraMin{0.f}, mLoudLraMax{0.f}; // LRA 直方图 10%/95% 端点
   std::atomic<bool> mLoudIValid{false}, mLoudLraValid{false};
-  std::atomic<bool> mLoudResetFlag{false};  // UI 线程置位, 音频线程下一 block Reset (+清 TP 锁存)
-  std::atomic<double> mLoudSetSR{-1.0};     // UI 线程置位, 音频线程下一 block 执行 SetSampleRate+Reset
+  std::atomic<bool> mLoudResetFlag{false};
+  std::atomic<double> mLoudSetSR{-1.0};
 
-  // 频谱配置缓存（用于在 OnIdle 中防抖去重）
+  // OnIdle 频谱配置去重缓存
   double mSentSampleRate = 0.0;
   int mSentFFTSize = 0;
-  double mSentRelease = -1.0; // 速度档×释放模式派生的释放时间 (s)
-  int mSentReleaseMode = -1; // 释放回落模式 (0/1), 用于 OnIdle 增量去重
-  int mSentSpeed = -1; // 频谱响应速度预设档位 (0=MIN..4=MAX), 用于 OnIdle 增量去重
+  double mSentRelease = -1.0;
+  int mSentReleaseMode = -1;
+  int mSentSpeed = -1;
   double mSentRange = -1.0;
   double mSentLfRes = -1.0;
-  double mSentSlope = -1e9; // 当前模式生效斜率 (dB/oct), 用于 OnIdle 增量去重
-  int mSentChanMode = -1; // 存储三态值 (0=LR,1=PWR,2=SUM), 用于 OnIdle 增量去重
+  double mSentSlope = -1e9;
+  int mSentChanMode = -1;
 
   SpectrumPad *mSpectrumPad = nullptr;
-  StereoFieldControl *mScopeCtrl = nullptr;   // 声像显示面板 (频谱下方空闲区, PAZ 式极坐标电平)
-  FlatCycleButton *mResBtn = nullptr;      // STFT 分辨率循环按钮 (LOW/MID/HIGH)
-  FlatCycleButton *mWindowBtn = nullptr;   // 窗函数循环按钮 (SHARP/CLEAN, STFT 与 VQT 各自独立档位, 按模式改绑参数)
-  FlatCycleButton *mPbtLfResBtn = nullptr; // PBT 低频分辨率循环按钮 (40/20/10 Hz)
-  FlatCycleButton *mGammaBtn = nullptr;    // VQT 低频带宽下限循环按钮 (γ: 5/10/20 Hz)
-  FlatCycleButton *mRtaOctBtn = nullptr;   // RTA 分数倍频程循环按钮 (LOW=1/6 / MID=1/12 / HIGH=1/24)
-  FlatCycleButton *mRangeBtn = nullptr;    // 动态范围循环按钮 (刻度底部 80/100/120)
-  FlatCycleButton *mSlopeBtn = nullptr;    // 频谱斜率循环按钮 (刻度底部左缘, 档值随引擎)
-  FlatCycleButton *mReleaseModeBtn = nullptr; // 释放回落模式循环按钮 (LOG 对数域 / UNIF 匀速)
-  FlatCycleButton *mSpeedBtn = nullptr;       // 频谱响应速度预设循环按钮 (MIN 最慢..MAX 最快)
+  StereoFieldControl *mScopeCtrl = nullptr;
+  FlatCycleButton *mResBtn = nullptr;
+  FlatCycleButton *mWindowBtn = nullptr;
+  FlatCycleButton *mPbtLfResBtn = nullptr;
+  FlatCycleButton *mGammaBtn = nullptr;
+  FlatCycleButton *mRtaOctBtn = nullptr;
+  FlatCycleButton *mRangeBtn = nullptr;
+  FlatCycleButton *mSlopeBtn = nullptr;
+  FlatCycleButton *mReleaseModeBtn = nullptr;
+  FlatCycleButton *mSpeedBtn = nullptr;
   CpuMeterControl *mCpuMeter = nullptr;
   FlatCycleButton *mModeBtn = nullptr;
   FlatCycleButton *mChanModeBtn = nullptr;
   FlatCycleButton *mLevelModeBtn = nullptr;
-  IVButtonControl *mLevelResetBtn = nullptr;  // 全量重置 (右下角; 电平表 + 频谱 hold + 响度)
-  FlatToggleControl *mLevelHoldBtn = nullptr;   // 峰值保持开关 (HOLD, 反色开关样式)
-  FlatCycleButton *mLevelHoldTimeBtn = nullptr; // 峰值保持时长循环按钮 (0.5s / 2s / ∞)
-  FlatToggleControl *mFreezeBtn = nullptr; // 冻结开关 (FREEZE, 反色开关样式, 同 HOLD)
-  // 响度目标预设 (-9/-14/-23/-24) 与刻度窗偏移 (+9/+18) 按钮已并入响度条刻度
-  // (窗顶值/1/3 目标值, SpectrumPad 内绘制), 此处不再持有独立按钮。
-  // 右栏响度读数面板 (LoudnessMeterControl) 已删除: LRA 移到频谱面板 M 条右侧的
-  // Pro-L2 式 bracket (见 SpectrumPad::DrawLraBracket), I 当前值与 M/S 单位水印
-  // 已在频谱条底部呈现, 右栏不再需要独立读数控件。
+  IVButtonControl *mLevelResetBtn = nullptr;
+  FlatToggleControl *mLevelHoldBtn = nullptr;
+  FlatCycleButton *mLevelHoldTimeBtn = nullptr;
+  FlatToggleControl *mFreezeBtn = nullptr;
 
   int mSentMode = -1;
-  int mSentWindowFFT = -1; // STFT 窗函数档位 (kFFTWindow), OnIdle 增量去重
-  int mSentWindowVQT = -1; // VQT 窗函数档位 (kWindowVQT), OnIdle 增量去重
-  int mSentRtaOct = -1;    // RTA 分数倍频程档位 (kRtaOctave), OnIdle 增量去重
+  int mSentWindowFFT = -1;
+  int mSentWindowVQT = -1;
+  int mSentRtaOct = -1;
 
-  // ── Freeze (冻结/保持), 确定性回放方案 ─────────────────────────────
-  // 音频线程把最近输入滚环记录进 mFreezeRing (freeze 后停止写入, 即冻结时刻快照),
-  // 并逐块发布活跃引擎的输入侧 hop 相位 mEngineHopPhase (非活跃引擎保持停用前值)。
-  // UI 线程在冻结中跳过引擎消费 (画面定格); 切换引擎/同一算法内档位时
-  // StartFreezeReplay: 复位引擎运行态 → pad 平滑缓冲清零 → 把冻结环按实时帧格
-  // (hop 相位对齐, 最新回放帧 = 冻结瞬间实时显示的最后一帧) 逐帧回放, 每帧经
-  // kUpdateMessage 走 pad 的攻击/释放平滑 (与实时同一弹道学)。
-  // display(cfg) = replay(ring, cfg) 为纯函数: 冻结中切走再切回, 画面逐字节一致。
-  static constexpr int kFreezeRingLen = 1 << 18;   // 262144 样本 ≈5.46s @48k:
-                                                   // 与最长释放 (1s) 弹道的收敛 (96k 下约 2.7s, 深带欠收敛)
+  // Freeze：音频线程把最近输入滚环记录，冻结后停止写入；UI 线程用冻结缓冲在新配置下确定性回放
+  static constexpr int kFreezeRingLen = 1 << 18; // ≈5.46s @48k，覆盖最长释放弹道收敛
   std::array<std::array<float, kFreezeRingLen>, 3> mFreezeRing{}; // [0]=L [1]=R [2]=M
-  std::atomic<int> mFreezeRingPos{0};              // 下一个写入位置 (= 最旧样本)
-  std::array<std::atomic<int>, kNumModes> mEngineHopPhase{}; // 各引擎输入侧 hop 相位 (音频线程发布)
-  bool mFreezeOn = false;                          // 冻结激活边沿/状态 (UI 线程)
-  // 冻结中已重算的档位快照 (参数档位索引, -1 = 未同步); 变化时用冻结缓冲重算直显
+  std::atomic<int> mFreezeRingPos{0};
+  std::array<std::atomic<int>, kNumModes> mEngineHopPhase{}; // 各引擎输入侧 hop 相位
+  bool mFreezeOn = false;
+  // 冻结中已重算的档位快照，-1=未同步
   int mFreezeRes = -1;
-  int mFreezeWindowFFT = -1; // STFT 窗函数档位快照 (冻结中重算去重)
-  int mFreezeWindowVQT = -1; // VQT 窗函数档位快照 (冻结中重算去重)
+  int mFreezeWindowFFT = -1;
+  int mFreezeWindowVQT = -1;
   int mFreezeLf = -1;
   int mFreezeRtaOct = -1;
 
-  // 冻结回放 (UI 线程, 定义见 Analyzer.cpp)。回放分 tick 泵送避免长 UI 卡顿;
-  // 回放期间再次切换配置 → StartFreezeReplay 重启 (复位后重放, 确定性不变);
-  // 解冻时中止, 引擎带部分预热历史续接实时 (仅分析侧, 无声学影响)。
-  static constexpr int kReplayFramesPerTick = 16;  // 每 OnIdle 泵送帧数 (16 帧 ≈0.34s 音频)
-  int mReplayMode = -1;                            // 回放中的引擎模式 (kMode*), -1 = 空闲
-  int mReplayFrame = 0;                            // 下一待回放帧 (0 = 最旧)
-  int mReplayNFrames = 0;                          // 总帧数 (整圈 255/256 帧)
-  int mReplayLastStart = 0;                        // 最新帧 (= 实时定格帧) 的环内样本起点
-  void StartFreezeReplay();                        // 置位回放: 复位引擎 + 清 pad + 计算帧格
-  void PumpFreezeReplay();                         // OnIdle 每 tick 回放一批帧 (kUpdateMessage)
+  // 冻结回放分 tick 泵送，避免长 UI 卡顿
+  static constexpr int kReplayFramesPerTick = 16;
+  int mReplayMode = -1; // kMode*，-1=空闲
+  int mReplayFrame = 0;
+  int mReplayNFrames = 0;
+  int mReplayLastStart = 0;
+  void StartFreezeReplay();
+  void PumpFreezeReplay();
 
-  // ── 内置测试信号发生器 (开发者工具, ORM_ENABLE_TEST_GEN) ────────────
-  // UI 线程写、音频线程读: 全部用原子标量, 不做跨线程共享对象。
-  // 发生器状态只能在音频线程推进 (Fill), 因此样本索引与 Freeze 环形缓冲天然同步。
+  // 内置测试信号发生器（开发者工具，ORM_ENABLE_TEST_GEN）
+  // UI 写、音频读，全部用原子标量
 #if ORM_ENABLE_TEST_GEN
   orm::TestSignalGenerator mTestGen;
   std::atomic<int> mGenType{orm::kGenOff};
   std::atomic<float> mGenFreq{1000.f};
   std::atomic<float> mGenLevel{-12.f};
-  std::atomic<bool> mGenHold{false};     // 冻结时锁相位 (不推进样本索引)
-  std::atomic<bool> mGenToOutput{false}; // 路由生成信号到输出 (默认关: 白噪/脉冲直送监听很危险)
+  std::atomic<bool> mGenHold{false};
+  std::atomic<bool> mGenToOutput{false};
   std::atomic<bool> mGenRestartReq{false};
-  std::atomic<int> mGenSeedReq{0}; // 非 0 = 请求换种子
-  // 频率/电平拖动的磁盘写入防抖 (仅 UI 线程访问 mGenSaveTp)
+  std::atomic<int> mGenSeedReq{0};
   std::atomic<bool> mGenSavePending{false};
   std::chrono::steady_clock::time_point mGenSaveTp{};
 #endif
 
-  // CPU 占用率统计（音频线程处理耗时 + UI 分析耗时，归一化为单核百分比）
+  // CPU 占用率（音频线程 + UI 分析，归一化为单核百分比）
   double mCpuAudio = 0.0;
   double mCpuUi = 0.0;
   double mCpuPct = 0.0;
@@ -212,9 +196,9 @@ private:
   std::vector<std::pair<IControl *, int>> mTooltipBindings;
 
   void SendSpectrumConfig();
-  void SendResetToPad(); // 引擎配置重建 (γ/BPO/模式) 后通知 pad 清空平滑缓冲, 显示重新加载
+  void SendResetToPad(); // 引擎配置重建后通知 pad 清空平滑缓冲
 
-  // 分析档位 -> 实际值 (参数存档位索引)
+  // 分析档位 -> 实际值
   int CurrentFFTSize() const {
     const int idx = (int)std::clamp(GetParam(kRes)->Value(), 0.0, (double)kNumResOptions - 1);
     return kResOptions[idx];
@@ -239,16 +223,13 @@ private:
     const int idx = (int)std::clamp(GetParam(kRtaOctave)->Value(), 0.0, (double)kNumRtaOctaveOptions - 1);
     return idx;
   }
-  // 频谱显示范围 (刻度底部 dB): 离散三档 80/100/120, 由 Range 循环按钮切换。
-  // 用 lround 取档位 (与按钮显示取整一致), 避免宿主旧状态恢复出档位间值 (如 0.5) 时
-  // 截断到低档导致按钮与频谱不同步。
+  // 用 lround 取档，避免宿主旧状态恢复出档位间值时截断到低档
   float CurrentRangeDb() const {
     const int idx = (int)std::clamp(std::lround(GetParam(kRange)->Value()), 0L, 2L);
     static constexpr float kRangeDb[3] = {80.f, 100.f, 120.f};
     return kRangeDb[idx];
   }
-  // 峰值保持有效时长 (s): 开关关闭 -> 0 (LevelMeter 不保持, UI 不画 hold 线/曲线);
-  // 开启 -> kHoldTimeSecs 档位值 (∞ 档为 1e9, 超时永不触发 = 无限保持)。
+  // 开关关闭 -> 0（不保持）；开启 -> 档位值（∞ 档为 1e9）
   double CurrentHoldSec() const {
     if (GetParam(kLevelHoldOn)->Value() < 0.5)
       return 0.0;
@@ -264,10 +245,8 @@ private:
       default: return kSlopeFFT;
     }
   }
-  // 当前模式生效的斜率值 (dB/oct): 各引擎档位独立保存;
-  // FFT 用 kSlopeDbFFT 档值, 逐 band 引擎 (VQT/PBT/RTA) 用 kSlopeDbLog 档值。
-  // 两组相差 -3 dB/oct: 逐 band 能量积分显示白噪天生 +3 dB/oct (FFT 按 bin 显示天生平直),
-  // 使同一信号的视觉斜率跨显示一致 (如粉噪在 FFT|3 与 VQT|0 下都平直)。
+  // 各引擎斜率档独立保存；FFT 与逐 band 引擎相差 -3 dB/oct，
+  // 使同一信号（如粉噪）跨显示模式视觉斜率一致
   double EffectiveSlopeDb() const {
     const int mode = (int)std::clamp(GetParam(kMode)->Value(), 0.0, (double)kNumModes - 1);
     const int paramIdx = SlopeParamForMode(mode);

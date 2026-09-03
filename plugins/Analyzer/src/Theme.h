@@ -84,17 +84,13 @@ inline IColor COL_100() {
   return HSBToIColor(ThemeHue(), SatForB(B) / 100.f, B / 100.f);
 }
 
-// 按钮 hover 半透明叠层色: 浅色主题叠加黑色 (变深), 深色主题叠加白色 (变亮)。
-// 以普通 alpha 混合叠在按钮底色之上, 使所有按钮 (含通道分半色) 获得一致的 hover 反馈。
+// 按钮 hover 叠层：浅色主题叠黑、深色主题叠白，alpha 混合
 inline IColor HoverOverlay() {
   return ThemeMode() ? IColor(48, 255, 255, 255) : IColor(48, 0, 0, 0);
 }
 
-// 频谱背景格子灰 (唯一调用方 SpectrumPad::DrawBackground)。
-// 深色模式把亮度压缩到 ~8%~18% 的近黑窄带、饱和度减半: 背景退成安静的舞台,
-// 频谱亮墨 (GetChannelColors 深色档 B=70%) 才能拉开对比; 浅色模式保持原样。
-// 斜率 0.40 决定格子间灰度阶梯 (dB 横条/十倍频分界约 4~5 级灰, 可辨但不抢戏),
-// 觉得分界太弱调大斜率、整体太亮调低基值 15。
+// 频谱背景格子灰。深色模式把亮度压缩到近黑窄带、饱和度减半，让频谱亮墨拉开对比；
+// 斜率 0.40 决定格子间灰度阶梯，觉得分界弱可调大、整体亮可调低基值 15
 inline IColor WarmGray(int v) {
   float vv = (float)v;
   float sScale = 1.f;
@@ -158,11 +154,8 @@ inline IVStyle MakeButtonStyle() {
   return IVStyle(true, true, colors, labelText, valueText, true, true, false, false, 0.f, 2.f, 0.f, 1.f, 0.f);
 }
 
-// 频谱三通道颜色: M 使用主题色相; L/R 采用"动态互补 Alpha 权重平衡"配对 ——
-// 左右声道采用完全对称的色相偏移 (ThemeHue ± 30°), 饱和度按 1/cos(30°) ≈ 1.155 补偿矢量混合微损。
-// 配合 SpectrumPad 在顶层 (R) 动态降阶映射 alpha2 = 255*alpha1 / (255+alpha1),
-// 实现两层在背景上的有效贡献权重 wL(t) = wR(t) 在全渐变高度上恒等, 彻底消除色相漂移。
-// 与 SpectrumPad 的绘制取色完全一致, 供色块图例、分半按钮等 UI 复用。
+// 频谱三通道颜色：M 用主题色相；L/R 用 ±30° 对称偏移，饱和度 ×1.155 补偿矢量混合微损。
+// 配合 SpectrumPad 顶层 alpha 降阶映射，使两层在背景上的有效贡献权重恒等，消除色相漂移
 inline void GetChannelColors(IColor &cL, IColor &cR, IColor &cM) {
   auto wrap = [](int h) {
     h %= 360;
@@ -170,26 +163,25 @@ inline void GetChannelColors(IColor &cL, IColor &cR, IColor &cM) {
   };
   float b, sM, sLR;
   if (ThemeMode()) {
-    // 深色模式亮墨: 亮度 70% + 饱和度随主题档位放大 (x2.5, 上限 45%),
-    // 与 WarmGray 压暗的背景配对保证对比度; 浅色模式维持原 60%/15% 墨色。
+    // 深色模式亮墨：亮度 70%，饱和度随主题放大（×2.5，上限 45%），与压暗背景配对
     b = 0.70f;
     sM = sLR = std::min((float)ThemeSatMax() * 2.5f, 45.f) / 100.f;
   } else {
     b = kLightB[2] / 100.f;
-    sM = std::max(ThemeSatMax(), 0) / 100.f;   // M 跟随主题档位
-    sLR = std::max(ThemeSatMax(), 15) / 100.f; // L/R 保底 15
+    sM = std::max(ThemeSatMax(), 0) / 100.f;
+    sLR = std::max(ThemeSatMax(), 15) / 100.f;
   }
-  const float sMix = std::min(sLR * 1.155f, 1.f); // L/R: 补偿 ±30° 矢量混合色度微降
+  const float sMix = std::min(sLR * 1.155f, 1.f);
   cL = HSBToIColor(wrap(ThemeHue() - 30), sMix, b);
   cR = HSBToIColor(wrap(ThemeHue() + 30), sMix, b);
   cM = HSBToIColor(ThemeHue(), sM, b);
 }
 
-// 电平表语义色: 黄/红段与过载 LED 使用固定安全色 (专业表惯例, 不随主题色相旋转)。
-// 绿段 (≤ -18 dB) 使用通道色, 见 SpectrumPad::MeterColorFor。
+// 电平表语义色：黄/红/过载 LED 用固定安全色（专业表惯例，不随主题旋转）；
+// 绿段（≤-18 dB）用通道色，见 SpectrumPad::MeterColorFor
 inline IColor MeterYellow() { return IColor(255, 232, 173, 40); }
 inline IColor MeterRed() { return IColor(255, 226, 60, 52); }
-// 响度达标绿 (响度计目标差 |Δ| ≤ 1 LU, 同安全色惯例)
+// 响度达标绿（|Δ|≤1 LU）
 inline IColor MeterGreen() { return IColor(255, 96, 186, 96); }
 inline IColor MeterOverLed() {
   if (ThemeSatMax() == 0)

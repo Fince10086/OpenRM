@@ -45,11 +45,11 @@ enum EText {
   kTxtDriver,
   kTxtTipChanMode,
   kTxtTipMergeAlgo,
-  kTxtChanLR,      // 声道显示模式按钮: 立体声 (L/R)
-  kTxtChanPWR,     // 声道显示模式按钮: 能量和 (左右能量合并)
-  kTxtChanSUM,     // 声道显示模式按钮: 信号和 (左右信号直接相加)
-  kTxtRelLog,      // 释放回落模式按钮: 对数 (LOG, dB 域单极点)
-  kTxtRelLin,      // 释放回落模式按钮: 线性 (LIN, 恒定 dB/s 速率)
+  kTxtChanLR,
+  kTxtChanPWR,
+  kTxtChanSUM,
+  kTxtRelLog,
+  kTxtRelLin,
   kTxtLevelHold,
   kTxtReset,
   kTxtTipLevelMode,
@@ -75,18 +75,18 @@ enum EText {
   kTxtWinClean,
   kTxtTipRtaOctave,
   kTxtTipVQTGamma,
-  kTxtLoudMomentary,  // 响度计: 瞬时响度 (M, 400ms) —— 未使用
-  kTxtLoudShort,      // 响度计: 短时响度 (S, 3s) —— 未使用
-  kTxtLoudTp,         // 响度计: 真峰值 —— 未使用
-  kTxtTipLoudPreset,  // 响度计: 目标预设 tooltip
-  kTxtTipLoudScale,   // 响度条: 刻度窗偏移 tooltip
-  kTxtTipLoudReset,   // 响度计: RESET tooltip
-  kTxtSpeedMin,       // 频谱速度预设按钮: 最慢 (MIN, 释放 4s)
-  kTxtSpeedSlow,      // 频谱速度预设按钮: 慢速 (SLOW, 释放 2s)
-  kTxtSpeedMed,       // 频谱速度预设按钮: 中速 (MED, 释放 1s)
-  kTxtSpeedFast,      // 频谱速度预设按钮: 快速 (FAST, 释放 0.5s)
-  kTxtSpeedMax,       // 频谱速度预设按钮: 最快 (MAX, 释放 0.2s)
-  kTxtTipSpeed,       // 频谱速度预设 tooltip
+  kTxtLoudMomentary,  // 未使用
+  kTxtLoudShort,      // 未使用
+  kTxtLoudTp,         // 未使用
+  kTxtTipLoudPreset,
+  kTxtTipLoudScale,
+  kTxtTipLoudReset,
+  kTxtSpeedMin,
+  kTxtSpeedSlow,
+  kTxtSpeedMed,
+  kTxtSpeedFast,
+  kTxtSpeedMax,
+  kTxtTipSpeed,
   kNumTexts
 };
 

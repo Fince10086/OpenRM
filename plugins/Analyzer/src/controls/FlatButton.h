@@ -1,7 +1,6 @@
 #pragma once
 
-// 扁平按钮族: FlatActionButton (瞬时按钮) / InvertToggleControl (反色开关) / FlatToggleControl。
-// MakeMomentary() 为瞬时按钮封装: 点击回调后立即复位值。
+// 扁平按钮族: FlatActionButton (瞬时) / InvertToggleControl (反色开关) / FlatToggleControl / FlatCycleButton / IconActionButton。
 
 #include "IControls.h"
 #include "../Theme.h"
@@ -19,18 +18,14 @@ public:
   FlatActionButton(const IRECT &bounds, IActionFunction aF, const char *label, const IVStyle &style)
       : IVButtonControl(bounds, aF, label, style) {}
 
-  // 快速连击: 偶数次点击会被平台识别为双击, 若不处理会走 IControl 默认的
-  // SetValueToDefault (重置参数), 导致丢一次响应。双击视为再次按下。
+  // 双击视为再次按下，避免偶数次连击被平台识别为双击后走默认重置
   void OnMouseDblClick(float x, float y, const IMouseMod &mod) override { OnMouseDown(x, y, mod); }
 
   void Draw(IGraphics &g) override {
-    // 全幅绘制, 与 FlatToggleControl/FlatCycleButton (mRECT) 保持一致统一尺寸;
-    // GetWidgetBounds 会因 btnStyle.drawFrame 在 MakeRects 里被 GetAdjustedHandleBounds
-    // 内缩 0.5*frameThickness (每边 1px), 使动作按钮比开关/循环按钮小一圈。
+    // 用 mRECT 全幅绘制，避免 GetWidgetBounds 因 frame 内缩导致尺寸不一致
     const IRECT b = mRECT;
     const bool pressed = GetValue() > 0.5;
     g.FillRect(pressed ? COL_900() : COL_300(), b);
-    // hover: 半透明叠层 (替代原换色), pressed 时不叠加
     if (!pressed && GetMouseIsOver())
       g.FillRect(HoverOverlay(), b);
     IText t = mStyle.valueText;
@@ -52,22 +47,16 @@ inline IVButtonControl *MakeMomentary(const IRECT &r, std::function<void(IContro
       label, st);
 }
 
-// ── 小图标按钮 (文字放不下的窄按钮) ────────────────────────────────────────
-// 撤销/重做/保存/读取四个动作改用图标表达, 图标全部由主题色矩形与正圆圆弧
-// (多段线逼近) 拼成, 延续界面的矩形+正圆极简语言; 颜色规则与 FlatActionButton
-// 一致 (COL_300 底 / COL_900 图标 / hover 叠层, 主题自适应)。
-
+// 小图标按钮 (窄按钮用图标代替文字)
 enum IconAction {
-  kIconUndo, // 撤销: assets/icons/undo.svg (环形箭头, 实体填充)
-  kIconRedo, // 重做: assets/icons/redo.svg (水平镜像)
-  kIconSave, // 保存 (导出到磁盘): assets/icons/export.svg (托盘 + 上箭头取出)
-  kIconLoad, // 读取 (从磁盘导入): assets/icons/import.svg (文件夹 + 下箭头引入)
+  kIconUndo, // 撤销
+  kIconRedo, // 重做
+  kIconSave, // 保存 (导出到磁盘)
+  kIconLoad, // 读取 (从磁盘导入)
 };
 
-// SVG 路径命令表 (源: assets/icons/*.svg, 1024×1024 网格, 实心填充)。
-// 命令: 0=Move, 1=Line, 2=贝塞尔(c1x,c1y,c2x,c2y,x,y), 3=Close。圆弧已按 SVG
-// 端点参数化转成两条三次贝塞尔 (180° 半圆, k=0.5523r)。绘制时以主题色填充,
-// 保持深/浅主题与色相自适应 (与 FlatActionButton 的 hover/pressed 规则一致)。
+// SVG 路径命令表 (源: assets/icons/*.svg, 1024×1024 网格)。
+// 命令: 0=Move, 1=Line, 2=贝塞尔(c1x,c1y,c2x,c2y,x,y), 3=Close。圆弧已转成两条三次贝塞尔。
 struct SvgPathCmd {
   uint8_t cmd;
   float v[6];
@@ -96,7 +85,7 @@ static constexpr SvgPathCmd kRedoIcon[] = {
     {1, {819.141f, 247.066f}},       {1, {702.495f, 130.394f}},
     {1, {778.137f, 54.752f}},        {3, {}},
 };
-static constexpr SvgPathCmd kImportIcon[] = { // 导入 (读取进插件): 文件夹 + 下箭头引入托盘
+static constexpr SvgPathCmd kImportIcon[] = {
     {0, {849.750f, 419.711f}},       {1, {588.934f, 419.711f}},
     {1, {549.228f, 419.711f}},       {1, {549.228f, 96.167f}},
     {1, {174.250f, 96.167f}},        {1, {174.250f, 907.904f}},
@@ -122,7 +111,7 @@ static constexpr SvgPathCmd kImportIcon[] = { // 导入 (读取进插件): 文�
     {1, {771.797f, 962.690f}},       {1, {778.785f, 955.910f}},
     {1, {675.921f, 856.250f}},       {3, {}},
 };
-static constexpr SvgPathCmd kExportIcon[] = { // 导出 (保存出插件): 托盘 + 上箭头取出
+static constexpr SvgPathCmd kExportIcon[] = {
     {0, {111.884f, 623.884f}},       {1, {111.884f, 890.580f}},
     {1, {111.884f, 917.293f}},       {1, {885.403f, 917.293f}},
     {1, {912.043f, 917.293f}},       {1, {912.043f, 623.884f}},
@@ -151,8 +140,7 @@ public:
   IconActionButton(const IRECT &bounds, std::function<void(IControl *)> fn, IconAction icon)
       : IControl(bounds), mFn(std::move(fn)), mIcon(icon) {}
 
-  // 快速连击: 偶数次点击会被平台识别为双击, 若不处理会走 IControl 默认的
-  // SetValueToDefault, 导致丢一次响应。双击视为再次按下。
+  // 双击视为再次按下，避免偶数次连击走默认重置
   void OnMouseDblClick(float x, float y, const IMouseMod &mod) override { OnMouseDown(x, y, mod); }
 
   void OnMouseDown(float x, float y, const IMouseMod &mod) override {
@@ -166,8 +154,7 @@ public:
     if (GetMouseIsOver())
       g.FillRect(HoverOverlay(), b);
 
-    // 图标几何来自用户提供的 assets/icons/*.svg (1024×1024 网格), 缩放到 18px
-    // 以按钮中心对齐。实心填充主题色, 随深浅主题/色相自适应。
+    // 图标从 1024×1024 SVG 网格缩放到 16px，以按钮中心对齐
     const float cx = b.MW(), cy = b.MH();
     const float s = 16.f / 1024.f;
     auto X = [&](float vx) { return cx + (vx - 512.f) * s; };
@@ -224,7 +211,7 @@ public:
     SetDirty(false);
   }
 
-  // 快速连击: 偶数次点击走双击, 转发为按下 (切换), 避免重置默认
+  // 双击视为再次按下，避免偶数次连击走默认重置
   void OnMouseDblClick(float x, float y, const IMouseMod &mod) override { OnMouseDown(x, y, mod); }
 
   void DrawValue(IGraphics &g, bool) override {
@@ -244,7 +231,6 @@ public:
     const IRECT b = mRECT;
     const bool on = GetValue() > 0.5;
     g.FillRect(on ? COL_900() : COL_300(), b);
-    // hover: 半透明叠层 (替代原换色), on 时不叠加
     if (!on && GetMouseIsOver())
       g.FillRect(HoverOverlay(), b);
     DrawValue(g, false);
@@ -264,8 +250,7 @@ public:
   FlatCycleButton(const IRECT &bounds, int paramIdx, const std::vector<const char *> &labels, const IVStyle &style,
                   bool splitChannels = false)
       : IControl(bounds, paramIdx), mLabels(labels), mStyle(style), mSplitChannels(splitChannels) {
-    // 分半样式锚点记录标签位置而非字符串: 语言切换后标签变中文, strcmp 判断将失效
-    // (创建时刻标签恒为英文, 位置语义稳定)
+    // 记录 L/R 标签位置而非字符串，语言切换后标签变中文时 strcmp 会失效
     mSplitIdx = -1;
     for (int i = 0; i < (int)labels.size(); ++i)
       if (std::strcmp(labels[i], "L/R") == 0)
@@ -283,27 +268,22 @@ public:
     }
   }
 
-  // 快速连击: 偶数次点击走双击, 转发为按下 (循环切换), 避免重置默认
+  // 双击视为再次按下，避免偶数次连击走默认重置
   void OnMouseDblClick(float x, float y, const IMouseMod &mod) override { OnMouseDown(x, y, mod); }
 
-  // 运行时换标签 (模式相关档位按钮: 切引擎时档值含义变化, 由插件在模式切换时调用)
+  // 运行时换标签 (切引擎时档值含义变化，由插件在模式切换时调用)
   void SetLabels(const std::vector<const char *> &labels) {
     mLabels = labels;
     SetDirty(false);
   }
 
-  // 刻度样式: 按钮伪装成刻度文字 (如频谱图底部 Range 按钮) —— 背景方块 + 与刻度一致的
-  // 14px 文字 (右对齐, 右缘/底缘与刻度文字重合), 只是多出一个背景色块。
+  // 刻度样式: 按钮伪装成刻度文字 (如频谱底部 Range 按钮)，背景方块 + 与刻度一致的文字
   void SetScaleLabelStyle(bool b) { mScaleStyle = b; }
 
-  // 幽灵样式 (电平条底部的 dBTP/dBFS 模式按钮): 无背景方块 —— 按钮退成条上的水印标签,
-  // 不遮挡条体。文字色由「条上是否有渐变」驱动 (SetGhostSignalActive): 有信号时用条轨浅灰
-  // (COL_300, 与空轨道同色、叠在渐变上不抢戏); 无信号 (条为空轨, 低于显示范围 dB) 时用
-  // 刻度深灰 (COL_700) 保证按钮清晰可点。hover 不改文字颜色, 只在文字背后垫半透明遮罩。
+  // 幽灵样式: 无背景方块，退成条上水印标签；文字色随条上是否有渐变切换
   void SetGhostStyle(bool b) { mGhostStyle = b; }
 
-  // 电平条当前是否渲染了渐变条体 (由插件 OnIdle 每帧下发, 见 Analyzer.cpp):
-  // true = 条上有 dB 值 → 文字条轨灰; false = 空轨 (低于显示范围) → 文字深灰。
+  // 电平条当前是否渲染了渐变条体 (由插件 OnIdle 每帧下发)
   void SetGhostSignalActive(bool hasSignal) {
     if (mGhostSignalActive == hasSignal)
       return;
@@ -311,11 +291,10 @@ public:
     SetDirty(false);
   }
 
-  // 缩小按钮文字: 默认样式 20px 字在受窄的按钮里放不下时使用
-  // (如电平条底部的模式覆盖按钮)。<=0 表示沿用样式原字号。
+  // 缩小按钮文字，窄按钮里放不下默认 20px 字时使用；<=0 沿用样式原字号
   void SetTextSize(float px) { mTextSize = px; }
 
-  // 与界面背景色同灰度的按钮文字色 (浅色主题接近白但非纯白, 深色主题对应变深)
+  // 与界面背景色同灰度的按钮文字色
   static IColor SplitBtnTextColor() {
     const IColor bg = COL_100();
     const int g = std::max({bg.R, bg.G, bg.B});
@@ -328,7 +307,7 @@ public:
     const int idx = GetParam() ? (int)std::clamp(std::lround(GetParam()->Value()), 0L, (long)num - 1) : 0;
 
     if (mSplitChannels) {
-      // 通道分半样式: L/R 档左半 L 色右半 R 色; 其余档整块 M 色 + 居中标签
+      // L/R 档左半 L 色右半 R 色；其余档整块 M 色 + 居中标签
       IColor cL, cR, cM;
       GetChannelColors(cL, cR, cM);
       const IText wt(20, SplitBtnTextColor(), kFontSemiBold, EAlign::Center, EVAlign::Middle);
@@ -346,15 +325,13 @@ public:
         if (idx < num)
           g.DrawText(wt, mLabels[idx], pb);
       }
-      // hover: 半透明叠层叠在通道色之上 (通道色也可获得 hover 反馈)
       if (GetMouseIsOver())
         g.FillRect(HoverOverlay(), pb);
       return;
     }
 
     if (mGhostStyle) {
-      // 幽灵样式: 只画模式文字, 无背景; 有信号 → 条轨浅灰, 空轨 → 刻度深灰 (可点提示)。
-      // hover 不改文字颜色, 只在文字背后垫一层半透明遮罩 (不染色整条/渐变)。
+      // 只画模式文字，无背景；有信号 → 条轨浅灰，空轨 → 刻度深灰
       if (idx >= 0 && idx < num) {
         IText t(12, mGhostSignalActive ? COL_300() : COL_700(), kFontSemiBold, EAlign::Center,
                 EVAlign::Middle);
@@ -368,9 +345,7 @@ public:
     }
 
     if (mScaleStyle) {
-      // 刻度样式: 加色半透明背景 (EBlend::Add = 线性提亮, 在频谱上形成光晕方块) +
-      // 与刻度文字相同的位置/字号/颜色/对齐。文字矩形 = (L+4, T, R-3, B-1):
-      // 右缘/底缘与 SpectrumPad DrawDbGrid 的最底部刻度文字完全重合 (kTickRight=3, 贴线留 1px)。
+      // 加色半透明背景 + 与刻度文字相同的位置/字号/颜色/对齐
       IBlend add(EBlend::Add, 1.f);
       const IColor fill = GetMouseIsOver() ? IColor(72, 255, 255, 255) : IColor(40, 255, 255, 255);
       g.FillRect(fill, b, &add);
@@ -397,11 +372,11 @@ private:
   std::vector<const char *> mLabels;
   IVStyle mStyle;
   bool mSplitChannels = false;
-  int mSplitIdx = -1;   // 分半样式锚点 (标签位置, 见构造注释)
+  int mSplitIdx = -1;
   bool mScaleStyle = false;
-  bool mGhostStyle = false; // 幽灵样式开关 (SetGhostStyle): 无背景 + 文字色随信号态
-  bool mGhostSignalActive = false; // 幽灵文字「条上有渐变」态 (SetGhostSignalActive): 有信号 → 条轨灰
-  float mTextSize = 0.f; // >0 时覆盖样式字号 (窄按钮场景)
+  bool mGhostStyle = false;
+  bool mGhostSignalActive = false;
+  float mTextSize = 0.f;
 };
 
 END_IGRAPHICS_NAMESPACE

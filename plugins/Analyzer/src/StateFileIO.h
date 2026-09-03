@@ -8,11 +8,11 @@
 #include <utility>
 #include <vector>
 
-// 插件状态文件读写（.orm 格式，JSON 序列化，文件头魔数识别为 "analyzer"）
+// 插件状态文件读写（.orm 格式，JSON 序列化，文件头魔数 "analyzer"）
 constexpr const char *kStateMagic = "analyzer";
 
 struct StateFileData {
-  std::vector<double> values; // 当前参数快照 (ParamSnapshot)
+  std::vector<double> values;
 };
 
 inline bool WriteStateFile(const std::string &path, const StateFileData &data, std::string &err) {
@@ -42,7 +42,7 @@ inline bool ReadStateFile(const std::string &path, StateFileData &out, std::stri
   }
   const std::string content((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
 
-  // 校验识别头, 拒绝其他插件/非 ORM 文件
+  // 校验文件头，拒绝非 ORM Analyzer 文件
   if (content.rfind(kStateMagic, 0) != 0) {
     err = std::string("Not an ORM Analyzer file (missing '") + kStateMagic + "' header)";
     return false;

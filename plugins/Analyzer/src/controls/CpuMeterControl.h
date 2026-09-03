@@ -1,10 +1,6 @@
 #pragma once
 
-// CpuMeterControl — 右上角 CPU 占用率只读显示框。
-// 样式与 FlatActionButton 完全一致 (COL_300 色块 + SemiBold 深色文字,
-// 占满右列整行宽 156x30), 但不可交互; 显示 音频线程处理耗时/块时长 + UI 线程
-// (OnIdle 内 FFT/VQT 分析工作) 耗时/墙钟 的合计值, 精度 0.01% (如 0.35%),
-// 由插件 OnIdle 经 kMsgTagCpu 消息实时推送。
+// 右上角 CPU 占用率只读显示，由插件经 kMsgTagCpu 实时推送。
 
 #include "IControls.h"
 #include "../Theme.h"

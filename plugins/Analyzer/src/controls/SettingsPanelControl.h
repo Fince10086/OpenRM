@@ -122,7 +122,7 @@ public:
       mDriverRow = IRECT(mCard.L + kPad, drvY, mCard.R - kPad, drvY + kAudioRowH);
     }
     if (mHasGen) {
-      // 开发者分区接在现有内容之后 (音频分区仅 APP 目标存在, 故基准 Y 分两种)
+      // 开发者分区接在现有内容之后，基准 Y 因是否有音频分区而不同
       const float b = (mHasAudio || mHasDriver) ? (kCardHAudio - 12.f) : (kCardH - 12.f);
       mDevTitle =
           IRECT(mCard.L + kPad, mCard.T + b + kDevTitleOff, mCard.R - kPad, mCard.T + b + kDevTitleOff + kTitleSize);
@@ -484,21 +484,20 @@ private:
   }
 
 #if ORM_ENABLE_TEST_GEN
-  // 频率滑杆: 1 Hz .. 20 kHz 对数映射
+  // 频率滑杆: 1 Hz..20 kHz 对数映射
   static double GenFreqFromNorm(float n) { return std::pow(20000.0, (double)std::clamp(n, 0.f, 1.f)); }
   float GenFreqNorm() const {
     const double f = std::clamp(mHooks.gen.freq(), 1.0, 20000.0);
     return (float)(std::log(f) / std::log(20000.0));
   }
-  // 电平滑杆: -120 .. 0 dBFS 线性 (含底噪测试所需极低电平)
+  // 电平滑杆: -120..0 dBFS 线性
   static double GenLevelFromNorm(float n) { return -120.0 + 120.0 * (double)std::clamp(n, 0.f, 1.f); }
   float GenLevelNorm() const {
     const double db = std::clamp(mHooks.gen.level(), -120.0, 0.0);
     return (float)((db + 120.0) / 120.0);
   }
 
-  // 频率读数随信号类型改变语义: 扫频固定 20 Hz-20 kHz, 脉冲串用 FREQ 当速率,
-  // 噪声/静音则不适用 —— 省下一行提示文字的空间。
+  // 频率读数随信号类型改变语义：扫频固定范围、脉冲串用速率、噪声/静音不适用
   const char *GenFreqLabel() const {
     static char buf[32];
     const double f = mHooks.gen.freq();
@@ -659,17 +658,17 @@ private:
   static constexpr float kAudioRow2Y = 352.f;
   static constexpr float kAudioRowH = 28.f;
 
-  // 开发者分区 (内置测试信号发生器): 相对分区基准 Y 的偏移
+  // 开发者分区相对基准 Y 的偏移
   static constexpr float kDevBtnGap = 8.f;
   static constexpr float kDevTitleOff = 12.f;
   static constexpr float kDevSignalOff = 36.f;
   static constexpr float kDevFreqHdrOff = 70.f;
-  static constexpr float kDevFreqOff = 96.f;   // = 上一行 header 偏移 + kHeaderH, 不重叠
+  static constexpr float kDevFreqOff = 96.f;
   static constexpr float kDevLevelHdrOff = 128.f;
-  static constexpr float kDevLevelOff = 154.f; // = 上一行 header 偏移 + kHeaderH, 不重叠
+  static constexpr float kDevLevelOff = 154.f;
   static constexpr float kDevBtnOff = 188.f;
   static constexpr float kDevToggleOff = 224.f;
-  static constexpr float kDevH = 266.f; // 分区总高, 叠加到基础卡片高度上
+  static constexpr float kDevH = 266.f;
 
   static constexpr int kHueMin = 15;
   static constexpr int kHueMax = 360;

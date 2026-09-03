@@ -7,24 +7,23 @@
 #include <string>
 
 // 插件全局 UI 偏好持久化
-// 文件位置:
-//   macOS: ~/Library/Application Support/OpenRM/<Plugin>.settings
-//   Windows: %APPDATA%/OpenRM/<Plugin>.settings
+// macOS: ~/Library/Application Support/OpenRM/<Plugin>.settings
+// Windows: %APPDATA%/OpenRM/<Plugin>.settings
 
 constexpr const char *kSettingsFileName = "ORMAnalyzer.settings";
 
 struct SettingsData {
-  int lang = -1;       // -1 = 未保存过, 用 DetectSystemLanguage()
+  int lang = -1;       // -1=未保存，用系统语言
   int hue = 45;
   int satMax = 15;
   int themeMode = 0;
-  int holdOn = -1;     // 峰值保持开关 (-1 = 未保存过, 用参数默认; 0/1 = 用户上次设置)
-  // 内置测试信号发生器 (开发者工具, ORM_ENABLE_TEST_GEN 关闭时不生效)
-  int genType = 0;       // orm::ETestSignal, 0 = OFF
-  double genFreq = 1000.0;  // Hz (对数滑杆 1 Hz .. 20 kHz)
-  double genLevel = -12.0;  // dBFS 峰值
-  int genHold = 0;       // 冻结时锁相位
-  int genToOutput = 0;   // 路由到输出 (默认关)
+  int holdOn = -1;     // 峰值保持开关，-1=未保存
+  // 内置测试信号发生器（ORM_ENABLE_TEST_GEN 关闭时不生效）
+  int genType = 0;
+  double genFreq = 1000.0;
+  double genLevel = -12.0;
+  int genHold = 0;
+  int genToOutput = 0;
 };
 
 inline std::string SettingsDir() {
