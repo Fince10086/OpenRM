@@ -42,72 +42,27 @@
 
 #include <stdlib.h>
 
-#include "spa_def.h"
-#include "spa_type.tab"
-#include "spa_phon.tab"
-#include "spa_err.tab"
-#include "la_def.h"
-#include "la_type.tab"
-#include "la_phon.tab"
-#include "la_err.tab"
-#include "ger_def.h"
-#include "ger_type.tab"
-#include "ger_phon.tab"
-#include "ger_err.tab"
 #include "usa_def.h"
 #include "usa_type.tab"
 #include "usa_phon.tab"
 #include "usa_err.tab"
-#include "uk_def.h"
-#include "uk_type.tab"
-#include "uk_phon.tab"
-#include "uk_err.tab"
-#include "fr_def.h"
-#include "fr_type.tab"
-#include "fr_phon.tab"
-#include "fr_err.tab"
 
 const unsigned char language_prefixes[] = {
-    'u', 's',
-    'u', 'k',
-    's', 'p',
-    'g', 'r',
-    'l', 'a',
-    'f', 'r'};
+    'u', 's'};
 
 const int language_size = sizeof(language_prefixes);
 
 const unsigned char* arpabet_arrays[] = {
-    usa_arpa,
-    uk_arpa,
-    spanish_arpa,
-    german_arpa,
-    la_arpa,
-    french_arpa};
+    usa_arpa};
 
 const unsigned int arpabet_sizes[] = {
-    sizeof(usa_arpa),
-    sizeof(uk_arpa),
-    sizeof(spanish_arpa),
-    sizeof(german_arpa),
-    sizeof(la_arpa),
-    sizeof(french_arpa)};
+    sizeof(usa_arpa)};
 
 const unsigned int arpabet_lang_flags[] = {
-    LANG_english,
-    LANG_british,
-    LANG_spanish,
-    LANG_german,
-    LANG_latin_american,
-    LANG_french};
+    LANG_english};
 
 const unsigned int arpabet_lang_fonts[] = {
-    PFUSA,
-    PFUK,
-    PFSP,
-    PFGR,
-    PFLA,
-    PFFR};
+    PFUSA};
 
 /* MVP : The below variable "nlt" is now made local to usa_init function and
  * dynamically allocated to support multiple instances of speech object.
@@ -172,75 +127,6 @@ void usa_init(PKSD_T pKsd_t) {
 		pnlt->lang_error	 = usa_error;
 	}
 
-	if(pKsd_t->lang_curr == LANG_british) {
-		pnlt->lang_id = LANG_british;
-		// CAB Removed warnings by typecast
-		pnlt->lang_ascky      = (unsigned char*)uk_ascky;
-		pnlt->lang_ascky_size = sizeof(uk_ascky);
-		// CAB Removed warnings by typecast
-		pnlt->lang_reverse_ascky = (unsigned int*)uk_ascky_rev;
-		pnlt->lang_arpabet	 = (unsigned char*)uk_arpa;
-		pnlt->lang_arpa_size	 = sizeof(uk_arpa);
-		pnlt->lang_arpa_case	 = FALSE;
-		pnlt->lang_typing	 = uk_type;
-		pnlt->lang_error	 = uk_error;
-	}
-
-	if(pKsd_t->lang_curr == LANG_latin_american) {
-		pnlt->lang_id = LANG_latin_american;
-		// CAB Removed warnings by typecast
-		pnlt->lang_ascky      = (unsigned char*)la_ascky;
-		pnlt->lang_ascky_size = sizeof(la_ascky);
-		// CAB Removed warnings by typecast
-		pnlt->lang_reverse_ascky = (unsigned int*)la_ascky_rev;
-		pnlt->lang_arpabet	 = (unsigned char*)la_arpa;
-		pnlt->lang_arpa_size	 = sizeof(la_arpa);
-		pnlt->lang_arpa_case	 = FALSE;
-		pnlt->lang_typing	 = la_type;
-		pnlt->lang_error	 = la_error;
-	}
-
-	if(pKsd_t->lang_curr == LANG_spanish) {
-		pnlt->lang_id = LANG_spanish;
-		// CAB Removed warnings by typecast
-		pnlt->lang_ascky      = (unsigned char*)spanish_ascky;
-		pnlt->lang_ascky_size = sizeof(spanish_ascky);
-		// CAB Removed warnings by typecast
-		pnlt->lang_reverse_ascky = (unsigned int*)spanish_ascky_rev;
-		pnlt->lang_arpabet	 = (unsigned char*)spanish_arpa;
-		pnlt->lang_arpa_size	 = sizeof(spanish_arpa);
-		pnlt->lang_arpa_case	 = FALSE;
-		pnlt->lang_typing	 = spanish_type;
-		pnlt->lang_error	 = spanish_error;
-	}
-
-	if(pKsd_t->lang_curr == LANG_german) {
-		pnlt->lang_id = LANG_german;
-		// CAB Removed warnings by typecast
-		pnlt->lang_ascky      = (unsigned char*)german_ascky;
-		pnlt->lang_ascky_size = sizeof(german_ascky);
-		// CAB Removed warnings by typecast
-		pnlt->lang_reverse_ascky = (unsigned int*)german_ascky_rev;
-		pnlt->lang_arpabet	 = (unsigned char*)german_arpa;
-		pnlt->lang_arpa_size	 = sizeof(german_arpa);
-		pnlt->lang_arpa_case	 = FALSE;
-		pnlt->lang_typing	 = german_type;
-		pnlt->lang_error	 = german_error;
-	}
-
-	if(pKsd_t->lang_curr == LANG_french) {
-		pnlt->lang_id = LANG_french;
-		// CAB Removed warnings by typecast
-		pnlt->lang_ascky      = (unsigned char*)french_ascky;
-		pnlt->lang_ascky_size = sizeof(french_ascky);
-		// CAB Removed warnings by typecast
-		pnlt->lang_reverse_ascky = (unsigned int*)french_ascky_rev;
-		pnlt->lang_arpabet	 = (unsigned char*)french_arpa;
-		pnlt->lang_arpa_size	 = sizeof(french_arpa);
-		pnlt->lang_arpa_case	 = FALSE;
-		pnlt->lang_typing	 = french_type;
-		pnlt->lang_error	 = french_error;
-	}
 
 	/* GL 12/12/1996  set the language table */
 	pKsd_t->ascky	      = pnlt->lang_ascky;

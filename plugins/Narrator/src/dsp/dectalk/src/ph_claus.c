@@ -254,12 +254,7 @@ void phclause(LPTTS_HANDLE_T phTTS) {
 	// affichetab1 (pDph_t);  // debug for FRENCH; keep it
 
 	// 3. Phonological rules, select allophones
-	// input  arrays: phonemes[nphonetot] and sentstruc[nphonetot]
-	// output arrays: allophons[nallotot] and allofeats[nallotot]
-	if(pKsd_t->lang_curr == LANG_french)
-		fr_phalloph(phTTS);
-	else
-		phalloph(phTTS);
+	phalloph(phTTS);
 
 	/*
 	 * for (i=0;i<pDph_t->nallotot;i++)
@@ -280,22 +275,7 @@ void phclause(LPTTS_HANDLE_T phTTS) {
 #endif
 
 	// 4. Duration rules
-	// input  arrays : allophons[nallotot] and allofeats[nallotot]
-	// output arrays : allodurs[nallotot]
-	if(pKsd_t->lang_curr == LANG_english)
-		us_phtiming(phTTS);
-	else if(pKsd_t->lang_curr == LANG_british)
-		uk_phtiming(phTTS);
-	else if(pKsd_t->lang_curr == LANG_spanish)
-		sp_phtiming(phTTS);
-	else if(pKsd_t->lang_curr == LANG_latin_american)
-		la_phtiming(phTTS);
-	// else if(pKsd_t->lang_curr == LANG_italian)
-	// it_phtiming (phTTS);
-	else if(pKsd_t->lang_curr == LANG_french)
-		fr_phtiming(phTTS);
-	else if(pKsd_t->lang_curr == LANG_german)
-		gr_phtiming(phTTS);
+	us_phtiming(phTTS);
 	// for (i=0;i<pDph_t->nallotot;i++) {
 	// 	printf("allodurs[%d]=%d user_durs[%d]=%d\n",
 	//          i,pDph_t->allodurs[i],i,pDph_t->user_durs[i]);
@@ -306,10 +286,7 @@ void phclause(LPTTS_HANDLE_T phTTS) {
 	// output arrays: f0tim[nf0tot], f0tar[nf0tot]
 	// GL 03/25/1998,  BATS#639 use phTTS argument instead of pDph_t
 
-	if(pKsd_t->lang_curr == LANG_french)
-		fr_phinton(phTTS);
-	else
-		phinton(phTTS);
+	phinton(phTTS);
 
 	// for (i=0;i<pDph_t->nf0tot;i++) {
 	//		printf("f0tim[%d]=%d  f0tar[%d]=%d\n",i,pDph_t->f0tim[i],i,pDph_t->f0tar[i]);

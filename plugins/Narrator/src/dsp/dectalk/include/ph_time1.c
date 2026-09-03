@@ -41,8 +41,3 @@
 #else
 #include "p_us_tim.c"
 #endif
-#include "p_uk_tim.c"
-#include "p_sp_tim.c"
-#include "p_la_tim.c"
-#include "p_gr_tim.c"
-#include "p_fr_tim.c"

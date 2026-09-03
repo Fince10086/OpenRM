@@ -76,11 +76,6 @@ extern unsigned int   arpabet_lang_flags[];
 extern unsigned int   arpabet_lang_fonts[];
 
 extern unsigned char usa_arpa[];
-extern unsigned char spanish_arpa[];
-extern unsigned char la_arpa[];
-extern unsigned char german_arpa[];
-extern unsigned char uk_arpa[];
-extern unsigned char french_arpa[];
 
 void dologphoneme(LPTTS_HANDLE_T phTTS, short phone, short dur, short f0);
 
@@ -474,87 +469,13 @@ void dologphoneme(LPTTS_HANDLE_T phTTS, short phone, short dur, short f0) {
 }
 
 unsigned char _far* PrintLangBit(LPTTS_HANDLE_T phTTS, short tmp) {
-	PKSD_T pKsd_t;
-
-	pKsd_t = phTTS->pKernelShareData;
-
-	switch(tmp) {
-	case PFUSA:
-		printf("us_");
-		if((pKsd_t->logflag & LOG_OUTPHON) || (pKsd_t->logflag & LOG_PHONEMES)) {
-			if(fprintf(phTTS->pLogFile, "us_") < 0) {
-				// TextToSpeechErrorHandler (phTTS,
-				//	ERROR_WRITING_FILE,
-				//	0L);
-			}
+	PKSD_T pKsd_t = phTTS->pKernelShareData;
+	(void)tmp;
+	if((pKsd_t->logflag & LOG_OUTPHON) || (pKsd_t->logflag & LOG_PHONEMES)) {
+		if(fprintf(phTTS->pLogFile, "us_") < 0) {
 		}
-		return usa_arpa;
-		break;
-
-	case PFUK:
-		printf("uk_");
-		if((pKsd_t->logflag & LOG_OUTPHON) || (pKsd_t->logflag & LOG_PHONEMES)) {
-			if(fprintf(phTTS->pLogFile, "uk_") < 0) {
-				// TextToSpeechErrorHandler (phTTS,
-				//	ERROR_WRITING_FILE,
-				//	0L);
-			}
-		}
-		return uk_arpa;
-		break;
-
-	case PFSP:
-		printf("sp_");
-		if((pKsd_t->logflag & LOG_OUTPHON) || (pKsd_t->logflag & LOG_PHONEMES)) {
-			if(fprintf(phTTS->pLogFile, "sp_") < 0) {
-				// TextToSpeechErrorHandler (phTTS,
-				//	ERROR_WRITING_FILE,
-				//	0L);
-			}
-		}
-		return spanish_arpa;
-		break;
-
-	case PFLA:
-		printf("la_");
-		if((pKsd_t->logflag & LOG_OUTPHON) || (pKsd_t->logflag & LOG_PHONEMES)) {
-			if(fprintf(phTTS->pLogFile, "la_") < 0) {
-				// TextToSpeechErrorHandler (phTTS,
-				//	ERROR_WRITING_FILE,
-				//	0L);
-			}
-		}
-		return la_arpa;
-		break;
-
-	case PFGR:
-		printf("gr_");
-		if((pKsd_t->logflag & LOG_OUTPHON) || (pKsd_t->logflag & LOG_PHONEMES)) {
-			if(fprintf(phTTS->pLogFile, "gr_") < 0) {
-				// TextToSpeechErrorHandler (phTTS,
-				//	ERROR_WRITING_FILE,
-				//	0L);
-			}
-		}
-		return german_arpa;
-		break;
-
-	case PFFR:
-		printf("fr_");
-		if((pKsd_t->logflag & LOG_OUTPHON) || (pKsd_t->logflag & LOG_PHONEMES)) {
-			if(fprintf(phTTS->pLogFile, "fr_") < 0) {
-				// TextToSpeechErrorHandler (phTTS,
-				//	ERROR_WRITING_FILE,
-				//	0L);
-			}
-		}
-		return french_arpa;
-		break;
-
-	default:
-		return pKsd_t->arpabet;
-		break;
 	}
+	return usa_arpa;
 }
 
 /************************************end of phlog.c***************************/

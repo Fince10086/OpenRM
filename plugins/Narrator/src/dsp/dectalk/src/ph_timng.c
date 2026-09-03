@@ -363,68 +363,17 @@ void prphdurs(PDPH_T pDph_t) {
 }
 /***************************end of ph_timng.c*********************************/
 int min_timing(LPTTS_HANDLE_T phTTS, int phone) {
-
 	extern const short us_mindur[];
-	extern const short gr_mindur[];
-	extern const short la_mindur[];
-	extern const short sp_mindur[];
-	extern const short uk_mindur[];
-	extern const short fr_mindur[];
-
-	int tmp;
-	tmp = phone & PFONT;
+	(void)phTTS;
 	if((phone & PVALUE) >= 100)
 		return (0);
-	if(tmp == PFUSA << PSFONT) {
-		return (us_mindur[phone & PVALUE]);
-	} else if(tmp == PFUK << PSFONT) {
-		return (uk_mindur[phone & PVALUE]);
-	} else if(tmp == PFGR << PSFONT) {
-		return (gr_mindur[phone & PVALUE]);
-	} else if(tmp == PFLA << PSFONT) {
-		return (la_mindur[phone & PVALUE]);
-	} else if(tmp == PFSP << PSFONT) {
-		return (sp_mindur[phone & PVALUE]);
-	} else if(tmp == PFFR << PSFONT) {
-		return (fr_mindur[phone & PVALUE]);
-	} else {
-#ifdef PH_DEBUG_OLD
-		printf("OH MY GOD! THEY'VE KILLED KENNY\n");
-#endif
-		return (us_mindur[phone & PVALUE]);
-	}
+	return (us_mindur[phone & PVALUE]);
 }
 
 int inh_timing(LPTTS_HANDLE_T phTTS, int phone) {
 	extern const short us_inhdr[];
-	extern const short uk_inhdr[];
-	extern const short gr_inhdr[];
-	extern const short la_inhdr[];
-	extern const short sp_inhdr[];
-	extern const short fr_inhdr[];
-
-	int tmp;
-	tmp = phone & PFONT;
+	(void)phTTS;
 	if((phone & PVALUE) >= 100)
 		return (0);
-	if(tmp == PFUSA << PSFONT) {
-		tmp = phone & PVALUE;
-		return (us_inhdr[tmp /*phone & PVALUE*/]);
-	} else if(tmp == PFUK << PSFONT) {
-		return (uk_inhdr[phone & PVALUE]);
-	} else if(tmp == PFGR << PSFONT) {
-		return (gr_inhdr[phone & PVALUE]);
-	} else if(tmp == PFLA << PSFONT) {
-		return (la_inhdr[phone & PVALUE]);
-	} else if(tmp == PFSP << PSFONT) {
-		return (sp_inhdr[phone & PVALUE]);
-	} else if(tmp == PFFR << PSFONT) {
-		return (fr_inhdr[phone & PVALUE]);
-		// when we have french change to fr_
-	} else {
-#ifdef PH__DEBUG_OLD
-		printf("OH MY GOD! THEY'VE KILLED KENNY\n");
-#endif
-		return (us_inhdr[phone & PVALUE]);
-	}
+	return (us_inhdr[phone & PVALUE]);
 }

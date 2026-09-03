@@ -37,8 +37,6 @@
 
 #include "dectalkf.h"
 
-// really too different to be merged  Michel
-#include "ph_fr_inton2.c"
 
 #ifdef HLSYN
 #include "ph_inton2.c"
