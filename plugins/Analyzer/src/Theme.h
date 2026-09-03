@@ -63,6 +63,47 @@ inline IColor HSBToIColor(int h, float s, float b) {
                 (int)std::lround((bl + m) * 255.f));
 }
 
+inline float OklchGamma(float v) {
+  v = std::clamp(v, 0.f, 1.f);
+  return v <= 0.0031308f ? 12.92f * v : 1.055f * std::pow(v, 1.f / 2.4f) - 0.055f;
+}
+
+// OKLCH → IColor。L 感知均匀，用它钉住明度可让色相/饱和度变化不再影响可读的明度差。
+// 超 sRGB 色域时按 10% 步进收缩 chroma 回落（而非截断通道），色相与明度都保持不变
+inline IColor OklchToIColor(float L, float C, float h) {
+  const float hr = h * 0.017453292519943295f;
+  const float cosH = std::cos(hr), sinH = std::sin(hr);
+  for (int i = 0; i <= 10; ++i) {
+    const float cc = C * (1.f - 0.1f * (float)i);
+    const float oa = cc * cosH, ob = cc * sinH;
+    const float l_ = L + 0.3963377774f * oa + 0.2158037573f * ob;
+    const float m_ = L - 0.1055613458f * oa - 0.0638541728f * ob;
+    const float s_ = L - 0.0894841775f * oa - 1.2914855480f * ob;
+    const float l = l_ * l_ * l_, m = m_ * m_ * m_, s = s_ * s_ * s_;
+    const float r = 4.0767416621f * l - 3.3077115913f * m + 0.2309699292f * s;
+    const float g = -1.2684380046f * l + 2.6097574011f * m - 0.3413193965f * s;
+    const float bl = -0.0041960863f * l - 0.7034186147f * m + 1.7076147010f * s;
+    if (r >= -0.001f && r <= 1.001f && g >= -0.001f && g <= 1.001f && bl >= -0.001f && bl <= 1.001f)
+      return IColor(255, (int)std::lround(OklchGamma(r) * 255.f),
+                    (int)std::lround(OklchGamma(g) * 255.f),
+                    (int)std::lround(OklchGamma(bl) * 255.f));
+  }
+  const int gray = (int)std::lround(OklchGamma(L) * 255.f);
+  return IColor(255, gray, gray, gray);
+}
+
+// 主题 sat 仅取 0/15/30/50 四档，50 档即满设计强度。旧映射上限 0.5 让电平表
+// 永远到不了色标设计的饱和度，是"发浅"的主因之一
+inline float MeterChromaScale() {
+  static constexpr int kX[4] = {0, 15, 30, 50};
+  static constexpr float kY[4] = {0.f, 0.55f, 0.80f, 1.f};
+  const int sat = std::clamp(ThemeSatMax(), 0, 50);
+  for (int i = 0; i < 3; ++i)
+    if (sat <= kX[i + 1])
+      return kY[i] + (kY[i + 1] - kY[i]) * (float)(sat - kX[i]) / (float)(kX[i + 1] - kX[i]);
+  return 1.f;
+}
+
 inline IColor COL_900() {
   const int B = ThemeMode() ? kDarkB[0] : kLightB[0];
   return HSBToIColor(ThemeHue(), SatForB(B) / 100.f, B / 100.f);

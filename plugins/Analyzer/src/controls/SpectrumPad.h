@@ -730,10 +730,6 @@ private:
     const IRECT barL(scaleL + kVuScaleW, plot.T, scaleL + kVuScaleW + kVuBarW, plot.B);
     const IRECT barR(barL.R, plot.T, barL.R + kVuBarW, plot.B);
 
-    const float satScale = (ThemeSatMax() <= 30)
-                               ? ((float)ThemeSatMax() / 30.f)
-                               : (1.f + (float)(ThemeSatMax() - 30) / 55.f);
-
     auto tOfV = [](float vu) {
       return std::clamp((kVuTopDb - vu) / (kVuTopDb - kVuBottomVU), 0.f, 1.f);
     };
@@ -741,22 +737,31 @@ private:
       return bar.B - (vu - kVuBottomVU) / (kVuTopDb - kVuBottomVU) * bar.H();
     };
 
-    struct MeterStop {
+    // OKLCH 色标，只有红/绿两区：红与 dB 条顶端同色相，绿收到 dB 条底色。
+    // 绿→红跨度大，接缝只留 1.5% 表高——段内是 sRGB 插值，缝太宽会拉出一条橄榄色
+    struct VuStop {
       float t;
-      int h;
-      float s;
-      float b;
+      float l, c, h;
     };
-    const MeterStop stops[] = {
-      {0.f, 0, 0.72f, 0.93f},
-      {tOfV(-3.f), 120, 0.55f, 0.78f},
-      {1.f, 150, 0.62f, 0.40f},
+    const float vuSeam = tOfV(-3.f);
+    const VuStop kVuStopsLight[] = {
+      {0.f,        0.620f, 0.205f, 27.f},
+      {vuSeam,     0.620f, 0.205f, 27.f},
+      {vuSeam + 0.015f, 0.560f, 0.135f, 140.f},
+      {1.f,        0.420f, 0.095f, 165.f},
     };
-    const int nStops = (int)(sizeof(stops) / sizeof(stops[0]));
+    const VuStop kVuStopsDark[] = {
+      {0.f,        0.720f, 0.200f, 25.f},
+      {vuSeam,     0.720f, 0.200f, 25.f},
+      {vuSeam + 0.015f, 0.660f, 0.145f, 138.f},
+      {1.f,        0.510f, 0.085f, 165.f},
+    };
+    const VuStop *stops = ThemeMode() ? kVuStopsDark : kVuStopsLight;
+    const int nStops = (int)(sizeof(kVuStopsLight) / sizeof(kVuStopsLight[0]));
+    const float cScale = MeterChromaScale();
 
-    auto meterColor = [&](const MeterStop &st, int alpha) {
-      const float s = std::clamp(st.s * satScale, 0.f, 1.f);
-      const IColor c = HSBToIColor(st.h, s, st.b);
+    auto meterColor = [&](const VuStop &st, int alpha) {
+      const IColor c = OklchToIColor(st.l, st.c * cScale, st.h);
       return IColor(alpha, c.R, c.G, c.B);
     };
 
@@ -824,16 +829,29 @@ private:
     g.DrawText(vuLbl, "VU", IRECT(barL.L, plot.B - 19.f, barR.R, plot.B));
   }
 
-  static float MeterSatScale2() {
-    const int sat = ThemeSatMax();
-    return (sat <= 30) ? (float)sat / 30.f : (1.f + (float)(sat - 30) / 55.f);
+  // LUFS 色标：按窗口分数布点（0=botL、1=topL，目标线恒在 2/3），所以 scaleOff 缩放时形状不变。
+  // 底部绿→顶部黄、无红；绿→黄之间插一段更亮的青柠，段内 sRGB 插值才不会落进橄榄色。
+  // 浅色主题顶端 L 压在 0.67：再亮就与近白的 COL_300 槽底失去明度差，即"发浅"的老问题
+  struct LoudStop {
+    float f;
+    float l, c, h;
+  };
+  static const LoudStop *LoudStopTable(int &n) {
+    static const LoudStop kLight[] = {
+      {0.00f, 0.440f, 0.100f, 158.f}, {0.37f, 0.520f, 0.128f, 142.f},
+      {0.63f, 0.560f, 0.140f, 133.f}, {0.70f, 0.610f, 0.152f, 112.f},
+      {0.78f, 0.645f, 0.160f, 98.f},  {1.00f, 0.670f, 0.165f, 88.f},
+    };
+    static const LoudStop kDark[] = {
+      {0.00f, 0.530f, 0.095f, 158.f}, {0.37f, 0.585f, 0.120f, 142.f},
+      {0.63f, 0.630f, 0.135f, 133.f}, {0.70f, 0.700f, 0.150f, 112.f},
+      {0.78f, 0.760f, 0.158f, 98.f},  {1.00f, 0.840f, 0.165f, 88.f},
+    };
+    n = (int)(sizeof(kLight) / sizeof(kLight[0]));
+    return ThemeMode() ? kDark : kLight;
   }
-  static IColor SemColor(IColor c) {
-    const float m = std::clamp(MeterSatScale2(), 0.f, 1.f);
-    const float lum = 0.299f * c.R + 0.587f * c.G + 0.114f * c.B;
-    return IColor(c.A, (int)std::lround(c.R * m + lum * (1.f - m)),
-                       (int)std::lround(c.G * m + lum * (1.f - m)),
-                       (int)std::lround(c.B * m + lum * (1.f - m)));
+  static IColor LoudStopColor(const LoudStop &st) {
+    return OklchToIColor(st.l, st.c * MeterChromaScale(), st.h);
   }
 
   void DrawLoudBars(IGraphics &g, const IRECT &plot, const IRECT &skipRect) {
@@ -882,24 +900,18 @@ private:
       g.FillRect(COL_900(), IRECT(barI.L, yT - 1.f, barM.R, yT + 1.f));
     }
 
-    // 语义色段: ≤目标-1 黄 / |Δ|≤1 绿 / ≥目标+1 红
-    struct LStop { float lufs; IColor c; };
-    const LStop stops[] = {
-      {botL, SemColor(MeterYellow())},
-      {mTarget - 1.f, SemColor(MeterGreen())},
-      {mTarget + 1.f, SemColor(MeterRed())},
-      {topL, SemColor(MeterRed())},
-    };
-    const int nStops = (int)(sizeof(stops) / sizeof(stops[0]));
+    int nStops = 0;
+    const LoudStop *stops = LoudStopTable(nStops);
     const float seamOv = 1.f / std::max(1.f, g.GetScreenScale() * g.GetDrawScale());
+    auto yOfF = [&](float f) { return plot.B - std::clamp(f, 0.f, 1.f) * plot.H(); };
 
     auto drawBar = [&](const IRECT &bar, float lufs, const char *label) {
       g.FillRect(COL_300(), bar);
       if (lufs > -99.f) {
         const float yTop = LoudYOf(plot, lufs);
         for (int i = 0; i + 1 < nStops; ++i) {
-          const float yA = LoudYOf(plot, stops[i].lufs);
-          const float yB = LoudYOf(plot, stops[i + 1].lufs);
+          const float yA = yOfF(stops[i].f);
+          const float yB = yOfF(stops[i + 1].f);
           if (yA <= yTop)
             continue;
           const float rT = std::max(yB - seamOv, yTop);
@@ -907,8 +919,8 @@ private:
           if (rB - rT <= 0.f)
             continue;
           IPattern grad = IPattern::CreateLinearGradient(bar.L, yA, bar.L, yB);
-          grad.AddStop(stops[i].c, 0.f);
-          grad.AddStop(stops[i + 1].c, 1.f);
+          grad.AddStop(LoudStopColor(stops[i]), 0.f);
+          grad.AddStop(LoudStopColor(stops[i + 1]), 1.f);
           g.PathClear();
           g.PathRect(IRECT(bar.L, rT, bar.R, rB));
           g.PathFill(grad);
@@ -963,7 +975,8 @@ private:
 
     const float zoneL = plot.R + kMeterStripW - kLraZoneW;
     const float zoneR = plot.R + kMeterStripW;
-    const IColor col = SemColor(MeterYellow());
+    int nStops = 0;
+    const IColor col = LoudStopColor(LoudStopTable(nStops)[nStops - 1]);
 
     constexpr float kSpineW = 1.5f, kCapH = 1.5f, kCapLen = 6.f;
     g.FillRect(col, IRECT(zoneL, yTop, zoneL + kSpineW, yBot));
@@ -1010,25 +1023,33 @@ private:
       return std::clamp((kTopDb - db) / (kTopDb - mBottomDb), 0.f, 1.f);
     };
 
-    const int satClamp = std::min(ThemeSatMax(), 50);
-    const float satScale = (satClamp <= 15) ? ((float)satClamp / 60.f)
-                                            : (0.25f + (float)(satClamp - 15) / 140.f);
-
-    struct MeterStop { float t; int h; float s; float b; };
-    const MeterStop stops[] = {
-      {0.f, 0, 0.73f, 0.87f},
-      {tOf(0.f), 4, 0.71f, 0.92f},
-      {tOf(-6.f), 32, 0.78f, 0.94f},
-      {tOf(-14.f), 50, 0.73f, 0.86f},
-      {tOf(-24.f), 140, 0.58f, 0.71f},
-      {tOf(-48.f), 150, 0.68f, 0.60f},
-      {1.f, 156, 0.70f, 0.48f},
+    // OKLCH 色标：每段 L 钉死 → 各段对槽底 COL_300 的明度差恒定，主题 sat 只缩放 chroma，
+    // 所以低饱和主题退成对比充足的灰阶而不是发白。深色主题整体提亮，色相仍走固定语义色
+    struct MeterStop { float t; float l, c, h; };
+    const MeterStop kStopsLight[] = {
+      {0.f,         0.560f, 0.200f, 25.f},
+      {tOf(0.f),    0.600f, 0.200f, 40.f},
+      {tOf(-6.f),   0.700f, 0.170f, 70.f},
+      {tOf(-14.f),  0.725f, 0.145f, 88.f},
+      {tOf(-24.f),  0.640f, 0.140f, 133.f},
+      {tOf(-48.f),  0.500f, 0.115f, 158.f},
+      {1.f,         0.410f, 0.085f, 168.f},
     };
-    const int nStops = (int)(sizeof(stops) / sizeof(stops[0]));
+    const MeterStop kStopsDark[] = {
+      {0.f,         0.680f, 0.205f, 25.f},
+      {tOf(0.f),    0.715f, 0.200f, 40.f},
+      {tOf(-6.f),   0.790f, 0.170f, 70.f},
+      {tOf(-14.f),  0.830f, 0.148f, 88.f},
+      {tOf(-24.f),  0.740f, 0.140f, 130.f},
+      {tOf(-48.f),  0.620f, 0.115f, 155.f},
+      {1.f,         0.510f, 0.085f, 165.f},
+    };
+    const MeterStop *stops = ThemeMode() ? kStopsDark : kStopsLight;
+    const int nStops = (int)(sizeof(kStopsLight) / sizeof(kStopsLight[0]));
+    const float cScale = MeterChromaScale();
 
     auto meterColor = [&](const MeterStop &st, int alpha) {
-      const float s = std::clamp(st.s * satScale, 0.f, 1.f);
-      const IColor c = HSBToIColor(st.h, s, st.b);
+      const IColor c = OklchToIColor(st.l, st.c * cScale, st.h);
       return IColor(alpha, c.R, c.G, c.B);
     };
 
