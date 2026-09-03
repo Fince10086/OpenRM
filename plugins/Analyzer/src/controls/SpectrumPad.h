@@ -22,34 +22,33 @@ BEGIN_IGRAPHICS_NAMESPACE
 
 class SpectrumPad : public IControl {
 public:
-  // 尺寸必须与四个分析引擎的数据包严格一致 (ISender 整体拷贝，不一致会读取失败)
+  // 尺寸必须与四个分析引擎的数据包严格一致 (ISender 整体拷贝)
   using TDataPacket = std::array<float, 8192>;
 
   enum MsgTags {
     kMsgTagSampleRate = 1,
     kMsgTagFFTSize,
     kMsgTagRelease,
-    kMsgTagReleaseMode, // 释放回落模式 (0: 对数域单极点, 1: 匀速 dB 速率)
+    kMsgTagReleaseMode,
     kMsgTagRange,
-    kMsgTagSlope,       // 频谱斜率 dB/oct (当前模式生效值)
+    kMsgTagSlope,
     kMsgTagMode,
     kMsgTagVQTBands,
-    kMsgTagReset,       // 清空平滑缓冲 (γ/BPO/模式切换时下发)
-    kMsgTagChanMode,    // 声道显示模式 (0: L/R, 1: MERGE)
-    kMsgTagMergeAlgo,   // 合并算法 (0: PWR, 1: SUM)
-    kMsgTagLevelMeter,  // 电平表数据 (LevelMeterUiData)
-    kMsgTagLoudness,    // 响度数据 (LoudnessUiData)
-    kMsgTagPBTBands,    // PBT 频带中心频率 (Hz)
-    kMsgTagRTABands,    // RTA 频带中心频率 (Hz)
+    kMsgTagReset,
+    kMsgTagChanMode,
+    kMsgTagMergeAlgo,
+    kMsgTagLevelMeter,
+    kMsgTagLoudness,
+    kMsgTagPBTBands,
+    kMsgTagRTABands,
   };
 
-  // 电平条点击动作 (Analyzer.cpp 绑定回调)
   enum EMeterClick {
-    kClickResetPersist,   // dBTP 模式: 清持久锁存
-    kClickResetMeterHold, // dBFS 模式: 清峰值保持
-    kClickResetOver,      // dBFS 模式: 清过载
-    kClickLoudScale,      // 响度窗顶刻度: 循环偏移 (+9/+18 LU)
-    kClickLoudPreset,     // 响度目标刻度: 循环预设 (-9/-14/-23/-24 LUFS)
+    kClickResetPersist,
+    kClickResetMeterHold,
+    kClickResetOver,
+    kClickLoudScale,
+    kClickLoudPreset,
   };
   std::function<void(EMeterClick)> mMeterClickHandler;
 
@@ -58,7 +57,6 @@ public:
     mSpecPtsR.reserve(kSpectrumBands);
     mSpecPtsM.reserve(kSpectrumBands);
     RebuildBinToBand();
-    // 预计算 256 band 的对数频率归一化位置，绘制时只做乘加
     const double logLo = std::log2(kSpecFreqLo);
     const double logHi = std::log2(kSpecFreqHi);
     const double logBand = (logHi - logLo) / kSpectrumBands;
@@ -69,7 +67,6 @@ public:
     mHoldPts.reserve(kSpectrumBands);
   }
 
-  // 清空频谱峰值保持 (RESET 按钮联动; hold 关闭时自动调用一次)
   void ClearPeakHold() {
     for (int c = 0; c < 3; ++c) {
       mHoldSpec[c].assign(mHoldSpec[c].size(), -1000.f);
@@ -79,7 +76,6 @@ public:
     SetDirty(false);
   }
 
-  // 快捷键 P 切换绘制耗时 HUD
   void ToggleHud() {
     mHudOn = !mHudOn;
     SetDirty(false);
@@ -92,7 +88,6 @@ public:
       ++mDataPkts;
       ISenderData<3, TDataPacket> d;
       stream.Get(&d, 0);
-      // FFT: 数据 = bins; VQT/PBT/RTA: 数据 = band 幅度
       const int nVals = (mMode == 0) ? std::max(mNumBins, 0)
                                      : (mMode == 1) ? (int)mVQTFreqs.size()
                                      : (mMode == 2) ? (int)mPBTFreqs.size()
@@ -100,19 +95,16 @@ public:
       if (nVals <= 0)
         return;
 
-      // hop 恒 1024 样本 (FFT overlap 规则保证，其余引擎 kHop 固定 1024)
       const double hop = 1024.0;
       const double updatePeriod = hop / std::max(mSampleRate, 1.0);
       mAttackCoeff = (float)std::exp(-updatePeriod / mAttackSec);
       mReleaseCoeff = (float)std::exp(-updatePeriod / mReleaseSec);
-      // 匀速档: 每帧固定屏高比例下落 (2·τ 秒跨一屏)，与显示范围/斜率无关
       const float unifStepDb = (float)(updatePeriod / (2.0 * std::max(mReleaseSec, 1e-3f)) * (kTopDb - mBottomDb));
 
       const float a = mAttackCoeff, r = mReleaseCoeff;
       if (mMode == 0) {
         ProcessFFTBands(d, a, r, unifStepDb);
       } else {
-        // VQT/PBT/RTA: 逐 band 显示域弹道
         const float *tilt = mSlopeDb.empty() ? nullptr : mSlopeDb.data();
         for (int c = 0; c < 3; ++c) {
           if (mSpectrum[c].size() != (size_t)nVals)
@@ -123,7 +115,7 @@ public:
             const float target = SmoothTarget(rawDb, tilt ? tilt[i] : 0.f);
             float aCoef = a;
             if (mMode == 2 && mPBTFreqs.size() == (size_t)nVals) {
-              // PBT 物理起振 τ = 1/(π·bw): 窄带低频展现自然蓄力爬坡
+              // PBT 起振 τ = 1/(π·bw): 窄带低频自然蓄力爬坡
               const float fc = mPBTFreqs[i];
               const float bw = (fc < 250.f)
                   ? ((i > 0 && mPBTFreqs[i] < 250.f) ? (mPBTFreqs[i] - mPBTFreqs[i - 1]) : 40.f)
@@ -169,7 +161,7 @@ public:
       int mode;
       stream.Get(&mode, 0);
       mMode = std::clamp(mode, 0, 3);
-      RebuildSlopeGain(); // 斜率档值随模式变化
+      RebuildSlopeGain();
       SetDirty(false);
     } else if (msgTag == kMsgTagChanMode) {
       int chanMode;
@@ -273,7 +265,6 @@ public:
     }
   }
 
-  // 点击优先级: 响度刻度按钮 > L/R 条区域 (dBTP 清持久锁存; dBFS 顶部清过载/条体清峰值保持)
   void OnMouseDown(float x, float y, const IMouseMod &mod) override {
     if (!mMeterClickHandler)
       return;
@@ -308,7 +299,6 @@ public:
     }
   }
 
-  // hover 十字准线: 记录位置并重绘，离开时清除
   void OnMouseOver(float x, float y, const IMouseMod &mod) override {
     if (!mHoverActive || mHoverX != x || mHoverY != y) {
       mHoverX = x;
@@ -325,7 +315,6 @@ public:
     }
   }
 
-  // 绘制耗时采样外壳 + HUD; 实际内容在 DrawContent
   void Draw(IGraphics &g) override {
     const auto perfT0 = std::chrono::steady_clock::now();
     DrawContent(g);
@@ -337,12 +326,9 @@ public:
 private:
   void DrawContent(IGraphics &g) {
     g.FillRect(COL_100(), mRECT);
-    // 图形区左对齐，右侧让出电平条带；物理像素对齐避免亚像素白边
     const IRECT plot = mRECT.GetReducedFromRight(kMeterStripW)
                            .GetPixelAligned(g.GetScreenScale() * g.GetDrawScale());
 
-    // hover 准线分三个刻度域: 频谱+L/R 条 (共用 dB) | VU 表 | 响度条；
-    // 竖线+频率读数只在频谱区，dBFS 模式 L/R 条顶部 LED 区不显示准线
     const float zoneLr = LrZoneR(plot);
     const float zoneVu = VuZoneR(plot);
     const bool ledArea = (mMeterMode == 1) && (mHoverX > plot.R) &&
@@ -405,7 +391,7 @@ private:
                           yLine + 1.f + kLabelH);
         g.MeasureText(lufsText, lufsBuf, lufsBox);
         lufsChip = lufsBox.GetPadded(2.f);
-        // LUFS 读数与固定刻度重叠时纵向平移让开，使刻度按钮始终可见可点
+        // LUFS 读数与刻度按钮重叠时纵向平移让开
         {
           const float gap = 3.f;
           const IRECT btnObstacles[3] = {LoudScaleTickBtnRect(plot),
@@ -488,9 +474,6 @@ private:
   }
 
 private:
-  // ---- 绘制耗时采样与 HUD (快捷键 P 开关) ----
-
-  // 采样一次 pad 绘制耗时; data/hover 帧分类 = 自上次绘制以来是否收到过数据包
   void PerfSample(float ms) {
     mHudMs[mHudPos] = ms;
     mHudIsData[mHudPos] = (mDataPkts > 0) ? 1 : 0;
@@ -502,7 +485,6 @@ private:
       ++mHudFill;
   }
 
-  // 绘制耗时 HUD (绘图区左下角，最近 120 次绘制 ~2s)
   void DrawHud(IGraphics &g) {
     if (mHudFill <= 0)
       return;
@@ -550,9 +532,7 @@ private:
     g.DrawText(t, l2, IRECT(box.L + 4.f, box.T + 19.f, box.R, box.B - 2.f));
   }
 
-  // 静态背景网格离屏缓存: 只依赖 Range 底限与主题三值，任一变化才重建
   void DrawGridLayer(IGraphics &g, const IRECT &plot) {
-    // 层位图四周外扩 1px 吸收纹理边缘亚像素瑕疵
     const IRECT gridRect = plot.GetPadded(1.f);
     const int hue = ThemeHue(), sat = ThemeSatMax(), mode = ThemeMode();
     if (!g.CheckLayer(mGridLayer) || mBottomDb != mGridBottomDb || hue != mGridHue || sat != mGridSat ||
@@ -572,12 +552,10 @@ private:
     float x, y;
   };
 
-  // 频率(Hz) -> 归一化 x (0..1)，与 BandPass Freq 参数一致
   static float FreqNorm(double hz) {
     return (float)(std::log(std::clamp(hz, 20.0, 20000.0) / 20.0) / std::log(20000.0 / 20.0));
   }
 
-  // 频率 -> 最近音高
   static void FreqToNoteName(double hz, char *out, int outSize) {
     static const char *const kNoteNames[12] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
     const int nn = (int)std::lround(12.0 * std::log2(hz / 440.0)) + 69;
@@ -586,7 +564,6 @@ private:
 
   float XOf(const IRECT &plot, double f) const { return plot.L + FreqNorm(f) * plot.W(); }
 
-  // 频率×dB 二维色块网格背景; edge 为层位图边界 (比 plot 大 1px)
   void DrawBackground(IGraphics &g, const IRECT &plot, const IRECT &edge) {
     if (mBottomDb >= 0.f)
       return;
@@ -647,7 +624,6 @@ private:
       return kVDbTop + (kVDbBottom - kVDbTop) * t;
     };
 
-    // 相邻 cell 各向右侧/下侧重叠 1px，消除抗锯齿亚像素间隙
     const size_t nRows = dbBounds.size();
     const size_t nCols = freqCells.size();
     for (size_t r = 0; r + 1 < nRows; ++r) {
@@ -663,7 +639,6 @@ private:
     }
   }
 
-  // 电平表满刻度: dBTP +6 dB / dBFS 0 dBFS；刻度网格仍固定到 kTopDb，顶部空出放 over LED
   float MeterTopDb() const {
     return (mMeterMode == 1) ? 0.f : kTopDb;
   }
@@ -672,7 +647,6 @@ private:
     return plot.B - (db - mBottomDb) / (kTopDb - mBottomDb) * plot.H();
   }
 
-  // 电平条带分三个刻度域: 频谱+L/R 条 (共用 dB) | VU 表 | 响度条
   float LrZoneR(const IRECT &plot) const { return plot.R + 2.f * kGainBarW; }
   float VuZoneR(const IRECT &plot) const { return LrZoneR(plot) + kVuScaleW + 2.f * kVuBarW; }
 
@@ -684,7 +658,6 @@ private:
     return IRECT(scaleL, y - kLabelH - 1.f, scaleL + kVuScaleW - kTickRight, y - 1.f);
   }
 
-  // 响度条目标锚定刻度窗: 顶/底 LUFS (目标无效退回固定 -60..0)
   void LoudWindow(float &topL, float &botL) const {
     if (mTarget > -100.f) {
       topL = mTarget + mScaleOff;
@@ -710,7 +683,6 @@ private:
     return IRECT(scaleL, y - kLabelH - 1.f, scaleL + kLufsScaleW - kTickRight, y - 1.f);
   }
 
-  // 响度刻度按钮 (窗顶值 / 目标值): 文字与普通刻度一致，hover 时垫半透明遮罩
   static IRECT LoudTickBtnRect(const IRECT &labelR) {
     return IRECT(labelR.L, labelR.T - 1.f, labelR.R + 1.f, labelR.B + 1.f);
   }
@@ -723,7 +695,6 @@ private:
     return LoudTickBtnRect(LufsTickRect(plot, mTarget));
   }
 
-  // L/R 双电平表 + 独立 VU 表 + 响度条
   void DrawLevelMeter(IGraphics &g, const IRECT &plot, const IRECT &vuSkip, const IRECT &lufsSkip) {
     IColor cL, cR, cM;
     GetChannelColors(cL, cR, cM);
@@ -739,7 +710,6 @@ private:
     DrawLoudBars(g, plot, lufsSkip);
   }
 
-  // VU 表刻度文字: -20/-10/0/+3，画在 L/R 条与 VU 表之间；hover 读数重叠时隐藏让位
   void DrawVuScale(IGraphics &g, const IRECT &plot, const IRECT &skipRect) {
     const IText t(14, COL_700(), kFontRegular, EAlign::Far, EVAlign::Bottom);
     struct VuTick {
@@ -755,7 +725,6 @@ private:
     }
   }
 
-  // 独立 VU 表双条 (L/R): 0 VU = -18 dBFS，刻度 -20..+3 VU；两段语义色渐变
   void DrawVuBar(IGraphics &g, const IRECT &plot) {
     const float scaleL = plot.R + 2.f * kGainBarW;
     const IRECT barL(scaleL + kVuScaleW, plot.T, scaleL + kVuScaleW + kVuBarW, plot.B);
@@ -811,7 +780,7 @@ private:
     auto drawBar = [&](const IRECT &bar, float vuDb, float vuHold) {
       g.FillRect(COL_300(), bar);
 
-      // NanoVG 后端不支持多 stop 渐变，按 stop 分段用 2-stop 渐变，段间重叠 1 设备像素
+      // NanoVG 只支持 2-stop 渐变，按 stop 分段填充，段间重叠 1 设备像素
       auto fillGrad = [&](float yTop, int alpha) {
         if (yTop >= bar.B)
           return;
@@ -834,7 +803,6 @@ private:
         }
       };
 
-      // vuDb 为 dBFS 域 (0 VU = -18 dBFS)，转 VU 域后映射
       const float vu = vuDb + 18.f;
       const float yTop = yOfV(std::clamp(vu, kVuBottomVU, kVuTopDb), bar);
       fillGrad(yTop, 255);
@@ -850,14 +818,12 @@ private:
     drawBar(barL, mVuL, mVuHoldL);
     drawBar(barR, mVuR, mVuHoldR);
 
-    // "VU" 水印: 双条底部，空轨深灰、有渐变浅灰
     const float vuMaxDb = (mVuL > mVuR) ? mVuL : mVuR;
     const IColor vuLblCol = (vuMaxDb + 18.f > kVuBottomVU) ? COL_300() : COL_700();
     const IText vuLbl(11.f, vuLblCol, kFontSemiBold, EAlign::Center, EVAlign::Middle);
     g.DrawText(vuLbl, "VU", IRECT(barL.L, plot.B - 19.f, barR.R, plot.B));
   }
 
-  // 语义色降饱和 (固定 RGB 安全色随主题饱和档位; 黑白主题变灰阶)
   static float MeterSatScale2() {
     const int sat = ThemeSatMax();
     return (sat <= 30) ? (float)sat / 30.f : (1.f + (float)(sat - 30) / 55.f);
@@ -870,7 +836,6 @@ private:
                        (int)std::lround(c.B * m + lum * (1.f - m)));
   }
 
-  // 响度三条 (LUFS): 排列 I(2倍宽) | S | M；目标锚定刻度，语义色按目标相对分三段
   void DrawLoudBars(IGraphics &g, const IRECT &plot, const IRECT &skipRect) {
     const float scaleL = VuZoneR(plot);
     const float bar0L = scaleL + kLufsScaleW;
@@ -891,7 +856,6 @@ private:
     auto hiddenByChip = [&](const IRECT &labelR) {
       return !skipRect.Empty() && labelR.Intersects(skipRect);
     };
-    // 刻度按钮: 无常驻底色，hover 时垫半透明遮罩
     auto drawTickBtn = [&](float v, const IRECT &labelR) {
       const IRECT btn = LoudTickBtnRect(labelR);
       if (mHoverActive && btn.Contains(mHoverX, mHoverY))
@@ -899,30 +863,26 @@ private:
       drawTickText(v, labelR);
     };
 
-    // 顶刻度按钮 (窗顶值，点击循环偏移 +9/+18)
     const IRECT topLabel = LufsTickRect(plot, topL);
     if (!hiddenByChip(topLabel))
       drawTickBtn(topL, topLabel);
 
-    // 目标刻度按钮 (点击循环预设 -9/-14/-23/-24)
     if (tgtValid) {
       const IRECT midLabel = LufsTickRect(plot, mTarget);
       if (!hiddenByChip(midLabel))
         drawTickBtn(mTarget, midLabel);
     }
 
-    // 底刻度 (纯文字)
     const IRECT botLabel = LufsTickRect(plot, botL);
     if (!hiddenByChip(botLabel))
       drawTickText(botL, botLabel);
 
-    // 目标线 (跨三条)
     if (tgtValid) {
       const float yT = LoudYOf(plot, mTarget);
       g.FillRect(COL_900(), IRECT(barI.L, yT - 1.f, barM.R, yT + 1.f));
     }
 
-    // 语义色段 (目标相对: ≤目标-1 黄 / |Δ|≤1 绿 / ≥目标+1 红)
+    // 语义色段: ≤目标-1 黄 / |Δ|≤1 绿 / ≥目标+1 红
     struct LStop { float lufs; IColor c; };
     const LStop stops[] = {
       {botL, SemColor(MeterYellow())},
@@ -961,7 +921,6 @@ private:
     drawBar(barS, mShortTerm, "S");
     drawBar(barM, mMomentary, "M");
 
-    // 底部水印: I 条显示当前值，S/M 条拼 "LUFS" 单位，各自随条渐变状态取色
     const float kMarkH = 19.f;
     auto loudMarkActive = [&](float lufs) { return lufs > -99.f && lufs > botL; };
     auto drawLoudMark = [&](const IRECT &bar, const char *txt, bool active) {
@@ -992,7 +951,6 @@ private:
     drawLoudMark(barM, "FS", mAct);
   }
 
-  // LRA bracket (Pro-L2 式): M 条右侧，仅 mLraValid 时绘制
   void DrawLraBracket(IGraphics &g, const IRECT &plot) {
     if (!mLraValid)
       return;
@@ -1052,7 +1010,6 @@ private:
       return std::clamp((kTopDb - db) / (kTopDb - mBottomDb), 0.f, 1.f);
     };
 
-    // 条色随主题饱和档位映射 (锚点分段线性)
     const int satClamp = std::min(ThemeSatMax(), 50);
     const float satScale = (satClamp <= 15) ? ((float)satClamp / 60.f)
                                             : (0.25f + (float)(satClamp - 15) / 140.f);
@@ -1092,7 +1049,7 @@ private:
 
     auto meterColorAt = [&](float db, int alpha) { return colorAtT(tOf(db), alpha); };
 
-    // NanoVG 后端只支持双色渐变，按 stop 分段用 2-stop 渐变，段间重叠 1 设备像素
+    // NanoVG 只支持 2-stop 渐变，按 stop 分段填充，段间重叠 1 设备像素
     const float seamOv = 1.f / std::max(1.f, g.GetScreenScale() * g.GetDrawScale());
     auto fillGrad = [&](float yTop, int alpha) {
       if (yTop >= bar.B)
@@ -1124,7 +1081,6 @@ private:
       fillGrad(YOf(plot, val), 255);
     }
 
-    // 峰值保持线: dBFS 模式下条体是 90 alpha 叠加背景，按相同比例合成避免偏亮
     if (mHoldSec > 0.f && hold > mBottomDb) {
       const float yH = YOf(plot, std::clamp(hold, mBottomDb, top));
       IColor hc = meterColorAt(hold, 255);
@@ -1138,7 +1094,7 @@ private:
       g.FillRect(hc, IRECT(bar.L, yH - 1.f, bar.R, yH + 1.f));
     }
 
-    // dBTP 持久锁存: 真峰值越过 0 dBFS 后锁存，只增不减，点击条重置；只在 L 条绘制一次
+    // dBTP 持久锁存只在 L 条绘制一次
     if (ch == 0 && mMeterMode == 0 && mHoldSec > 0.f) {
       const float persistMax = std::max(mPersistL, mPersistR);
       if (persistMax > 0.f && persistMax > mBottomDb) {
@@ -1155,7 +1111,6 @@ private:
       }
     }
 
-    // over 指示 (仅 dBFS)
     if (mMeterMode == 1) {
       const float y0 = YOf(plot, 0.f);
       constexpr float kGap = 3.f;
@@ -1167,7 +1122,6 @@ private:
     }
   }
 
-  // 每 20dB 刻度文字，画在频谱区内部右侧；hover 读数重叠时隐藏
   void DrawDbGrid(IGraphics &g, const IRECT &plot, const IRECT &skipRect) {
     if (mBottomDb >= 0.f)
       return;
@@ -1176,7 +1130,6 @@ private:
     const IText t(14, COL_700(), kFontRegular, EAlign::Far, EVAlign::Bottom);
 
     for (int db = 0; db >= bottomDb; db -= 20) {
-      // 最底部一条由 Range 按钮顶替，跳过文字
       if (db == bottomDb)
         continue;
 
@@ -1192,7 +1145,6 @@ private:
     }
   }
 
-  // 频率刻度: 20Hz/100Hz/1kHz/10kHz，位于频谱内部顶端；hover 读数重叠时隐藏
   void DrawFreqGrid(IGraphics &g, const IRECT &plot, const IRECT &skipRect) {
     struct FreqLabel {
       double hz;
@@ -1213,17 +1165,11 @@ private:
     }
   }
 
-  // ── 显示域弹道 ──
-  // 弹道在显示域运行: 目标 = 原始幅度 dB + 斜率，钳到显示范围。
-  // 由此屏上运动轨迹只由弹道参数决定，与 Range/斜率/信号电平无关，回落无吊尾。
-
-  // 弹道目标: 原始 dB + 斜率，底部带 ~10% 屏高缓冲 (Pro-Q 式，避免渐近屏底拖尾)
   float SmoothTarget(float rawDb, float tiltDb) const {
     const float over = 0.1f * (kTopDb - mBottomDb);
     return std::clamp(rawDb + tiltDb, mBottomDb - over, kTopDb);
   }
 
-  // 单点弹道: 攻击 dB 域单极点; 回落 LOG=等比收缩, UNIF=恒定屏高比例速率
   float StepSmoothed(float prevDb, float targetDb, float aCoef, float rCoef, float unifStepDb) const {
     if (targetDb > prevDb)
       return aCoef * prevDb + (1.f - aCoef) * targetDb;
@@ -1232,7 +1178,6 @@ private:
     return rCoef * prevDb + (1.f - rCoef) * targetDb;
   }
 
-  // 合并显示 dB: PWR = 功率和, SUM = 幅度和
   static float MergeDb(float dL, float dR, int algo) {
     if (algo == 0) {
       const float p = std::exp2f(dL * 0.33219280949f) + std::exp2f(dR * 0.33219280949f);
@@ -1242,7 +1187,6 @@ private:
     return 6.02059991328f * orm::FastLog2(a);
   }
 
-  // FFT 模式: bin -> 256 band 聚合 (取 max) 后做显示域弹道；空桶不参与绘制
   void ProcessFFTBands(ISenderData<3, TDataPacket> &d, float a, float r, float unifStepDb) {
     if ((int)mBinToBand.size() != mNumBins)
       RebuildBinToBand();
@@ -1260,7 +1204,7 @@ private:
 
     for (int i = 0; i < nb; ++i) {
       const int b = mBinToBand[i];
-      if (b == kSubBand) { // 20Hz 下方锚点 (轴外，只用于入场线斜率)
+      if (b == kSubBand) { // 20Hz 下方锚点
         for (int c = 0; c < 3; ++c)
           if (d.vals[c][i] > anchor[c])
             anchor[c] = d.vals[c][i];
@@ -1275,7 +1219,6 @@ private:
           bandMax[c][b] = d.vals[c][i];
     }
 
-    // 空桶不造值，由贝塞尔曲线在真实 band 点间插值；首带之前用锚点外推入场线
     const double logLo = std::log2(kSpecFreqLo);
     const double logBand = (std::log2(kSpecFreqHi) - logLo) / kSpectrumBands;
     int first = 0;
@@ -1298,7 +1241,6 @@ private:
           bandMax[c][b] = ext;
         }
       }
-      // 入场段只画左缘一点，整段共线会在首带形成折角
       mBandUsed[0] = true;
     }
 
@@ -1312,7 +1254,6 @@ private:
       }
   }
 
-  // 频谱峰值保持: 开关/时长与电平表 hold 共用；超时后按 20 dB/s 回落
   void UpdatePeakHold() {
     const int nVals = (int)mSpectrum[0].size();
     if (mHoldSec <= 0.f) {
@@ -1357,7 +1298,6 @@ private:
     }
   }
 
-  // hold 曲线单点值: LR 取双通道较大者, MERGE 用与显示曲线相同的 merge 公式
   float HoldValAt(int b) const {
     const float hL = (mHoldSpec[0].size() > (size_t)b) ? mHoldSpec[0][b] : -1000.f;
     const float hR = (mHoldSpec[1].size() > (size_t)b) ? mHoldSpec[1][b] : -1000.f;
@@ -1416,7 +1356,6 @@ private:
       mHoldPts.push_back({x, dbToY(HoldValAt(b))});
     }
 
-    // 整条曲线都低于底缘时跳过，避免底缘残留抗锯齿余迹
     auto allBelow = [&](const std::vector<Pt> &pts) {
       for (const Pt &p : pts)
         if (p.y < plot.B)
@@ -1437,7 +1376,6 @@ private:
       DrawHoldCurve(g, plot, smooth);
   }
 
-  // 建开放曲线主路径 (右缘吸附 + 平滑/折线)，供填充与 hold 细线共用
   void BuildCurvePath(IGraphics &g, const IRECT &plot, std::vector<Pt> &pts, bool smooth) {
     if (pts.back().x >= plot.R - plot.W() * 0.02f)
       pts.back().x = plot.R;
@@ -1475,12 +1413,10 @@ private:
     g.PathLineTo(plot.L, plot.B);
     g.PathClose();
 
-    // 渐变范围跟随曲线峰值，保证弱信号在底部也有对比度
     float topY = plot.B;
     for (const Pt &p : pts)
       topY = std::min(topY, p.y);
     const IRECT gradRect(plot.L, topY, plot.R, plot.B);
-    // 指数衰减渐变: alpha 权重首帧预计算，每帧只做乘加
     const auto &gradW = GradW();
     IPattern fill = IPattern::CreateLinearGradient(gradRect, EDirection::Vertical);
     for (int i = 0; i < kGradientStops; ++i) {
@@ -1493,7 +1429,6 @@ private:
     g.PathFill(fill);
   }
 
-  // 频谱峰值保持细线: 半透明，平滑策略与显示曲线一致
   void DrawHoldCurve(IGraphics &g, const IRECT &plot, bool smooth) {
     if (mHoldSec <= 0.f || !mHoldSignal || mHoldPts.size() < 2)
       return;
@@ -1521,17 +1456,15 @@ private:
   static constexpr int kSpectrumBands = 256;
   static constexpr float kSpecFreqLo = 20.f;
   static constexpr float kSpecFreqHi = 20000.f;
-  // 20Hz 下方虚拟锚点: 聚合 [10,20)Hz 的 bin，给低频空桶提供自然入场斜率
   static constexpr float kSpecAnchorLo = 10.f;
   static constexpr float kSpecAnchorHz = 14.14214f; // sqrt(10·20)
-  static constexpr int kSubBand = -2;               // mBinToBand 哨兵: 归入锚点桶
+  static constexpr int kSubBand = -2;
   static constexpr float kTopDb = 9.f;
   static constexpr float kVuTopDb = 3.f;
   static constexpr float kVuBottomVU = -20.f;
   static constexpr float kTickRight = 3.f;
   static constexpr float kLabelH = 16.f;
 
-  // 预计算 bin -> 对数 band 映射表，只在采样率/FFT 尺寸变化时重建
   void RebuildBinToBand() {
     const int nb = mNumBins;
     mBinToBand.assign(nb, -1);
@@ -1556,7 +1489,7 @@ private:
     }
   }
 
-  std::vector<float> mSpectrum[3]; // 平滑后的显示 dB (已含斜率)
+  std::vector<float> mSpectrum[3];
   float mPeakL = -120.f, mPeakR = -120.f;
   float mTrueL = -120.f, mTrueR = -120.f;
   float mRmsL = -120.f, mRmsR = -120.f;
@@ -1565,7 +1498,7 @@ private:
   float mPersistL = -120.f, mPersistR = -120.f;
   float mHoldL = -1000.f, mHoldR = -1000.f;
   float mHoldSec = 2.f;
-  int mMeterMode = 0; // 0=dBTP, 1=dBFS+RMS
+  int mMeterMode = 0;
   bool mOverL = false, mOverR = false;
   float mMomentary = -120.f, mShortTerm = -120.f;
   float mIntegrated = -120.f;
@@ -1576,9 +1509,9 @@ private:
   float mScaleOff = 9.f;
   std::vector<int> mBinToBand;
   std::array<bool, kSpectrumBands> mBandUsed{};
-  int mMode = 0; // 0=FFT, 1=VQT, 2=PBT, 3=RTA
-  int mChanMode = 0; // 0=L/R, 1=MERGE
-  int mMergeAlgo = 0; // 0=PWR, 1=SUM
+  int mMode = 0;
+  int mChanMode = 0;
+  int mMergeAlgo = 0;
   std::vector<float> mVQTFreqs;
   std::vector<float> mVQTFreqNorm;
   std::vector<float> mPBTFreqs;
@@ -1587,8 +1520,7 @@ private:
   std::vector<float> mRTAFreqNorm;
   std::array<float, kSpectrumBands> mBandNormX{};
 
-  // 频谱斜率: tiltDb(f) = S·log2(f/f_pivot)，在弹道前施加
-  static constexpr float kSlopeRefHz = 632.45553f; // 支点 = sqrt(20·20000)
+  static constexpr float kSlopeRefHz = 632.45553f; // sqrt(20·20000)
   float mSlopeDbPerOct = 0.f;
   std::vector<float> mSlopeDb;
 
@@ -1614,7 +1546,7 @@ private:
   }
   float mAttackCoeff = 0.2f;
   float mReleaseCoeff = 0.9f;
-  int mReleaseMode = 0; // 0=LOG, 1=匀速
+  int mReleaseMode = 0;
   float mAttackSec = 0.05f;
   float mReleaseSec = 0.2f;
   float mBottomDb = -100.f;
@@ -1626,7 +1558,6 @@ private:
   std::vector<Pt> mSpecPtsM;
   std::vector<Pt> mHoldPts;
 
-  // 频谱峰值保持 (与 mSpectrum 同域同长)
   std::vector<float> mHoldSpec[3];
   std::vector<float> mHoldAge[3];
   bool mHoldSignal = false;
@@ -1638,14 +1569,12 @@ private:
   float mHoverX = 0.f;
   float mHoverY = 0.f;
 
-  // 静态网格离屏缓存
   ILayerPtr mGridLayer;
   float mGridBottomDb = -1000.f;
   int mGridHue = -1;
   int mGridSat = -1;
   int mGridMode = -1;
 
-  // 绘制耗时测量 (快捷键 P 开关 HUD)
   static constexpr int kHudN = 120;
   float mHudMs[kHudN] = {};
   uint8_t mHudIsData[kHudN] = {};
