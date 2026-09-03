@@ -101,64 +101,8 @@ endif()
 #  2) 13 个在当前宏下编译为空文件 — 非英语 LTS 表 (lsa_fr/gr/ir/it/ja/sl/sp)、
 #     maindict_be (大端词典孪生, 33k 行, 小端时整文件 #ifdef 排除)、charset
 #     (NO_CHARSET)、loadable (NO_FILESYSTEM)、mmalloc、par_ambi、ph_syntx。
-# 文件保留在树中 (便于追溯/将来启用), 只是不再参与构建。
-set(_nr_dectalk_srcs
-  src/dsp/dectalk/src/cm_char.c
-  src/dsp/dectalk/src/cm_cmd.c
-  src/dsp/dectalk/src/cm_copt.c
-  src/dsp/dectalk/src/cm_main.c
-  src/dsp/dectalk/src/cm_pars.c
-  src/dsp/dectalk/src/cm_phon.c
-  src/dsp/dectalk/src/cm_text.c
-  src/dsp/dectalk/src/cm_util.c
-  src/dsp/dectalk/src/cmd_init.c
-  src/dsp/dectalk/src/epsonapi.c
-  src/dsp/dectalk/src/loaddict.c
-  src/dsp/dectalk/src/ls_chari.c
-  src/dsp/dectalk/src/ls_dict.c
-  src/dsp/dectalk/src/ls_homo.c
-  src/dsp/dectalk/src/ls_math.c
-  src/dsp/dectalk/src/ls_proc.c
-  src/dsp/dectalk/src/ls_spel.c
-  src/dsp/dectalk/src/ls_speli.c
-  src/dsp/dectalk/src/ls_suff.c
-  src/dsp/dectalk/src/ls_suffi.c
-  src/dsp/dectalk/src/lsa_adju.c
-  src/dsp/dectalk/src/lsa_coni.c
-  src/dsp/dectalk/src/lsa_rtbi.c
-  src/dsp/dectalk/src/lsa_rule.c
-  src/dsp/dectalk/src/lsa_task.c
-  src/dsp/dectalk/src/lsa_us.c
-  src/dsp/dectalk/src/lsa_util.c
-  src/dsp/dectalk/src/lsw_main.c
-  src/dsp/dectalk/src/maindict.c
-  src/dsp/dectalk/src/par_char.c
-  src/dsp/dectalk/src/par_dict.c
-  src/dsp/dectalk/src/par_pars.c
-  src/dsp/dectalk/src/par_rule.c
-  src/dsp/dectalk/src/ph_aloph.c
-  src/dsp/dectalk/src/ph_claus.c
-  src/dsp/dectalk/src/ph_draw.c
-  src/dsp/dectalk/src/ph_drwt0.c
-  src/dsp/dectalk/src/ph_inton.c
-  src/dsp/dectalk/src/ph_main.c
-  src/dsp/dectalk/src/ph_romi.c
-  src/dsp/dectalk/src/ph_setar.c
-  src/dsp/dectalk/src/ph_sort.c
-  src/dsp/dectalk/src/ph_syl.c
-  src/dsp/dectalk/src/ph_task.c
-  src/dsp/dectalk/src/ph_timng.c
-  src/dsp/dectalk/src/ph_vdefi.c
-  src/dsp/dectalk/src/ph_vset.c
-  src/dsp/dectalk/src/phlog.c
-  src/dsp/dectalk/src/phprint.c
-  src/dsp/dectalk/src/playtone.c
-  src/dsp/dectalk/src/services.c
-  src/dsp/dectalk/src/spc.c
-  src/dsp/dectalk/src/usa_init.c
-  src/dsp/dectalk/src/vtm.c
-  src/dsp/dectalk/src/vtmiont.c
-)
+# dectalk/src/ 下现已清除非目标平台的死代码，所有 .c 均参与编译:
+file(GLOB _nr_dectalk_srcs CONFIGURE_DEPENDS src/dsp/dectalk/src/*.c)
 add_library(orm_dectalk_core OBJECT ${_nr_dectalk_srcs})
 target_include_directories(orm_dectalk_core PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/dsp/dectalk/include)
 target_compile_definitions(orm_dectalk_core PRIVATE

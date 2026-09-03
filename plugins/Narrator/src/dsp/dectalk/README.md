@@ -11,27 +11,6 @@
 - `include/` — 头文件与编译期数据表 (主词典 maindict.c、各语种 ROM、音色参数
   p_us_vdf_*.c 等; 其中 .c 文件被 src/ 反向 #include, 不单独编译)
 
-## 构建范围: 87 个 src/*.c 仅编译 55 个
-
-插件 CMakeLists 用显式白名单而非 GLOB, 排除了经实测不需要的 32 个文件
-(文件保留在树中, 不参与构建):
-
-- **19 个运行期零引用的死代码**: brent / crypt2 (FONIX 授权加密) / dbgwins
-  (调试窗口) / decstd97 / dtmmio (Windows MMIO) / frame / hlframe / inithl /
-  llinit / log10table / nasalf1x / phinit / playstub / reson / sample /
-  sqrttable / voice / acxf1c / circuit。
-  其中 `frame hlframe inithl llinit reson sample acxf1c circuit nasalf1x
-  log10table sqrttable brent` 是老式 Frame 合成器及其数值表, 本平台的
-  11025Hz 输出走 VTM (`vtm.c`/`vtmiont.c`), 不经过它。
-- **13 个在当前宏下编译为空文件**: charset (NO_CHARSET) / loadable
-  (NO_FILESYSTEM) / lsa_fr / lsa_gr / lsa_ir / lsa_it / lsa_ja / lsa_sl /
-  lsa_sp (非英语 LTS, ENGLISH_US 下整文件排除) / maindict_be (大端词典孪生,
-  小端时整文件 #ifdef 排除) / mmalloc / par_ambi / ph_syntx。
-
-瘦身依据为实测: 排除前后用 `-dead_strip` 对象级对比, 全部 9 个音色 +
-音素模式 + 语速 500 + 音高 300 的输出逐字节一致 (见 /tmp/dtstrip 实验)。
-若某日需要 Frame 合成器或大端目标, 恢复相应文件即可。
-
 ## 构建配置 (与 DECtalkMini 的 CMake 一致)
 
 以下宏只作用于本目录源文件 (见插件 CMakeLists):

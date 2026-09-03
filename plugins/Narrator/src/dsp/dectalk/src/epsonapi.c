@@ -102,10 +102,31 @@ void* TextToSpeechAllocate(void) {
 }
 
 void TextToSpeechFree(void* tts) {
-	LPTTS_HANDLE_T phTTS = tts;
+	LPTTS_HANDLE_T phTTS = (LPTTS_HANDLE_T)tts;
 
-	free(phTTS->pKernelShareData);
-	free(tts);
+	if(phTTS) {
+		if(phTTS->pVTMThreadData) {
+			free(phTTS->pVTMThreadData);
+			phTTS->pVTMThreadData = NULL;
+		}
+		if(phTTS->pLTSThreadData) {
+			free(phTTS->pLTSThreadData);
+			phTTS->pLTSThreadData = NULL;
+		}
+		if(phTTS->pPHThreadData) {
+			FreePHInstanceData((PDPH_T)phTTS->pPHThreadData);
+			phTTS->pPHThreadData = NULL;
+		}
+		if(phTTS->pCMDThreadData) {
+			FreeCMDThreadMemory((PCMD_T)phTTS->pCMDThreadData);
+			phTTS->pCMDThreadData = NULL;
+		}
+		if(phTTS->pKernelShareData) {
+			free(phTTS->pKernelShareData);
+			phTTS->pKernelShareData = NULL;
+		}
+		free(phTTS);
+	}
 }
 
 int TextToSpeechInitEx(void* tts, short* (*callback)(short*, long, int), short* (*callback_ex)(void*, short*, long, int), void* user_dict) {
@@ -288,23 +309,17 @@ int TextToSpeechStartEx(void* tts, char* input, short* buffer_deprecated, int ou
 	input = convert_string_for_dapi(input, strlen(input));
 #endif
 
-	/* wow this is a terrible fix! (nishi) */
-	{
-		char* old = input;
-		int   n	  = 0;
-
-		input = malloc(strlen(old) + 1);
-		memset(input, 0, strlen(old) + 1);
-
-		for(i = 0; old[i] != 0; i++) {
-			unsigned char c = old[i];
-			if(0x80 <= c && c <= 0x82) continue;
-			input[n++] = old[i];
-		}
-#ifndef NO_FILESYSTEM
-		free(old);
-#endif
+	char* clean_input = malloc(strlen(input) + 1);
+	int n = 0;
+	for(i = 0; input[i] != 0; i++) {
+		unsigned char c = (unsigned char)input[i];
+		if(0x80 <= c && c <= 0x82) continue;
+		clean_input[n++] = input[i];
 	}
+	clean_input[n] = '\0';
+#ifndef NO_FILESYSTEM
+	free(input);
+#endif
 
 	if(phTTS->pKernelShareData->halting) {
 		oldrate	   = phTTS->pKernelShareData->uiSampleRate;
@@ -319,21 +334,15 @@ int TextToSpeechStartEx(void* tts, char* input, short* buffer_deprecated, int ou
 
 	((PDPH_T)(phTTS->pPHThreadData))->loadspdef = 1;
 
-	// phTTS->output_buffer=buffer;
-
-	// memset(phTTS->pCMDThreadData, 1, sizeof(phTTS->pCMDThreadData));
 	phTTS->pKernelShareData->halting = 0;
-	// cm_cmd_reset_comm(phTTS->pCMDThreadData, STATE_NORMAL);
 
 	switch(output_format) {
 	case WAVE_FORMAT_1M16:
-		// memset(buffer,0,71*2);
 		if(phTTS->pKernelShareData->uiSampleRate == MULAW_SAMPLE_RATE) {
 			SetSampleRate(phTTS, PC_SAMPLE_RATE);
 		}
 		break;
 	case WAVE_FORMAT_08M16:
-		// memset(buffer,0,51*2);
 		if(phTTS->pKernelShareData->uiSampleRate == PC_SAMPLE_RATE) {
 			SetSampleRate(phTTS, MULAW_SAMPLE_RATE);
 		}
@@ -341,24 +350,26 @@ int TextToSpeechStartEx(void* tts, char* input, short* buffer_deprecated, int ou
 	}
 
 	i = 0;
-	fprintf(stderr, "StartEx input=[%s]\n", input);
-	while(input[i]) {
+	while(clean_input[i]) {
 #ifdef DEBUG
-		printf("Processing Char: %c\n", input[i]);
+		printf("Processing Char: %c\n", clean_input[i]);
 #endif
-		cmd_loop(phTTS, input[i]);
+		cmd_loop(phTTS, clean_input[i]);
 		if(phTTS->pKernelShareData->halting) {
+			free(clean_input);
 			TextToSpeechInitEx(tts, phTTS->EmbCallbackRoutine, phTTS->EmbCallbackRoutineEx, phTTS->pKernelShareData->user_dict);
 			return ERR_RESET;
 		}
 		i++;
 	}
-	// cmd_loop(phTTS,0x0B); // force it
+
 	if(phTTS->pKernelShareData->halting) {
 		cmd_loop(phTTS, 0x0B); // force it when halting
+		free(clean_input);
 		TextToSpeechInitEx(tts, phTTS->EmbCallbackRoutine, phTTS->EmbCallbackRoutineEx, phTTS->pKernelShareData->user_dict);
 		return ERR_RESET;
 	}
+	free(clean_input);
 	return ERR_NOERROR;
 }
 

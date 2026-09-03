@@ -6,7 +6,6 @@
 // 注意: 必须用相对路径包含 — dectalk/include 里自带 config.h, 若把它加进插件
 // 的全局 include 路径会遮蔽 iPlug2 依赖的插件 config.h。
 extern "C" {
-#include "dectalk/include/tts.h"      // TTS_HANDLE_T (子系统线程数据字段)
 #include "dectalk/include/epsonapi.h" // TextToSpeech* 嵌入 API
 }
 
@@ -20,7 +19,7 @@ namespace orm
 
 // DECtalk 内核 (epsonapi.c) 含文件级全局状态 (cur_packet_number 等), 同进程
 // 内多个插件实例共享同一份代码与状态, 渲染必须互斥串行。渲染一条短语在
-// 毫秒级, 串行代价可忽略; 换来的是内核零改动 (对照上游 DECtalkMini 维护)。
+// 毫秒级, 串行代价可忽略。
 static std::mutex gDectalkMutex;
 
 // 回调累积缓冲: 引擎按块回调 16-bit 样本, 回调签名不含用户上下文指针,
@@ -33,11 +32,6 @@ static short* DectalkCallback(short* buf, long n, int /*phoneme*/)
     gPcm.insert(gPcm.end(), buf, buf + n);
   return buf;
 }
-
-// epsonapi.c 只在 InitEx 重初始化时释放这四个子系统线程数据; 每次渲染新建
-// 实例 (TextToSpeechAllocate/Free), 必须在这里补齐同样的释放, 否则泄漏。
-extern "C" void FreePHInstanceData(void* dph);
-extern "C" void FreeCMDThreadMemory(void* cmd);
 
 // 音色经 DECtalk 文本命令 [:name X] 切换 (TextToSpeechChangeVoice 的 usevoice
 // 路径在 HLSYN/CHANGES_AFTER_V43 关断时不生效, 实测只有解析器路径有效)
@@ -91,29 +85,7 @@ bool DectalkEngine::Render(const std::string& text, bool phonetic,
   TextToSpeechStartEx(tts, input.data(), nullptr, WAVE_FORMAT_1M16);
   TextToSpeechSyncEx(tts);
 
-  // 释放各子系统线程数据 (顺序与 InitEx 前置一致), 再释放句柄与共享数据;
-  // TTS_HANDLE_T 定义于 tts.h (经 epsonapi.h 引入), 四个字段均为裸指针
-  auto ht = static_cast<TTS_HANDLE_T*>(tts);
-  if (ht->pVTMThreadData)
-  {
-    std::free(ht->pVTMThreadData);
-    ht->pVTMThreadData = nullptr;
-  }
-  if (ht->pLTSThreadData)
-  {
-    std::free(ht->pLTSThreadData);
-    ht->pLTSThreadData = nullptr;
-  }
-  if (ht->pPHThreadData)
-  {
-    FreePHInstanceData(ht->pPHThreadData);
-    ht->pPHThreadData = nullptr;
-  }
-  if (ht->pCMDThreadData)
-  {
-    FreeCMDThreadMemory(ht->pCMDThreadData);
-    ht->pCMDThreadData = nullptr;
-  }
+  // 释放句柄 (内部已完整释放各子系统线程数据与共享数据)
   TextToSpeechFree(tts);
 
   // 防御性上限: 60 秒 (极长文本/异常输入防抖), 超出截断
