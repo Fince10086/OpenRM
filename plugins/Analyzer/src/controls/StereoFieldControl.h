@@ -266,9 +266,11 @@ private:
   }
 
   void FanGeom(const IRECT &cv, float &cx, float &cy, float &rMax) const {
-    cx = cv.L + cv.W() * kCxN;
+    cx = (cv.W() <= 500.f) ? cv.MW() : (cv.L + cv.W() * kCxN);
     cy = cv.B - kBaseGap;
-    rMax = std::max((cy - cv.T) - kRimLabelH, 12.f);
+    const float rVert = std::max((cy - cv.T) - kRimLabelH, 12.f);
+    const float rHoriz = std::max(cv.W() * 0.5f - 15.f, 12.f);
+    rMax = (cv.W() <= 500.f) ? std::min(rVert, rHoriz) : rVert;
   }
 
   float RadiusFor(float db, float rMax) const {
@@ -454,8 +456,11 @@ private:
     GetChannelColors(cL, cR, cM);
     char buf[24];
 
+    const float gaugeTotalW = 3.f * kGaugeW + 2.f * kGaugeGap;
+    const float gaugeStartX = (cv.W() <= 500.f) ? cv.L + std::max(0.f, (cv.W() - gaugeTotalW) * 0.5f) : cv.L;
+
     for (int gi = 0; gi < 3; ++gi) {
-      const float x0 = cv.L + gi * (kGaugeW + kGaugeGap);
+      const float x0 = gaugeStartX + gi * (kGaugeW + kGaugeGap);
       const float x1 = x0 + kGaugeW;
       const IRECT cell(x0, y0, x1, cv.B);
       const IRECT track(x0, trackT, x1, trackB);

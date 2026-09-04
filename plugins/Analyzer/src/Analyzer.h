@@ -38,6 +38,7 @@ class SettingsPanelControl;
 class CpuMeterControl;
 class FlatToggleControl;
 class FlatCycleButton;
+class OscilloscopeControl;
 } // namespace igraphics
 } // namespace iplug
 
@@ -114,6 +115,7 @@ private:
 
   SpectrumPad *mSpectrumPad = nullptr;
   StereoFieldControl *mScopeCtrl = nullptr;
+  OscilloscopeControl *mOscilloscopeCtrl = nullptr;
   FlatCycleButton *mResBtn = nullptr;
   FlatCycleButton *mWindowBtn = nullptr;
   FlatCycleButton *mPbtLfResBtn = nullptr;

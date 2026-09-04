@@ -11,6 +11,7 @@
 #include "controls/SettingsPanelControl.h"
 #include "controls/SpectrumPad.h"
 #include "controls/StereoFieldControl.h"
+#include "controls/OscilloscopeControl.h"
 #include "controls/CpuMeterControl.h"
 #include "StateFileIO.h"
 #include "SettingsFileIO.h"
@@ -343,9 +344,13 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
       }
     };
 
-    // 声像面板（频谱下方）
-    mScopeCtrl = new StereoFieldControl(IRECT(20.f, 336.f, 784.f, 604.f));
+    // 下半区并排布局：左侧立体声像（Stereo Field），右侧时域示波器（Oscilloscope）
+    constexpr float kBottomMidX = 398.f;
+    mScopeCtrl = new StereoFieldControl(IRECT(20.f, 336.f, kBottomMidX - 4.f, 604.f));
     pGraphics->AttachControl(mScopeCtrl, kCtrlTagScope);
+
+    mOscilloscopeCtrl = new OscilloscopeControl(IRECT(kBottomMidX + 2.f, 336.f, 784.f, 604.f));
+    pGraphics->AttachControl(mOscilloscopeCtrl, kCtrlTagOscilloscope);
 
     // 动态范围按钮（频谱底部右缘）
     constexpr float kRangeBtnW = 38.f;
@@ -406,6 +411,8 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
             mSpectrumPad->ClearPeakHold();
           if (mScopeCtrl)
             mScopeCtrl->ClearPeakHold();
+          if (mOscilloscopeCtrl)
+            mOscilloscopeCtrl->Clear();
         }, "RESET", btnStyle);
     pGraphics->AttachControl(mLevelResetBtn);
     bindText(orm::kTxtReset, [this](const char *s) {
@@ -1121,6 +1128,13 @@ void ORMAnalyzer::OnIdle() {
     else
       mSpectrum.TransmitData(*this);
     mScope.TransmitData(*this);
+  }
+
+  // 示波器波形抽取与更新
+  if (mOscilloscopeCtrl) {
+    const float *rings[3] = {mFreezeRing[0].data(), mFreezeRing[1].data(), mFreezeRing[2].data()};
+    mOscilloscopeCtrl->UpdateAudio(rings, kFreezeRingLen, mFreezeRingPos.load(std::memory_order_relaxed),
+                                   GetSampleRate(), frozen);
   }
 
   // 转发电平表数据
