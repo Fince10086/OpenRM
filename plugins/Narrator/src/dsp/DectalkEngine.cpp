@@ -1,8 +1,6 @@
 #include "DectalkEngine.h"
 
-// DECtalk 内核以 C 编译 (dectalk/ 目录), 头文件自带 __cplusplus 链接保护,
-// C++ 侧直接包含即可; 两个子系统释放函数仅以 extern 声明在 epsonapi.c 中,
-// 这里按 C 链接补声明。
+// DECtalk 内核以 C 编译 (dectalk/ 目录), 包含 epsonapi.h 嵌入 API。
 // 注意: 必须用相对路径包含 — dectalk/include 里自带 config.h, 若把它加进插件
 // 的全局 include 路径会遮蔽 iPlug2 依赖的插件 config.h。
 extern "C" {
