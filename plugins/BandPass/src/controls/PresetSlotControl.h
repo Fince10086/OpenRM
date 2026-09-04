@@ -101,11 +101,14 @@ public:
     SetDirty(false);
   }
 
+  // 拖放命中检测应覆盖按钮实际绘制的整块区域 (mRECT)，而非内缩后的 widget bounds
+  IRECT GetFullBounds() const { return mRECT; }
+
   void Draw(IGraphics &g) override {
-    const IRECT b = GetWidgetBounds();
+    const IRECT b = mRECT;
     const bool pressed = GetValue() > 0.5;
     const IColor fill = mDragTarget ? COL_500() : pressed ? COL_900() : GetMouseIsOver() ? COL_500() : COL_300();
-    g.FillRect(fill, b.GetPadded(-BLOCK_GAP));
+    g.FillRect(fill, b);
     IText t = mStyle.valueText;
     t.mFGColor = pressed ? COL_100() : COL_900();
     strcpy(t.mFont, kFontSemiBold);

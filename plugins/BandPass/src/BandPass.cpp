@@ -248,7 +248,6 @@ ORMBandPass::ORMBandPass(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     constexpr float kBtnH = 30.f;
     constexpr float kPanelR = kCol2X + kBtnW;
 
-    constexpr float kSlotW = 39.f;
     constexpr float kGridSlotH = 32.f;
     constexpr float kGridX = kCol1X;
     constexpr float kGridY = 56.f;
@@ -260,6 +259,19 @@ ORMBandPass::ORMBandPass(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     constexpr float kFadeTrackR = 656.5f;
     constexpr float kFadeY = 592.f;
     constexpr float kFadeH = 24.f;
+
+    // 间距: 矩形按钮不再自身内缩 (FlatButton/PresetSlotControl 已改为 mRECT 全幅绘制),
+    // 改由布局在相邻按钮之间留出 kBtnGap, 两侧仍与面板边缘对齐 (仿 Analyzer 右栏按钮)
+    constexpr float kBtnGap = 4.f;
+    const float kPanelW = kPanelR - kCol1X;                          // 面板内容宽 156
+    const float kHalfW = (kPanelW - kBtnGap) * 0.5f;                 // 双列块每列宽 76
+    const float kCol2BtnX = kCol1X + kHalfW + kBtnGap;               // 双列块右列 X 820
+    const float kBtnRowH = (2.f * kBtnH - kBtnGap) * 0.5f;           // 双行块每行高 28
+    const float kBtnRowStep = kBtnRowH + kBtnGap;                    // 双行块行距 32
+    const float kCellW = (kPanelW - 3.f * kBtnGap) * 0.25f;           // 预设格宽 36
+    const float kCellXStep = kCellW + kBtnGap;                         // 预设格列距 40
+    const float kCellH = (4.f * kGridSlotH - 3.f * kBtnGap) * 0.25f;   // 预设格高 29
+    const float kCellYStep = kCellH + kBtnGap;                          // 预设格行距 33
 
     auto padHooks = [&](int kF, int kB, int kSlope, int kPass, int kEnFreq, int kColFreq, int kEnBw,
                         int kColBw) -> FilterNodePad::Hooks {
@@ -374,10 +386,10 @@ ORMBandPass::ORMBandPass(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
         const int pos = kNumQuick + r * 4 + c;
         char label[8];
         snprintf(label, 8, "%d", mSlotNumber[pos] + 1);
+        const float x = kGridX + c * kCellXStep;
+        const float y = kGridY + r * kCellYStep;
         PresetSlotControl *btn =
-            new PresetSlotControl(IRECT(kGridX + c * kSlotW, kGridY + r * kGridSlotH, kGridX + c * kSlotW + kSlotW,
-                                        kGridY + r * kGridSlotH + kGridSlotH),
-                                  makeSlotHooks(pos), label, btnStyle);
+            new PresetSlotControl(IRECT(x, y, x + kCellW, y + kCellH), makeSlotHooks(pos), label, btnStyle);
         mSlotButtons[pos] = btn;
         pGraphics->AttachControl(btn);
       }
@@ -441,28 +453,30 @@ ORMBandPass::ORMBandPass(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     }
 
     IVButtonControl *copyLRBtn =
-        MakeMomentary(IRECT(kCol1X, 356, kCol1X + 78, 386), [this](IControl *) { CopyLtoR(); }, "L->R", btnStyle);
+        MakeMomentary(IRECT(kCol1X, 356, kCol1X + kHalfW, 356 + kBtnRowH), [this](IControl *) { CopyLtoR(); }, "L->R", btnStyle);
     pGraphics->AttachControl(copyLRBtn);
     bindText(orm::kTxtCopyLR, [copyLRBtn](const char *s) {
       copyLRBtn->SetLabelStr(s);
       copyLRBtn->SetDirty(false);
     });
     IVButtonControl *copyRLBtn =
-        MakeMomentary(IRECT(kCol1X + 78, 356, kPanelR, 386), [this](IControl *) { CopyRtoL(); }, "R->L", btnStyle);
+        MakeMomentary(IRECT(kCol2BtnX, 356, kPanelR, 356 + kBtnRowH), [this](IControl *) { CopyRtoL(); }, "R->L", btnStyle);
     pGraphics->AttachControl(copyRLBtn);
     bindText(orm::kTxtCopyRL, [copyRLBtn](const char *s) {
       copyRLBtn->SetLabelStr(s);
       copyRLBtn->SetDirty(false);
     });
-    FlatToggleControl *linkToggle =
-        new FlatToggleControl(IRECT(kCol1X, 386, kCol1X + 78, 416), kLink, " ", toggleStyle, "LINK", "LINK");
+    FlatToggleControl *linkToggle = new FlatToggleControl(
+        IRECT(kCol1X, 356 + kBtnRowStep, kCol1X + kHalfW, 356 + kBtnRowStep + kBtnRowH), kLink, " ", toggleStyle,
+        "LINK", "LINK");
     pGraphics->AttachControl(linkToggle);
     bindText(orm::kTxtLink, [linkToggle](const char *s) {
       linkToggle->SetOnText(s);
       linkToggle->SetOffText(s);
     });
-    IVButtonControl *flipBtn =
-        MakeMomentary(IRECT(kCol1X + 78, 386, kPanelR, 416), [this](IControl *) { FlipLR(); }, "FLIP", btnStyle);
+    IVButtonControl *flipBtn = MakeMomentary(
+        IRECT(kCol2BtnX, 356 + kBtnRowStep, kPanelR, 356 + kBtnRowStep + kBtnRowH), [this](IControl *) { FlipLR(); },
+        "FLIP", btnStyle);
     pGraphics->AttachControl(flipBtn);
     bindText(orm::kTxtFlip, [flipBtn](const char *s) {
       flipBtn->SetLabelStr(s);
@@ -474,41 +488,27 @@ ORMBandPass::ORMBandPass(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     bindText(orm::kTxtMix, [this](const char *s) { mMixSlider->SetHeaderLabel(s); });
     bindTip(mMixSlider, orm::kTxtTipMix);
 
-    IVButtonControl *undoBtn =
-        MakeMomentary(IRECT(kCol1X, 466, kCol1X + 78, 496), [this](IControl *) { Undo(); }, "UNDO", btnStyle);
-    pGraphics->AttachControl(undoBtn);
-    bindText(orm::kTxtUndo, [undoBtn](const char *s) {
-      undoBtn->SetLabelStr(s);
-      undoBtn->SetDirty(false);
-    });
-    IVButtonControl *redoBtn =
-        MakeMomentary(IRECT(kCol1X + 78, 466, kPanelR, 496), [this](IControl *) { Redo(); }, "REDO", btnStyle);
-    pGraphics->AttachControl(redoBtn);
-    bindText(orm::kTxtRedo, [redoBtn](const char *s) {
-      redoBtn->SetLabelStr(s);
-      redoBtn->SetDirty(false);
-    });
-    IVButtonControl *saveBtn =
-        MakeMomentary(IRECT(kCol1X, 496, kCol1X + 78, 526), [this](IControl *) { SaveFile(); }, "SAVE", btnStyle);
-    pGraphics->AttachControl(saveBtn);
-    bindText(orm::kTxtSave, [saveBtn](const char *s) {
-      saveBtn->SetLabelStr(s);
-      saveBtn->SetDirty(false);
-    });
-    IVButtonControl *loadBtn =
-        MakeMomentary(IRECT(kCol1X + 78, 496, kPanelR, 526), [this](IControl *) { LoadFile(); }, "LOAD", btnStyle);
-    pGraphics->AttachControl(loadBtn);
-    bindText(orm::kTxtLoad, [loadBtn](const char *s) {
-      loadBtn->SetLabelStr(s);
-      loadBtn->SetDirty(false);
-    });
+    // 撤销/重做/保存/读取: 与 Analyzer 一致——单行 4 个图标按钮，全幅填充、彼此留 kBtnGap，
+    // 沿用预设网格的 4 列几何 (列距 kCellXStep、格宽 kCellW)，在旧 2 行块所占的竖向区间内居中
+    const float kIconRowY = 496.f - kBtnRowH * 0.5f;
+    auto makeIconBtn = [&](int i, IconAction icon, int tipId, std::function<void()> action) {
+      const float x = kCol1X + i * kCellXStep;
+      IControl *btn = MakeIconMomentary(IRECT(x, kIconRowY, x + kCellW, kIconRowY + kBtnRowH),
+                                        [action](IControl *) { action(); }, icon);
+      pGraphics->AttachControl(btn);
+      bindTip(btn, tipId);
+    };
+    makeIconBtn(0, kIconUndo, orm::kTxtUndo, [this] { Undo(); });
+    makeIconBtn(1, kIconRedo, orm::kTxtRedo, [this] { Redo(); });
+    makeIconBtn(2, kIconSave, orm::kTxtSave, [this] { SaveFile(); });
+    makeIconBtn(3, kIconLoad, orm::kTxtLoad, [this] { LoadFile(); });
 
     for (int i = 0; i < kNumQuick; ++i) {
       char label[8];
       snprintf(label, 8, "%d", mSlotNumber[i] + 1);
       const float tick = kBottomTick0 + kBottomTickSpan * i / (kNumQuick - 1.f);
-      const float l = tick - kSlotW * 0.5f;
-      PresetSlotControl *btn = new PresetSlotControl(IRECT(l, kBottomSlotsY, l + kSlotW, kBottomSlotsY + kBottomSlotH),
+      const float l = tick - kCellW * 0.5f;
+      PresetSlotControl *btn = new PresetSlotControl(IRECT(l, kBottomSlotsY, l + kCellW, kBottomSlotsY + kBottomSlotH - kBtnGap),
                                                      makeSlotHooks(i), label, btnStyle);
       mSlotButtons[i] = btn;
       pGraphics->AttachControl(btn);
@@ -1292,7 +1292,7 @@ void ORMBandPass::OnDragBegin(int src) {
 
 int ORMBandPass::HitTestSlot(float x, float y) {
   for (int i = 0; i < kNumPresets; ++i)
-    if (mSlotButtons[i] && mSlotButtons[i]->GetWidgetBounds().Contains(x, y))
+    if (mSlotButtons[i] && mSlotButtons[i]->GetFullBounds().Contains(x, y))
       return i;
   return -1;
 }

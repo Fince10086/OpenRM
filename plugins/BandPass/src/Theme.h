@@ -84,6 +84,11 @@ inline IColor COL_100() {
   return HSBToIColor(ThemeHue(), SatForB(B) / 100.f, B / 100.f);
 }
 
+// 按钮 hover 叠层：浅色主题叠黑、深色主题叠白，alpha 混合
+inline IColor HoverOverlay() {
+  return ThemeMode() ? IColor(48, 255, 255, 255) : IColor(48, 0, 0, 0);
+}
+
 inline IColor WarmGray(int v) {
   int vv = ThemeMode() ? 255 - v : v;
   if (ThemeMode())
@@ -94,7 +99,6 @@ inline IColor WarmGray(int v) {
   return HSBToIColor(ThemeHue(), s, b);
 }
 
-static constexpr float BLOCK_GAP = 1.5f;
 static constexpr float HANDLE_R = 7.f;
 static constexpr float HANDLE_RING = 1.5f;
 static constexpr float LABEL_VALUE_GAP = 12.f;
