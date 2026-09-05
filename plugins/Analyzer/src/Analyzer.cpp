@@ -392,32 +392,33 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     pGraphics->AttachControl(mScopeBtnM);
     bindTip(mScopeBtnM, orm::kTxtTipScopeChan);
 
-    // 时基（1ms..2s）
-    mScopeTimeBtn = new FlatCycleButton(
-        scopeBtnRect(64.f), kNoParameter,
-        {"1ms", "2ms", "5ms", "10ms", "20ms", "50ms", "100ms", "500ms", "1s", "2s"}, btnStyle);
-    mScopeTimeBtn->SetCycleHandler([this](int v) {
-      if (mOscilloscopeCtrl)
-        mOscilloscopeCtrl->SetTimebase(v);
-    });
-    pGraphics->AttachControl(mScopeTimeBtn);
-    bindTip(mScopeTimeBtn, orm::kTxtTipScopeTime);
-
-    // 垂直缩放（1x..8x）
-    mScopeZoomBtn = new FlatCycleButton(scopeBtnRect(40.f), kNoParameter, {"1x", "2x", "4x", "8x"}, btnStyle);
-    mScopeZoomBtn->SetCycleHandler([this](int v) {
-      if (mOscilloscopeCtrl)
-        mOscilloscopeCtrl->SetZoom(v);
-    });
-    pGraphics->AttachControl(mScopeZoomBtn);
-    bindTip(mScopeZoomBtn, orm::kTxtTipScopeZoom);
-
     mScopeCtrl = new StereoFieldControl(IRECT(20.f, kBottomTop, kBottomMidX - 4.f, kBottomB));
     pGraphics->AttachControl(mScopeCtrl, kCtrlTagScope);
 
     // 右缘 780（原 784）：与右栏按钮留出间隙，不再紧贴
     mOscilloscopeCtrl = new OscilloscopeControl(IRECT(kBottomMidX + 2.f, kBottomTop, 780.f, kBottomB));
     pGraphics->AttachControl(mOscilloscopeCtrl, kCtrlTagOscilloscope);
+
+    // 示波器内嵌滑块：右侧幅度倍率（1x..8x，对数刻度），底部时间窗（1ms..2s，对数刻度）
+    mScopeZoomSlider = new ORMSlider(mOscilloscopeCtrl->GetZoomSliderRect(),
+                                     [this](IControl *p) {
+                                       if (mOscilloscopeCtrl)
+                                         mOscilloscopeCtrl->SetZoomFactor(std::pow(2.f, 3.f * (float)p->GetValue()));
+                                     },
+                                     "", style, EDirection::Vertical);
+    mScopeZoomSlider->SetHeaderVisible(false);
+    pGraphics->AttachControl(mScopeZoomSlider);
+    bindTip(mScopeZoomSlider, orm::kTxtTipScopeZoom);
+
+    mScopeTimeSlider = new ORMSlider(mOscilloscopeCtrl->GetTimeSliderRect(),
+                                     [this](IControl *p) {
+                                       if (mOscilloscopeCtrl)
+                                         mOscilloscopeCtrl->SetWindowSec(0.001 * std::pow(2000.0, p->GetValue()));
+                                     },
+                                     "", style, EDirection::Horizontal);
+    mScopeTimeSlider->SetHeaderVisible(false);
+    pGraphics->AttachControl(mScopeTimeSlider);
+    bindTip(mScopeTimeSlider, orm::kTxtTipScopeTime);
 
     // 动态范围按钮（频谱底部右缘）
     constexpr float kRangeBtnW = 38.f;
@@ -1204,6 +1205,18 @@ void ORMAnalyzer::OnIdle() {
                                    GetSampleRate(), frozen);
   }
 
+  // 示波器内嵌滑块与示波器状态同步（双击波形区复位缩放等外部变化时回写滑块）
+  if (mScopeZoomSlider && mOscilloscopeCtrl) {
+    const double want = std::log2((double)mOscilloscopeCtrl->GetZoomFactor()) / 3.0;
+    if (std::fabs(mScopeZoomSlider->GetValue() - want) > 0.001)
+      mScopeZoomSlider->SetValueFromDelegate(want, 0);
+  }
+  if (mScopeTimeSlider && mOscilloscopeCtrl) {
+    const double want = std::log(mOscilloscopeCtrl->GetWindowSec() / 0.001) / std::log(2000.0);
+    if (std::fabs(mScopeTimeSlider->GetValue() - want) > 0.001)
+      mScopeTimeSlider->SetValueFromDelegate(want, 0);
+  }
+
   // 转发电平表数据
   {
     LevelMeterUiData d;
@@ -1324,8 +1337,8 @@ void ORMAnalyzer::OnUIClose() {
   mScopeBtnL = nullptr;
   mScopeBtnR = nullptr;
   mScopeBtnM = nullptr;
-  mScopeTimeBtn = nullptr;
-  mScopeZoomBtn = nullptr;
+  mScopeZoomSlider = nullptr;
+  mScopeTimeSlider = nullptr;
   mSettingsPanel = nullptr;
   mTextBindings.clear();
   mTooltipBindings.clear();

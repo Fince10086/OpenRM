@@ -31,6 +31,16 @@ public:
     mStyle.showValue = false;
   }
 
+  // 无参数版可指定方向（示波器内嵌滑块等纯 UI 场景）
+  ORMSlider(const IRECT &bounds, IActionFunction aF, const char *label, const IVStyle &style, EDirection dir)
+      : IVSliderControl(bounds, aF, label, style, false, dir), mHeaderLabel(label ? label : "") {
+    mStyle.showLabel = false;
+    mStyle.showValue = false;
+  }
+
+  // 隐藏表头（label/数值），滑块完整占用控件矩形；内嵌小滑块用
+  void SetHeaderVisible(bool v) { mHeaderVisible = v; SetDirty(false); }
+
   void SetValueFormatter(std::function<void(WDL_String &)> f) { mValueFormatter = std::move(f); }
   void SetHeaderLabel(const char *s) {
     mHeaderLabel.Set(s);
@@ -38,6 +48,17 @@ public:
   }
 
   void OnResize() override {
+    if (!mHeaderVisible) {
+      // 无表头：滑块完整占用控件矩形
+      mWidgetBounds = mRECT;
+      mTrackBounds = (mDirection == EDirection::Horizontal)
+                         ? mRECT.GetPadded(-mHandleSize).GetMidVPadded(mTrackSize)
+                         : mRECT.GetPadded(-mHandleSize).GetMidHPadded(mTrackSize);
+      SetTargetRECT(mRECT);
+      mValueBounds = IRECT();
+      SetDirty(false);
+      return;
+    }
     if (mDirection == EDirection::Horizontal) {
       mWidgetBounds = mRECT.GetReducedFromTop(kHeaderH);
       mTrackBounds = mWidgetBounds.GetPadded(-mHandleSize).GetMidVPadded(mTrackSize);
@@ -55,7 +76,8 @@ public:
   void Draw(IGraphics &g) override {
     g.FillRect(COL_100(), mRECT);
     DrawWidget(g);
-    DrawHeader(g, mDirection == EDirection::Horizontal ? 0.f : -90.f);
+    if (mHeaderVisible)
+      DrawHeader(g, mDirection == EDirection::Horizontal ? 0.f : -90.f);
   }
 
   void OnMouseDown(float x, float y, const IMouseMod &mod) override {
@@ -145,6 +167,7 @@ protected:
   WDL_String mHeaderLabel;
   const char *mHeaderFont = kFontSemiBold;
   std::function<void(WDL_String &)> mValueFormatter;
+  bool mHeaderVisible = true;
 };
 
 END_IGRAPHICS_NAMESPACE

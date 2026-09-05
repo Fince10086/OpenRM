@@ -32,20 +32,6 @@ public:
     kChanBitM = 4,
   };
 
-  enum ETimebase {
-    kTime1ms = 0,
-    kTime2ms,
-    kTime5ms,
-    kTime10ms,
-    kTime20ms,
-    kTime50ms,
-    kTime100ms,
-    kTime500ms,
-    kTime1s,
-    kTime2s,
-    kNumTimebases
-  };
-
   explicit OscilloscopeControl(const IRECT &bounds) : IControl(bounds) {
     mDispL.reserve(8192);
     mDispR.reserve(8192);
@@ -73,16 +59,24 @@ public:
   // 顶栏按钮行（Analyzer.cpp 布局）直接驱动的纯 UI 状态
   int GetTrigSource() const { return mTrigSource; }
   int GetChanMask() const { return mChanMask; }
-  int GetTimebase() const { return mTimebaseIdx; }
-  int GetZoom() const { return mZoomIdx; }
+  double GetWindowSec() const { return mWindowSec; }
+  float GetZoomFactor() const { return mZoomFactor; }
   void SetTrigSource(int v) {
     mTrigSource = std::clamp(v, 0, kNumTrigSources - 1);
     mSweepPos = 0; // 切模式后从左缘开始覆盖旧画面
     SetDirty(false);
   }
   void SetChanMask(int v) { mChanMask = std::clamp(v, 0, kChanBitL | kChanBitR | kChanBitM); SetDirty(false); }
-  void SetTimebase(int v) { mTimebaseIdx = std::clamp(v, 0, kNumTimebases - 1); SetDirty(false); }
-  void SetZoom(int v) { mZoomIdx = std::clamp(v, 0, 3); SetDirty(false); }
+  void SetWindowSec(double s) { mWindowSec = std::clamp(s, kMinWindowSec, kMaxWindowSec); SetDirty(false); }
+  void SetZoomFactor(float z) { mZoomFactor = std::clamp(z, 1.f, kMaxZoom); SetDirty(false); }
+
+  // 内嵌滑块的布局矩形（Analyzer.cpp 布局用），画区为其让位
+  IRECT GetZoomSliderRect() const {
+    return IRECT(mRECT.R - kSliderW - 2.f, mRECT.T + 3.f, mRECT.R - 2.f, mRECT.B - kSliderH - 8.f);
+  }
+  IRECT GetTimeSliderRect() const {
+    return IRECT(mRECT.L + 3.f, mRECT.B - kSliderH - 2.f, mRECT.R - kSliderW - 8.f, mRECT.B - 2.f);
+  }
 
   // 触发参考通道随显示声道自动决定：M 开启（或 L+R 同显）用 M，仅 L/R 单显用该声道
   int EffectiveTrigChan() const {
@@ -102,9 +96,7 @@ public:
     mFrozen = frozen;
     mSampleRate = std::max(1000.0, sampleRate);
 
-    static constexpr double kTimeSecs[kNumTimebases] = {
-        0.001, 0.002, 0.005, 0.010, 0.020, 0.050, 0.100, 0.500, 1.000, 2.000};
-    const double winSec = kTimeSecs[mTimebaseIdx];
+    const double winSec = mWindowSec;
     const int nDisp = std::clamp((int)std::round(winSec * mSampleRate), 16, ringLen - 64);
 
     if (ringLen < nDisp + 128)
@@ -243,8 +235,8 @@ public:
   void OnMouseDblClick(float x, float y, const IMouseMod &mod) override {
     const IRECT plot = GetPlotRect();
     if (plot.Contains(x, y)) {
-      // 官方交互：“Double-click to reset zoom”
-      mZoomIdx = 0;       // 复位缩放 1x
+      // 官方交互：”Double-click to reset zoom”
+      mZoomFactor = 1.f;  // 复位缩放 1x（Analyzer OnIdle 会把滑块同步回来）
       mTrigLevel = 0.0f;  // 复位门限 0.0
       SetDirty(false);
     }
@@ -301,12 +293,18 @@ public:
   }
 
 private:
-  static constexpr float kZooms[4] = {1.0f, 2.0f, 4.0f, 8.0f};
+  // 时间窗与幅度倍率的连续范围（内嵌滑块驱动）
+  static constexpr double kMinWindowSec = 0.001;
+  static constexpr double kMaxWindowSec = 2.000;
+  static constexpr float kMaxZoom = 8.f;
+  // 画区为内嵌滑块让出的边距
+  static constexpr float kSliderW = 20.f;
+  static constexpr float kSliderH = 20.f;
 
   int mTrigSource = kTrigEdge;
   int mChanMask = kChanBitL | kChanBitR;
-  int mTimebaseIdx = kTime10ms;
-  int mZoomIdx = 0;
+  double mWindowSec = 0.010;
+  float mZoomFactor = 1.f;
   int mSweepPos = 0; // FREQ 扫描笔位置（显示缓冲槽位）
   float mTrigLevel = 0.0f;
 
@@ -338,11 +336,11 @@ private:
   std::vector<float> mEnvBot;
 
   IRECT GetPlotRect() const {
-    return IRECT(mRECT.L + 2.f, mRECT.T + 2.f, mRECT.R - 2.f, mRECT.B - 2.f);
+    return IRECT(mRECT.L + 2.f, mRECT.T + 2.f, mRECT.R - kSliderW - 6.f, mRECT.B - kSliderH - 6.f);
   }
 
   float GetCurrentZoom() const {
-    return kZooms[std::clamp(mZoomIdx, 0, 3)];
+    return std::clamp(mZoomFactor, 1.f, kMaxZoom);
   }
 
   float LevelToY(const IRECT &plot, float lvl) const {
@@ -549,9 +547,9 @@ private:
   }
 
   void DrawStatusBadges(IGraphics &g, const IRECT &plot) {
-    const float bY = plot.B - 18.f;
+    const float tY = plot.T + 4.f;
 
-    // 1. 左侧状态徽标
+    // 左上角状态徽标
     IColor stateCol;
     const char *stateStr = "";
     if (mTrigSource == kTrigEdge) {
@@ -565,13 +563,13 @@ private:
       stateStr = "FREQ";
     }
 
-    const IRECT stateBadge(plot.L + 4.f, bY, plot.L + 46.f, bY + 14.f);
+    const IRECT stateBadge(plot.L + 4.f, tY, plot.L + 46.f, tY + 14.f);
     g.FillRect(stateCol, stateBadge);
     const IText sT(10, ThemeMode() ? IColor(255, 20, 20, 20) : IColor(255, 255, 255, 255),
                    kFontBold, EAlign::Center, EVAlign::Middle);
     g.DrawText(sT, stateStr, stateBadge);
 
-    // 2. 模式专有读数
+    // 模式专有读数（徽标右侧；FREQ 自由扫描无读数）
     char infoBuf[48] = "";
     if (mTrigSource == kTrigEdge) {
       std::snprintf(infoBuf, sizeof(infoBuf), "Trig: %+.2f", mTrigLevel);
@@ -580,39 +578,19 @@ private:
         std::snprintf(infoBuf, sizeof(infoBuf), "Det: %.1f Hz (%.2f ms)", mDetectedFreq, mDetectedPeriodMs);
       else
         std::snprintf(infoBuf, sizeof(infoBuf), "%s", "Det: —");
-    } else {
-      // 扫描率 = 1 / 时间窗
-      static constexpr double kTimeSecsBadge[kNumTimebases] = {
-          0.001, 0.002, 0.005, 0.010, 0.020, 0.050, 0.100, 0.500, 1.000, 2.000};
-      std::snprintf(infoBuf, sizeof(infoBuf), "Sweep: %.1f Hz", 1.0 / kTimeSecsBadge[mTimebaseIdx]);
     }
 
-    const IText infoT(11, COL_700(), kFontRegular, EAlign::Near, EVAlign::Middle);
-    g.DrawText(infoT, infoBuf, IRECT(plot.L + 52.f, bY, plot.L + 180.f, bY + 14.f));
-
-    // 3. 右下角时基读数
-    static constexpr double kTimeSecs[kNumTimebases] = {
-        0.001, 0.002, 0.005, 0.010, 0.020, 0.050, 0.100, 0.500, 1.000, 2.000};
-    const double winSec = kTimeSecs[mTimebaseIdx];
-    char timeBuf[32];
-    if (winSec < 0.010)
-      std::snprintf(timeBuf, sizeof(timeBuf), "%.1f ms (%.2f ms/div)", winSec * 1000.0, winSec * 250.0);
-    else if (winSec < 1.0)
-      std::snprintf(timeBuf, sizeof(timeBuf), "%.0f ms (%.1f ms/div)", winSec * 1000.0, winSec * 250.0);
-    else
-      std::snprintf(timeBuf, sizeof(timeBuf), "%.1f s (%.2f s/div)", winSec, winSec * 0.25);
-
-    const IText timeT(11, COL_700(), kFontRegular, EAlign::Far, EVAlign::Middle);
-    g.DrawText(timeT, timeBuf, IRECT(plot.R - 160.f, bY, plot.R - 6.f, bY + 14.f));
+    if (infoBuf[0]) {
+      const IText infoT(11, COL_700(), kFontRegular, EAlign::Near, EVAlign::Middle);
+      g.DrawText(infoT, infoBuf, IRECT(plot.L + 52.f, tY, plot.L + 190.f, tY + 14.f));
+    }
   }
 
   void DrawCursorInspector(IGraphics &g, const IRECT &plot) {
     g.DrawLine(COL_500(), mHoverX, plot.T, mHoverX, plot.B, nullptr, 1.f);
     g.DrawLine(COL_500(), plot.L, mHoverY, plot.R, mHoverY, nullptr, 1.f);
 
-    static constexpr double kTimeSecs[kNumTimebases] = {
-        0.001, 0.002, 0.005, 0.010, 0.020, 0.050, 0.100, 0.500, 1.000, 2.000};
-    const double winSec = kTimeSecs[mTimebaseIdx];
+    const double winSec = mWindowSec;
     // GRM 坐标：最右侧是 t = 0，向左为负时间 (-dt)
     const float dtSec = (float)((mHoverX - plot.R) / plot.W() * winSec);
     const float vVal = YToLevel(plot, mHoverY);

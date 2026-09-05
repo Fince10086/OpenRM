@@ -138,8 +138,8 @@ private:
   FlatColorToggleControl *mScopeBtnL = nullptr;
   FlatColorToggleControl *mScopeBtnR = nullptr;
   FlatColorToggleControl *mScopeBtnM = nullptr;
-  FlatCycleButton *mScopeTimeBtn = nullptr;
-  FlatCycleButton *mScopeZoomBtn = nullptr;
+  ORMSlider *mScopeZoomSlider = nullptr;
+  ORMSlider *mScopeTimeSlider = nullptr;
   void SyncScopeChanMask(); // L/R/M 开关状态 -> 示波器声道掩码
 
   int mSentMode = -1;
