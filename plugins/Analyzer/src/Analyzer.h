@@ -139,8 +139,8 @@ private:
   int mSentWindowVQT = -1;
   int mSentRtaOct = -1;
 
-  // Freeze：音频线程把最近输入滚环记录，冻结后停止写入；UI 线程用冻结缓冲在新配置下确定性回放
-  static constexpr int kFreezeRingLen = 1 << 18; // ≈5.46s @48k，覆盖最长释放弹道收敛
+  // Freeze：音频线程把最近输入滚环记录，冻结后停止写入；UI 线程用冻结缓冲在新配置下确定性回放（10秒缓冲）
+  static constexpr int kFreezeRingLen = 1 << 19; // ≈10.92s @48k，覆盖最长释放弹道收敛与长时基示波
   std::array<std::array<float, kFreezeRingLen>, 3> mFreezeRing{}; // [0]=L [1]=R [2]=M
   std::atomic<int> mFreezeRingPos{0};
   std::array<std::atomic<int>, kNumModes> mEngineHopPhase{}; // 各引擎输入侧 hop 相位

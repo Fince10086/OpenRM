@@ -1,16 +1,6 @@
 #pragma once
 
-// OscilloscopeControl — 时域示波器控件 (触发模式 Trigger Mode)
-//
-// 特性：
-// - 边沿触发 (Rising / Falling Edge) + 门限防抖迟滞 (Hysteresis) + 释抑 (Holdoff)
-// - AUTO / NORM 两种工作模式
-// - 时基选择 (1ms, 2ms, 5ms, 10ms, 20ms, 50ms)
-// - 通道模式 (L/R 双轨重叠, L, R, M/S 中侧分解)
-// - 垂直增益缩放 (1x, 2x, 4x)
-// - 可交互拖拽门限线 (Trigger Level) 与零电平/削波参考网格
-// - 鼠标悬停游标测量 (时间差 Δt、等效频率及音高、幅度)
-// - 与全局 FREEZE、RESET 和主题系统无缝联动
+// OscilloscopeControl
 
 #include "IControls.h"
 #include "UiUtils.h"
@@ -29,14 +19,11 @@ BEGIN_IGRAPHICS_NAMESPACE
 
 class OscilloscopeControl : public IControl {
 public:
-  enum ETimebase {
-    kTime1ms = 0,
-    kTime2ms,
-    kTime5ms,
-    kTime10ms,
-    kTime20ms,
-    kTime50ms,
-    kNumTimebases
+  enum ETriggerSource {
+    kTrigEdge = 0,      // Rising Edge 门限触发
+    kTrigAutocorr,      // Autocorrelation 自相关周期锁定
+    kTrigFrequency,     // Frequency 定频定时刷新
+    kNumTrigSources
   };
 
   enum EChanMode {
@@ -44,39 +31,47 @@ public:
     kChanL,
     kChanR,
     kChanMS,
+    kChanSum,           // GRM 特色纯白全声道求和线
     kNumChans
   };
 
-  enum ETrigMode {
-    kTrigAuto = 0,
-    kTrigNorm,
-    kNumTrigModes
+  enum ETimebase {
+    kTime1ms = 0,
+    kTime2ms,
+    kTime5ms,
+    kTime10ms,
+    kTime20ms,
+    kTime50ms,
+    kTime100ms,
+    kTime500ms,
+    kTime1s,
+    kTime2s,
+    kNumTimebases
   };
 
-  enum ETrigEdge {
-    kEdgeRising = 0,
-    kEdgeFalling,
-    kNumTrigEdges
+  enum ETrigFreqPreset {
+    kFreq10Hz = 0,
+    kFreq20Hz,
+    kFreq30Hz,
+    kFreq60Hz,
+    kFreq120Hz,
+    kNumFreqPresets
   };
 
-  enum ETrigSource {
+  enum ETrigChan {
     kSrcMid = 0,
     kSrcL,
     kSrcR,
-    kNumTrigSources
-  };
-
-  enum ETrigState {
-    kStateTriggered = 0,
-    kStateAuto,
-    kStateWait
+    kNumTrigChans
   };
 
   explicit OscilloscopeControl(const IRECT &bounds) : IControl(bounds) {
-    mDispL.reserve(4096);
-    mDispR.reserve(4096);
-    mDispM.reserve(4096);
-    mDispS.reserve(4096);
+    mDispL.reserve(8192);
+    mDispR.reserve(8192);
+    mDispM.reserve(8192);
+    mDispS.reserve(8192);
+    mDispSum.reserve(8192);
+    mAcfCurve.assign(1024, 0.f);
   }
 
   void Clear() {
@@ -84,92 +79,141 @@ public:
     mDispR.clear();
     mDispM.clear();
     mDispS.clear();
-    mTrigState = kStateWait;
+    mDispSum.clear();
+    mAcfCurve.assign(1024, 0.f);
+    mDetectedFreq = 0.f;
+    mDetectedPeriodMs = 0.f;
+    mDetectedLag = -1;
+    mTrigStateActive = false;
     SetDirty(false);
   }
 
-  // 由插件 OnIdle() 每帧调用：从环形缓冲抽取触发波形切片
+  // 插件 OnIdle() 每帧调用：根据当前模式执行触发并提取波形切片
   void UpdateAudio(const float *const *pRing, int ringLen, int headPos, double sampleRate, bool frozen) {
     if (frozen && mFrozen)
       return;
     mFrozen = frozen;
     mSampleRate = std::max(1000.0, sampleRate);
 
-    static constexpr double kTimeSecs[kNumTimebases] = {0.001, 0.002, 0.005, 0.010, 0.020, 0.050};
+    static constexpr double kTimeSecs[kNumTimebases] = {
+        0.001, 0.002, 0.005, 0.010, 0.020, 0.050, 0.100, 0.500, 1.000, 2.000};
     const double winSec = kTimeSecs[mTimebaseIdx];
-    const int nDisp = std::clamp((int)std::round(winSec * mSampleRate), 16, 16384);
+    const int nDisp = std::clamp((int)std::round(winSec * mSampleRate), 16, ringLen - 64);
 
-    if (ringLen < nDisp + 64)
+    if (ringLen < nDisp + 128)
       return;
 
-    // 选择触发源声道：0: Mid, 1: L, 2: R
-    // 对应 pRing 索引：L=0, R=1, M=2
-    const int trigChan = (mTrigSource == kSrcMid) ? 2 : (mTrigSource == kSrcL) ? 0 : 1;
-    const float vTh = mTrigLevel;
-    constexpr float kHys = 0.02f; // 门限防抖迟滞
+    // 选择触发参考通道：L=0, R=1, Mid=2
+    const int trigChan = (mTrigChan == kSrcMid) ? 2 : (mTrigChan == kSrcL) ? 0 : 1;
 
-    int trigIdx = -1;
-    const int searchMax = std::min(ringLen - nDisp - 16, (int)(mSampleRate * 0.08));
-    const int startP = (headPos - nDisp / 2 + ringLen) % ringLen;
+    int triggerPos = -1;
+    mTrigStateActive = false;
 
-    // 向后寻找满足边沿 + 迟滞条件的触发点
-    for (int k = 1; k < searchMax; ++k) {
-      const int p0 = (startP - k + ringLen) % ringLen;
-      const int pPrev = (p0 - 1 + ringLen) % ringLen;
-      const float s0 = pRing[trigChan][p0];
-      const float sPrev = pRing[trigChan][pPrev];
+    if (mTrigSource == kTrigEdge) {
+      // 1. RISING EDGE 模式：
+      const float vTh = mTrigLevel;
+      constexpr float kHys = 0.02f;
+      const int searchSpan = std::min(ringLen - nDisp - 16, (int)(mSampleRate * 0.15));
 
-      if (mTrigEdge == kEdgeRising) {
+      for (int k = 1; k < searchSpan; ++k) {
+        const int p0 = (headPos - k + ringLen) & (ringLen - 1);
+        const int pPrev = (p0 - 1 + ringLen) & (ringLen - 1);
+        const float s0 = pRing[trigChan][p0];
+        const float sPrev = pRing[trigChan][pPrev];
+
         if (sPrev <= (vTh - kHys) && s0 >= vTh) {
-          trigIdx = p0;
-          break;
-        }
-      } else {
-        if (sPrev >= (vTh + kHys) && s0 <= vTh) {
-          trigIdx = p0;
+          triggerPos = p0;
+          mTrigStateActive = true;
           break;
         }
       }
-    }
 
-    int readStart = 0;
-    if (trigIdx >= 0) {
-      mTrigState = kStateTriggered;
-      readStart = (trigIdx - nDisp / 2 + ringLen) % ringLen;
-    } else {
-      if (mTrigMode == kTrigAuto) {
-        mTrigState = kStateAuto;
-        readStart = (headPos - nDisp + ringLen) % ringLen;
+      // 未搜寻到边沿时回退至以最新样本为右边缘
+      if (triggerPos < 0)
+        triggerPos = headPos;
+
+    } else if (mTrigSource == kTrigAutocorr) {
+      // 2. AUTOCORRELATION 模式：
+      ComputeAutocorr(pRing[trigChan], ringLen, headPos);
+
+      if (mDetectedLag > 8) {
+        mTrigStateActive = true;
+        const int searchRange = std::min(mDetectedLag * 2, ringLen - nDisp - 16);
+        float bestVal = -1e9f;
+        int bestIdx = headPos;
+        for (int k = 0; k < searchRange; ++k) {
+          const int p = (headPos - k + ringLen) & (ringLen - 1);
+          if (pRing[trigChan][p] > bestVal) {
+            bestVal = pRing[trigChan][p];
+            bestIdx = p;
+          }
+        }
+        triggerPos = bestIdx;
       } else {
-        // NORM 模式：未触发时保留原有画面
-        mTrigState = kStateWait;
-        SetDirty(false);
+        triggerPos = headPos;
+      }
+
+    } else {
+      // 3. FREQUENCY 定频刷新模式：
+      // 按照 Trigger frequency 定时抓取，右边缘为最新时刻
+      static constexpr double kFreqValues[kNumFreqPresets] = {10.0, 20.0, 30.0, 60.0, 120.0};
+      const double trigFreq = kFreqValues[mFreqPreset];
+      const int stepSamples = std::max(1, (int)std::round(mSampleRate / trigFreq));
+
+      // 累加采样步长进行节拍抽取
+      const int advance = (headPos - mLastHeadPos + ringLen) & (ringLen - 1);
+      mFreqAccum += advance;
+      mLastHeadPos = headPos;
+
+      if (mFreqAccum >= stepSamples || mDispL.empty()) {
+        mFreqAccum %= stepSamples;
+        triggerPos = headPos;
+        mTrigStateActive = true;
+      } else {
+        // 未到刷新时钟周期时保持上一画面
         return;
       }
     }
 
-    // 复制并准备绘制切片
+    // 按照“右边缘为触发时刻”提取 nDisp 个前向历史采样点
     mDispL.resize(nDisp);
     mDispR.resize(nDisp);
     mDispM.resize(nDisp);
     mDispS.resize(nDisp);
+    mDispSum.resize(nDisp);
 
+    const int readStart = (triggerPos - nDisp + ringLen) & (ringLen - 1);
     for (int i = 0; i < nDisp; ++i) {
-      const int p = (readStart + i) % ringLen;
+      const int p = (readStart + i) & (ringLen - 1);
       const float l = pRing[0][p];
       const float r = pRing[1][p];
       mDispL[i] = l;
       mDispR[i] = r;
       mDispM[i] = (l + r) * 0.70710678f;
       mDispS[i] = (l - r) * 0.70710678f;
+      mDispSum[i] = (l + r); // GRM 全声道求和线
     }
 
     SetDirty(false);
   }
 
   void OnMouseDown(float x, float y, const IMouseMod &mod) override {
-    // 检查是否点击顶部按钮
+    // 1. 顶栏按钮交互
     if (y < mRECT.T + kHeaderH) {
+      if (mBtnMode.Contains(x, y)) {
+        mTrigSource = (mTrigSource + 1) % kNumTrigSources;
+        SetDirty(false);
+        return;
+      }
+      if (mBtnSecondary.Contains(x, y)) {
+        if (mTrigSource == kTrigFrequency) {
+          mFreqPreset = (mFreqPreset + 1) % kNumFreqPresets;
+        } else {
+          mTrigChan = (mTrigChan + 1) % kNumTrigChans;
+        }
+        SetDirty(false);
+        return;
+      }
       if (mBtnChan.Contains(x, y)) {
         mChanMode = (mChanMode + 1) % kNumChans;
         SetDirty(false);
@@ -181,36 +225,23 @@ public:
         return;
       }
       if (mBtnZoom.Contains(x, y)) {
-        mZoomIdx = (mZoomIdx + 1) % 3;
-        SetDirty(false);
-        return;
-      }
-      if (mBtnMode.Contains(x, y)) {
-        mTrigMode = (mTrigMode + 1) % kNumTrigModes;
-        SetDirty(false);
-        return;
-      }
-      if (mBtnEdge.Contains(x, y)) {
-        mTrigEdge = (mTrigEdge + 1) % kNumTrigEdges;
-        SetDirty(false);
-        return;
-      }
-      if (mBtnSrc.Contains(x, y)) {
-        mTrigSource = (mTrigSource + 1) % kNumTrigSources;
+        mZoomIdx = (mZoomIdx + 1) % 4;
         SetDirty(false);
         return;
       }
     }
 
-    // 检查是否点击触发门限手柄或波形区域进行拖拽
+    // 2. 波形区拖拽门限 (Rising edge 模式)
     const IRECT plot = GetPlotRect();
     if (plot.Contains(x, y)) {
-      const float yTh = LevelToY(plot, mTrigLevel);
-      if (std::fabs(y - yTh) < 14.f || x > plot.R - 28.f || mod.S || mod.C) {
-        mDraggingTrig = true;
-        mTrigLevel = YToLevel(plot, y);
-        SetDirty(false);
-        return;
+      if (mTrigSource == kTrigEdge) {
+        const float yTh = LevelToY(plot, mTrigLevel);
+        if (std::fabs(y - yTh) < 14.f || x > plot.R - 32.f || mod.S || mod.C) {
+          mDraggingTrig = true;
+          mTrigLevel = YToLevel(plot, y);
+          SetDirty(false);
+          return;
+        }
       }
     }
   }
@@ -218,13 +249,15 @@ public:
   void OnMouseDblClick(float x, float y, const IMouseMod &mod) override {
     const IRECT plot = GetPlotRect();
     if (plot.Contains(x, y)) {
-      mTrigLevel = 0.0f;
+      // 官方交互：“Double-click to reset zoom”
+      mZoomIdx = 0;       // 复位缩放 1x
+      mTrigLevel = 0.0f;  // 复位门限 0.0
       SetDirty(false);
     }
   }
 
   void OnMouseDrag(float x, float y, float dX, float dY, const IMouseMod &mod) override {
-    if (mDraggingTrig) {
+    if (mDraggingTrig && mTrigSource == kTrigEdge) {
       const IRECT plot = GetPlotRect();
       mTrigLevel = YToLevel(plot, y);
       SetDirty(false);
@@ -257,7 +290,17 @@ public:
     const IRECT plot = GetPlotRect();
     DrawPlotBackground(g, plot);
     DrawGrid(g, plot);
-    DrawTriggerLine(g, plot);
+
+    // 在 Autocorrelation 模式下叠印自相关灰色曲线与周期标尺线
+    if (mTrigSource == kTrigAutocorr) {
+      DrawAutocorrOverlay(g, plot);
+    }
+
+    // 在 Rising Edge 模式下绘制可拖拽门限虚线与手柄
+    if (mTrigSource == kTrigEdge) {
+      DrawTriggerLine(g, plot);
+    }
+
     DrawWaveforms(g, plot);
     DrawStatusBadges(g, plot);
 
@@ -268,20 +311,29 @@ public:
 
 private:
   static constexpr float kHeaderH = 26.f;
-  static constexpr float kZooms[3] = {1.0f, 2.0f, 4.0f};
+  static constexpr float kZooms[4] = {1.0f, 2.0f, 4.0f, 8.0f};
 
-  int mTimebaseIdx = kTime10ms;
+  int mTrigSource = kTrigEdge;
   int mChanMode = kChanLR;
-  int mTrigMode = kTrigAuto;
-  int mTrigEdge = kEdgeRising;
-  int mTrigSource = kSrcMid;
+  int mTimebaseIdx = kTime10ms;
   int mZoomIdx = 0;
+  int mFreqPreset = kFreq30Hz;
+  int mTrigChan = kSrcMid;
   float mTrigLevel = 0.0f;
 
-  int mTrigState = kStateAuto;
   double mSampleRate = 48000.0;
   bool mFrozen = false;
   bool mDraggingTrig = false;
+  bool mTrigStateActive = false;
+
+  int mLastHeadPos = 0;
+  int mFreqAccum = 0;
+
+  // 自相关算法检测结果与归一化曲线
+  std::vector<float> mAcfCurve;
+  float mDetectedFreq = 0.f;
+  float mDetectedPeriodMs = 0.f;
+  int mDetectedLag = -1;
 
   bool mHoverActive = false;
   float mHoverX = 0.f;
@@ -291,16 +343,17 @@ private:
   std::vector<float> mDispR;
   std::vector<float> mDispM;
   std::vector<float> mDispS;
+  std::vector<float> mDispSum;
 
   // 顶栏按钮布局区域
-  IRECT mBtnChan, mBtnTime, mBtnZoom, mBtnMode, mBtnEdge, mBtnSrc;
+  IRECT mBtnMode, mBtnSecondary, mBtnChan, mBtnTime, mBtnZoom;
 
   IRECT GetPlotRect() const {
     return IRECT(mRECT.L + 2.f, mRECT.T + kHeaderH + 2.f, mRECT.R - 2.f, mRECT.B - 2.f);
   }
 
   float GetCurrentZoom() const {
-    return kZooms[std::clamp(mZoomIdx, 0, 2)];
+    return kZooms[std::clamp(mZoomIdx, 0, 3)];
   }
 
   float LevelToY(const IRECT &plot, float lvl) const {
@@ -319,40 +372,34 @@ private:
   void UpdatePillLayout() {
     float curR = mRECT.R - 4.f;
     constexpr float btnH = 20.f;
-    constexpr float topY = 3.f;
-    const float y0 = mRECT.T + topY;
+    const float y0 = mRECT.T + 3.f;
     const float y1 = y0 + btnH;
     constexpr float gap = 3.f;
 
     // 从右往左排布快捷按钮
-    // 1. SRC (触发源)
-    constexpr float wSrc = 52.f;
-    mBtnSrc = IRECT(curR - wSrc, y0, curR, y1);
-    curR -= (wSrc + gap);
-
-    // 2. EDGE (触发沿: + / -)
-    constexpr float wEdge = 20.f;
-    mBtnEdge = IRECT(curR - wEdge, y0, curR, y1);
-    curR -= (wEdge + gap);
-
-    // 3. MODE (AUTO / NORM)
-    constexpr float wMode = 44.f;
-    mBtnMode = IRECT(curR - wMode, y0, curR, y1);
-    curR -= (wMode + gap);
-
-    // 4. ZOOM (1x / 2x / 4x)
+    // 1. ZOOM (1x / 2x / 4x / 8x)
     constexpr float wZoom = 26.f;
     mBtnZoom = IRECT(curR - wZoom, y0, curR, y1);
     curR -= (wZoom + gap);
 
-    // 5. TIMEBASE (1ms..50ms)
+    // 2. TIMEBASE (1ms..2s)
     constexpr float wTime = 42.f;
     mBtnTime = IRECT(curR - wTime, y0, curR, y1);
     curR -= (wTime + gap);
 
-    // 6. CHAN (L/R, L, R, M/S)
-    constexpr float wChan = 36.f;
+    // 3. CHAN (L/R, L, R, M/S, SUM)
+    constexpr float wChan = 38.f;
     mBtnChan = IRECT(curR - wChan, y0, curR, y1);
+    curR -= (wChan + gap);
+
+    // 4. SECONDARY (SRC: L/R/M 或 FREQ: 30Hz)
+    const float wSec = (mTrigSource == kTrigFrequency) ? 46.f : 50.f;
+    mBtnSecondary = IRECT(curR - wSec, y0, curR, y1);
+    curR -= (wSec + gap);
+
+    // 5. MODE (EDGE / AUTOCORR / FREQ)
+    constexpr float wMode = 68.f;
+    mBtnMode = IRECT(curR - wMode, y0, curR, y1);
   }
 
   void DrawPill(IGraphics &g, const IRECT &box, const char *txt, bool active = false) {
@@ -363,34 +410,40 @@ private:
     if (hov) {
       g.FillRect(HoverOverlay(), box);
     }
-    const IText t(12, COL_900(), kFontSemiBold, EAlign::Center, EVAlign::Middle);
+    const IText t(11, COL_900(), kFontSemiBold, EAlign::Center, EVAlign::Middle);
     g.DrawText(t, txt, box);
   }
 
   void DrawHeader(IGraphics &g) {
-    // 标题文本
     const IText titleT(14, COL_900(), kFontBold, EAlign::Near, EVAlign::Middle);
     const char *titleStr = (orm::UILang() == orm::kLangZH) ? "示波器" : "SCOPE";
-    g.DrawText(titleT, titleStr, IRECT(mRECT.L + 6.f, mRECT.T + 3.f, mBtnChan.L - 4.f, mRECT.T + kHeaderH));
+    g.DrawText(titleT, titleStr, IRECT(mRECT.L + 6.f, mRECT.T + 3.f, mBtnMode.L - 4.f, mRECT.T + kHeaderH));
 
-    // 按钮文案
-    static const char *kChanNames[kNumChans] = {"L/R", "L", "R", "M/S"};
+    // 1. 触发模式按钮
+    static const char *kModeNames[kNumTrigSources] = {"EDGE", "AUTOCORR", "FREQ"};
+    DrawPill(g, mBtnMode, kModeNames[mTrigSource], true);
+
+    // 2. 二级控制项
+    if (mTrigSource == kTrigFrequency) {
+      static const char *kFreqNames[kNumFreqPresets] = {"10Hz", "20Hz", "30Hz", "60Hz", "120Hz"};
+      DrawPill(g, mBtnSecondary, kFreqNames[mFreqPreset]);
+    } else {
+      static const char *kSrcNames[kNumTrigChans] = {"SRC: M", "SRC: L", "SRC: R"};
+      DrawPill(g, mBtnSecondary, kSrcNames[mTrigChan]);
+    }
+
+    // 3. 通道模式按钮 (包含 SUM)
+    static const char *kChanNames[kNumChans] = {"L/R", "L", "R", "M/S", "SUM"};
     DrawPill(g, mBtnChan, kChanNames[mChanMode]);
 
-    static const char *kTimeNames[kNumTimebases] = {"1ms", "2ms", "5ms", "10ms", "20ms", "50ms"};
+    // 4. 时基
+    static const char *kTimeNames[kNumTimebases] = {
+        "1ms", "2ms", "5ms", "10ms", "20ms", "50ms", "100ms", "500ms", "1s", "2s"};
     DrawPill(g, mBtnTime, kTimeNames[mTimebaseIdx]);
 
-    static const char *kZoomNames[3] = {"1x", "2x", "4x"};
+    // 5. 垂直缩放
+    static const char *kZoomNames[4] = {"1x", "2x", "4x", "8x"};
     DrawPill(g, mBtnZoom, kZoomNames[mZoomIdx]);
-
-    static const char *kModeNames[kNumTrigModes] = {"AUTO", "NORM"};
-    DrawPill(g, mBtnMode, kModeNames[mTrigMode], mTrigMode == kTrigNorm);
-
-    static const char *kEdgeNames[kNumTrigEdges] = {"+", "-"};
-    DrawPill(g, mBtnEdge, kEdgeNames[mTrigEdge]);
-
-    static const char *kSrcNames[kNumTrigSources] = {"SRC: M", "SRC: L", "SRC: R"};
-    DrawPill(g, mBtnSrc, kSrcNames[mTrigSource]);
   }
 
   void DrawPlotBackground(IGraphics &g, const IRECT &plot) {
@@ -403,10 +456,9 @@ private:
     const float zoom = GetCurrentZoom();
     const IColor gridCol = WarmGray(ThemeMode() ? 40 : 220);
     const IColor subGridCol = WarmGray(ThemeMode() ? 25 : 235);
-    const IColor limitCol = IColor(120, 226, 60, 52); // ±1.0 满幅度削波警戒线
+    const IColor limitCol = IColor(120, 226, 60, 52); // ±1.0 满幅度警戒线
 
-    // 1. 水平刻度线
-    // 零电平线 (Center 0.0)
+    // 零电平中轴线
     g.DrawLine(gridCol, plot.L, cy, plot.R, cy, nullptr, 1.f);
 
     // ±0.5 线
@@ -425,15 +477,17 @@ private:
     if (yNeg10 <= plot.B)
       g.DrawLine(limitCol, plot.L, yNeg10, plot.R, yNeg10, nullptr, 1.f);
 
-    // 2. 垂直时间分度线 (4 等分)
-    const float cx = plot.MW();
+    // 垂直等分线
     for (int i = 1; i <= 3; ++i) {
       const float vx = plot.L + (float)i * 0.25f * plot.W();
-      const bool isCenter = (i == 2);
-      g.DrawLine(isCenter ? gridCol : subGridCol, vx, plot.T, vx, plot.B, nullptr, 1.f);
+      g.DrawLine(subGridCol, vx, plot.T, vx, plot.B, nullptr, 1.f);
     }
 
-    // 刻度微标 (+1.0 / 0.0 / -1.0)
+    // 右侧触发时刻边界线 (GRM 规范：最右侧是触发事件发生时刻)
+    const IColor eventCol = (mTrigSource == kTrigEdge) ? SemColor(MeterYellow()) : gridCol;
+    g.DrawLine(eventCol, plot.R, plot.T, plot.R, plot.B, nullptr, 1.5f);
+
+    // 幅度刻度微标
     const IText tickT(10, COL_500(), kFontRegular, EAlign::Near, EVAlign::Middle);
     char buf[16];
     std::snprintf(buf, sizeof(buf), "%+.1f", 1.0f / zoom);
@@ -442,18 +496,54 @@ private:
     g.DrawText(tickT, buf, IRECT(plot.L + 3.f, yNeg10 - 6.f, plot.L + 32.f, yNeg10 + 6.f));
   }
 
+  // 绘制 Autocorrelation 模式专有的叠加信息：灰色 ACF 曲线与垂直周期点线
+  void DrawAutocorrOverlay(IGraphics &g, const IRECT &plot) {
+    if (mAcfCurve.empty())
+      return;
+
+    const int nAcf = (int)mAcfCurve.size();
+    const float cy = plot.MH();
+    const float halfH = plot.H() * 0.45f;
+    const float w = plot.W();
+
+    // 1. 灰色自相关波形曲线 (grey line)
+    const IColor acfCol = ThemeMode() ? IColor(110, 160, 160, 160) : IColor(110, 90, 90, 90);
+    g.PathClear();
+    for (int px = 0; px < (int)w; ++px) {
+      const float frac = (float)px / w;
+      const int idx = std::clamp((int)(frac * (float)nAcf), 0, nAcf - 1);
+      const float y = cy - mAcfCurve[idx] * halfH;
+      if (px == 0)
+        g.PathMoveTo(plot.L + (float)px, y);
+      else
+        g.PathLineTo(plot.L + (float)px, y);
+    }
+    g.PathStroke(IPattern(acfCol), 1.2f);
+
+    // 2. 垂直点状指示线：标注最可信周期 (vertical dotted bar indicates most probable period)
+    if (mDetectedLag > 0 && mDetectedLag < nAcf) {
+      const float peakX = plot.L + ((float)mDetectedLag / (float)nAcf) * w;
+      if (peakX >= plot.L && peakX <= plot.R) {
+        const IColor barCol = SemColor(MeterGreen());
+        for (float y = plot.T + 2.f; y < plot.B - 2.f; y += 6.f) {
+          g.DrawLine(barCol, peakX, y, peakX, std::min(y + 3.f, plot.B - 2.f), nullptr, 1.5f);
+        }
+      }
+    }
+  }
+
+  // 绘制 Rising Edge 模式下的可拖动水平门限线
   void DrawTriggerLine(IGraphics &g, const IRECT &plot) {
     const float yTh = LevelToY(plot, mTrigLevel);
     if (yTh < plot.T || yTh > plot.B)
       return;
 
     const IColor trigCol = SemColor(MeterYellow());
-    // 触发虚线 / 点线
-    for (float x = plot.L; x < plot.R - 20.f; x += 8.f) {
-      g.DrawLine(trigCol, x, yTh, std::min(x + 4.f, plot.R - 20.f), yTh, nullptr, 1.f);
+    for (float x = plot.L; x < plot.R - 18.f; x += 8.f) {
+      g.DrawLine(trigCol, x, yTh, std::min(x + 4.f, plot.R - 18.f), yTh, nullptr, 1.f);
     }
 
-    // 右侧触发指示标记 Handle [T]
+    // 右边缘触发手柄 [T]
     const IRECT handle(plot.R - 18.f, yTh - 7.f, plot.R - 2.f, yTh + 7.f);
     g.FillRect(trigCol, handle);
     const IText t(10, ThemeMode() ? IColor(255, 20, 20, 20) : IColor(255, 255, 255, 255),
@@ -471,7 +561,6 @@ private:
     const float halfH = plot.H() * 0.48f;
     const float w = plot.W();
 
-    // 当采样点多于像素宽度时使用 Min-Max 峰值抽取，保证高性能且无锯齿走样
     if (n > (int)w) {
       const float step = (float)n / w;
       float prevTop = cy, prevBot = cy;
@@ -490,16 +579,14 @@ private:
         const float yBot = cy - std::clamp(minVal * zoom, -1.15f, 1.15f) * halfH;
         const float x = plot.L + (float)px;
 
-        // 连结前后像素垂直列，消除断线
         const float drawTop = std::min(yTop, prevBot);
         const float drawBot = std::max(yBot, prevTop);
-        g.DrawLine(col, x, drawTop, x, std::max(drawBot, drawTop + 1.f), nullptr, 1.f);
+        g.DrawLine(col, x, drawTop, x, std::max(drawBot, drawTop + 1.f), nullptr, 1.2f);
 
         prevTop = yTop;
         prevBot = yBot;
       }
     } else {
-      // 采样点少于像素列时逐点平滑连线
       g.PathClear();
       for (int i = 0; i < n; ++i) {
         const float frac = (float)i / (float)(n - 1);
@@ -512,7 +599,6 @@ private:
       }
       g.PathStroke(IPattern(col), 1.5f);
 
-      // 点数很少时（例如 <= 80 点）绘制微小采样点圆点
       if (n <= 80) {
         for (int i = 0; i < n; ++i) {
           const float frac = (float)i / (float)(n - 1);
@@ -527,11 +613,11 @@ private:
   void DrawWaveforms(IGraphics &g, const IRECT &plot) {
     IColor cL, cR, cM;
     GetChannelColors(cL, cR, cM);
-    // Side 通道颜色：明亮金色
     const IColor cS = IColor(255, 240, 185, 45);
+    // GRM 全声道求和线：明亮纯白
+    const IColor cSum = ThemeMode() ? IColor(255, 255, 255, 255) : IColor(255, 30, 30, 30);
 
     if (mChanMode == kChanLR) {
-      // 双轨叠加：R 先画，L 后画
       if (!mDispR.empty())
         DrawWaveformLine(g, plot, mDispR, IColor(210, cR.R, cR.G, cR.B));
       if (!mDispL.empty())
@@ -547,23 +633,28 @@ private:
         DrawWaveformLine(g, plot, mDispS, IColor(200, cS.R, cS.G, cS.B));
       if (!mDispM.empty())
         DrawWaveformLine(g, plot, mDispM, IColor(240, cM.R, cM.G, cM.B));
+    } else if (mChanMode == kChanSum) {
+      // 纯白求和线
+      if (!mDispSum.empty())
+        DrawWaveformLine(g, plot, mDispSum, cSum);
     }
   }
 
   void DrawStatusBadges(IGraphics &g, const IRECT &plot) {
-    // 1. 左下角触发状态小徽标
     const float bY = plot.B - 18.f;
+
+    // 1. 左侧状态徽标
     IColor stateCol;
     const char *stateStr = "";
-    if (mTrigState == kStateTriggered) {
-      stateCol = SemColor(MeterGreen());
-      stateStr = "TRIG'D";
-    } else if (mTrigState == kStateAuto) {
-      stateCol = SemColor(MeterYellow());
-      stateStr = "AUTO";
+    if (mTrigSource == kTrigEdge) {
+      stateCol = mTrigStateActive ? SemColor(MeterGreen()) : COL_500();
+      stateStr = mTrigStateActive ? "TRIG'D" : "WAIT";
+    } else if (mTrigSource == kTrigAutocorr) {
+      stateCol = (mDetectedLag > 0) ? SemColor(MeterGreen()) : COL_500();
+      stateStr = (mDetectedLag > 0) ? "LOCKED" : "NOISE";
     } else {
-      stateCol = COL_500();
-      stateStr = "WAIT";
+      stateCol = SemColor(MeterYellow());
+      stateStr = "STROBE";
     }
 
     const IRECT stateBadge(plot.L + 4.f, bY, plot.L + 46.f, bY + 14.f);
@@ -572,53 +663,72 @@ private:
                    kFontBold, EAlign::Center, EVAlign::Middle);
     g.DrawText(sT, stateStr, stateBadge);
 
-    // 门限值读数
-    char lvlBuf[24];
-    std::snprintf(lvlBuf, sizeof(lvlBuf), "Trig: %+.2f", mTrigLevel);
-    const IText lvlT(11, COL_700(), kFontRegular, EAlign::Near, EVAlign::Middle);
-    g.DrawText(lvlT, lvlBuf, IRECT(plot.L + 52.f, bY, plot.L + 130.f, bY + 14.f));
+    // 2. 模式专有读数
+    char infoBuf[48] = "";
+    if (mTrigSource == kTrigEdge) {
+      std::snprintf(infoBuf, sizeof(infoBuf), "Trig: %+.2f", mTrigLevel);
+    } else if (mTrigSource == kTrigAutocorr) {
+      if (mDetectedFreq > 0.f)
+        std::snprintf(infoBuf, sizeof(infoBuf), "Det: %.1f Hz (%.2f ms)", mDetectedFreq, mDetectedPeriodMs);
+      else
+        std::snprintf(infoBuf, sizeof(infoBuf), "%s", "Det: —");
+    } else {
+      static constexpr double kFreqValues[kNumFreqPresets] = {10.0, 20.0, 30.0, 60.0, 120.0};
+      std::snprintf(infoBuf, sizeof(infoBuf), "Rate: %.0f Hz", kFreqValues[mFreqPreset]);
+    }
 
-    // 2. 右下角时基与分度读数
-    static constexpr double kTimeSecs[kNumTimebases] = {0.001, 0.002, 0.005, 0.010, 0.020, 0.050};
+    const IText infoT(11, COL_700(), kFontRegular, EAlign::Near, EVAlign::Middle);
+    g.DrawText(infoT, infoBuf, IRECT(plot.L + 52.f, bY, plot.L + 180.f, bY + 14.f));
+
+    // 3. 右下角时基读数
+    static constexpr double kTimeSecs[kNumTimebases] = {
+        0.001, 0.002, 0.005, 0.010, 0.020, 0.050, 0.100, 0.500, 1.000, 2.000};
     const double winSec = kTimeSecs[mTimebaseIdx];
     char timeBuf[32];
-    if (winSec < 0.001)
-      std::snprintf(timeBuf, sizeof(timeBuf), "%.0f µs (%.0f µs/div)", winSec * 1e6, winSec * 0.25e6);
-    else
+    if (winSec < 0.010)
       std::snprintf(timeBuf, sizeof(timeBuf), "%.1f ms (%.2f ms/div)", winSec * 1000.0, winSec * 250.0);
+    else if (winSec < 1.0)
+      std::snprintf(timeBuf, sizeof(timeBuf), "%.0f ms (%.1f ms/div)", winSec * 1000.0, winSec * 250.0);
+    else
+      std::snprintf(timeBuf, sizeof(timeBuf), "%.1f s (%.2f s/div)", winSec, winSec * 0.25);
 
     const IText timeT(11, COL_700(), kFontRegular, EAlign::Far, EVAlign::Middle);
     g.DrawText(timeT, timeBuf, IRECT(plot.R - 160.f, bY, plot.R - 6.f, bY + 14.f));
   }
 
   void DrawCursorInspector(IGraphics &g, const IRECT &plot) {
-    // 鼠标十字虚线
     g.DrawLine(COL_500(), mHoverX, plot.T, mHoverX, plot.B, nullptr, 1.f);
     g.DrawLine(COL_500(), plot.L, mHoverY, plot.R, mHoverY, nullptr, 1.f);
 
-    // 计算相对于中心的 Δt 与电压值
-    static constexpr double kTimeSecs[kNumTimebases] = {0.001, 0.002, 0.005, 0.010, 0.020, 0.050};
+    static constexpr double kTimeSecs[kNumTimebases] = {
+        0.001, 0.002, 0.005, 0.010, 0.020, 0.050, 0.100, 0.500, 1.000, 2.000};
     const double winSec = kTimeSecs[mTimebaseIdx];
-    const float dtSec = (float)((mHoverX - plot.MW()) / plot.W() * winSec);
+    // GRM 坐标：最右侧是 t = 0，向左为负时间 (-dt)
+    const float dtSec = (float)((mHoverX - plot.R) / plot.W() * winSec);
     const float vVal = YToLevel(plot, mHoverY);
 
-    char insBuf[64];
+    char insBuf[80];
     const float dtMs = dtSec * 1000.f;
-    if (std::fabs(dtSec) > 1e-5f) {
+    if (mTrigSource == kTrigAutocorr && mDetectedFreq > 0.f) {
+      char note[12] = "";
+      FreqToNoteName(mDetectedFreq, note, sizeof(note));
+      std::snprintf(insBuf, sizeof(insBuf), "t: %+.1f ms  V: %+.2f | Det: %.1f Hz (%s)",
+                    dtMs, vVal, mDetectedFreq, note);
+    } else if (std::fabs(dtSec) > 1e-5f) {
       const double fEquiv = 1.0 / std::fabs(dtSec);
       char note[12] = "";
       if (fEquiv >= 20.0 && fEquiv <= 20000.0) {
         FreqToNoteName(fEquiv, note, sizeof(note));
-        std::snprintf(insBuf, sizeof(insBuf), "Δt: %+.2f ms  %.0f Hz (%s)  V: %+.2f", dtMs, fEquiv, note, vVal);
+        std::snprintf(insBuf, sizeof(insBuf), "t: %+.1f ms  V: %+.2f | %.0f Hz (%s)", dtMs, vVal, fEquiv, note);
       } else {
-        std::snprintf(insBuf, sizeof(insBuf), "Δt: %+.2f ms  V: %+.2f", dtMs, vVal);
+        std::snprintf(insBuf, sizeof(insBuf), "t: %+.1f ms  V: %+.2f", dtMs, vVal);
       }
     } else {
-      std::snprintf(insBuf, sizeof(insBuf), "Δt: 0.00 ms  V: %+.2f", vVal);
+      std::snprintf(insBuf, sizeof(insBuf), "t: 0.0 ms  V: %+.2f", vVal);
     }
 
     const IText t(11, COL_900(), kFontSemiBold, EAlign::Near, EVAlign::Middle);
-    const float chipW = 210.f;
+    const float chipW = 230.f;
     const float chipX0 = std::clamp(mHoverX + 8.f, plot.L + 4.f, plot.R - chipW - 4.f);
     const float chipY0 = std::clamp(mHoverY - 20.f, plot.T + 4.f, plot.B - 22.f);
     const IRECT chip(chipX0, chipY0, chipX0 + chipW, chipY0 + 18.f);
@@ -626,6 +736,126 @@ private:
     g.FillRect(COL_100(), chip);
     g.DrawRect(COL_500(), chip);
     g.DrawText(t, insBuf, chip.GetPadded(-4.f));
+  }
+
+  // 利用基-2 FFT 计算自相关函数并提取最可信周期
+  void ComputeAutocorr(const float *srcRing, int ringLen, int headPos) {
+    constexpr int N = 1024;
+    constexpr int FFT_N = 2048; // 补零消除循环卷积伪影
+
+    std::array<float, FFT_N> re{}, im{};
+    float mean = 0.f;
+
+    // 拷贝 N 个样本并计算均值
+    for (int i = 0; i < N; ++i) {
+      const int p = (headPos - N + i + ringLen) & (ringLen - 1);
+      re[i] = srcRing[p];
+      mean += re[i];
+    }
+    mean /= (float)N;
+    for (int i = 0; i < N; ++i)
+      re[i] -= mean;
+
+    // 1. 正向 FFT
+    FftRadix2(re.data(), im.data(), FFT_N);
+
+    // 2. 功率谱
+    for (int i = 0; i < FFT_N; ++i) {
+      re[i] = re[i] * re[i] + im[i] * im[i];
+      im[i] = 0.f;
+    }
+
+    // 3. 逆 FFT (实偶对称序列的 IFFT 等价于再次正向 FFT)
+    FftRadix2(re.data(), im.data(), FFT_N);
+
+    const float energy0 = re[0];
+    if (energy0 < 1e-8f) {
+      mAcfCurve.assign(N, 0.f);
+      mDetectedFreq = 0.f;
+      mDetectedPeriodMs = 0.f;
+      mDetectedLag = -1;
+      return;
+    }
+
+    // 归一化自相关曲线
+    mAcfCurve.resize(N);
+    const float invE = 1.0f / energy0;
+    for (int tau = 0; tau < N; ++tau) {
+      mAcfCurve[tau] = std::clamp(re[tau] * invE, -1.0f, 1.0f);
+    }
+
+    // 4. 寻找最可信周期峰 (Most probable period)
+    const int minLag = std::max(10, (int)std::round(mSampleRate / 2500.0)); // 2500 Hz 上限
+    const int maxLag = std::min(N - 4, (int)std::round(mSampleRate / 25.0));   // 25 Hz 下限
+
+    // 跨过主瓣下降区
+    int valleyLag = 1;
+    while (valleyLag < maxLag && mAcfCurve[valleyLag] > 0.3f && mAcfCurve[valleyLag] <= mAcfCurve[valleyLag - 1]) {
+      ++valleyLag;
+    }
+
+    int bestLag = -1;
+    float bestPeak = 0.25f; // 最低自相关置信门限
+
+    for (int lag = std::max(minLag, valleyLag); lag < maxLag; ++lag) {
+      if (mAcfCurve[lag] > bestPeak &&
+          mAcfCurve[lag] > mAcfCurve[lag - 1] &&
+          mAcfCurve[lag] >= mAcfCurve[lag + 1]) {
+        bestPeak = mAcfCurve[lag];
+        bestLag = lag;
+      }
+    }
+
+    if (bestLag > 0) {
+      // 二次抛物线亚采样插值
+      const float y0 = mAcfCurve[bestLag - 1];
+      const float y1 = mAcfCurve[bestLag];
+      const float y2 = mAcfCurve[bestLag + 1];
+      const float denom = 2.0f * (y0 - 2.0f * y1 + y2);
+      const float delta = (std::fabs(denom) > 1e-6f) ? (y0 - y2) / denom : 0.f;
+      const float exactLag = (float)bestLag + std::clamp(delta, -0.5f, 0.5f);
+
+      mDetectedLag = (int)std::round(exactLag);
+      mDetectedPeriodMs = (exactLag / (float)mSampleRate) * 1000.f;
+      mDetectedFreq = (float)mSampleRate / exactLag;
+    } else {
+      mDetectedLag = -1;
+      mDetectedFreq = 0.f;
+      mDetectedPeriodMs = 0.f;
+    }
+  }
+
+  static void FftRadix2(float *re, float *im, int n) {
+    for (int i = 1, j = 0; i < n; ++i) {
+      int bit = n >> 1;
+      for (; j & bit; bit >>= 1)
+        j ^= bit;
+      j ^= bit;
+      if (i < j) {
+        std::swap(re[i], re[j]);
+        std::swap(im[i], im[j]);
+      }
+    }
+    for (int len = 2; len <= n; len <<= 1) {
+      const float ang = -2.f * (float)PI / (float)len;
+      const float wRe = std::cos(ang), wIm = std::sin(ang);
+      const int half = len >> 1;
+      for (int i = 0; i < n; i += len) {
+        float cRe = 1.f, cIm = 0.f;
+        for (int k = 0; k < half; ++k) {
+          const float uRe = re[i + k], uIm = im[i + k];
+          const float vRe = re[i + k + half] * cRe - im[i + k + half] * cIm;
+          const float vIm = re[i + k + half] * cIm + im[i + k + half] * cRe;
+          re[i + k] = uRe + vRe;
+          im[i + k] = uIm + vIm;
+          re[i + k + half] = uRe - vRe;
+          im[i + k + half] = uIm - vIm;
+          const float nRe = cRe * wRe - cIm * wIm;
+          cIm = cRe * wIm + cIm * wRe;
+          cRe = nRe;
+        }
+      }
+    }
   }
 
   static void FreqToNoteName(double hz, char *out, int outSize) {
