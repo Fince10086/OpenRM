@@ -135,7 +135,6 @@ private:
   FlatCycleButton *mLevelHoldTimeBtn = nullptr;
   FlatToggleControl *mFreezeBtn = nullptr;
   FlatCycleButton *mScopeTrigBtn = nullptr;
-  FlatCycleButton *mScopeSrcBtn = nullptr;
   FlatColorToggleControl *mScopeBtnL = nullptr;
   FlatColorToggleControl *mScopeBtnR = nullptr;
   FlatColorToggleControl *mScopeBtnM = nullptr;

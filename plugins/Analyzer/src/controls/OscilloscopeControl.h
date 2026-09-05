@@ -21,7 +21,7 @@ public:
   enum ETriggerSource {
     kTrigEdge = 0,      // Rising Edge 门限触发
     kTrigAutocorr,      // Autocorrelation 自相关周期锁定
-    kTrigFrequency,     // Frequency 定频定时刷新
+    kTrigFrequency,     // FREQ 自由扫描：笔随样本前进，写满时间窗回卷覆盖旧迹线（老式示波器）
     kNumTrigSources
   };
 
@@ -46,15 +46,6 @@ public:
     kNumTimebases
   };
 
-  enum ETrigFreqPreset {
-    kFreq10Hz = 0,
-    kFreq20Hz,
-    kFreq30Hz,
-    kFreq60Hz,
-    kFreq120Hz,
-    kNumFreqPresets
-  };
-
   explicit OscilloscopeControl(const IRECT &bounds) : IControl(bounds) {
     mDispL.reserve(8192);
     mDispR.reserve(8192);
@@ -75,17 +66,20 @@ public:
     mDetectedPeriodMs = 0.f;
     mDetectedLag = -1;
     mTrigStateActive = false;
+    mSweepPos = 0;
     SetDirty(false);
   }
 
   // 顶栏按钮行（Analyzer.cpp 布局）直接驱动的纯 UI 状态
   int GetTrigSource() const { return mTrigSource; }
-  int GetFreqPreset() const { return mFreqPreset; }
   int GetChanMask() const { return mChanMask; }
   int GetTimebase() const { return mTimebaseIdx; }
   int GetZoom() const { return mZoomIdx; }
-  void SetTrigSource(int v) { mTrigSource = std::clamp(v, 0, kNumTrigSources - 1); SetDirty(false); }
-  void SetFreqPreset(int v) { mFreqPreset = std::clamp(v, 0, kNumFreqPresets - 1); SetDirty(false); }
+  void SetTrigSource(int v) {
+    mTrigSource = std::clamp(v, 0, kNumTrigSources - 1);
+    mSweepPos = 0; // 切模式后从左缘开始覆盖旧画面
+    SetDirty(false);
+  }
   void SetChanMask(int v) { mChanMask = std::clamp(v, 0, kChanBitL | kChanBitR | kChanBitM); SetDirty(false); }
   void SetTimebase(int v) { mTimebaseIdx = std::clamp(v, 0, kNumTimebases - 1); SetDirty(false); }
   void SetZoom(int v) { mZoomIdx = std::clamp(v, 0, 3); SetDirty(false); }
@@ -167,25 +161,45 @@ public:
       }
 
     } else {
-      // 3. FREQUENCY 定频刷新模式：
-      // 按照 Trigger frequency 定时抓取，右边缘为最新时刻
-      static constexpr double kFreqValues[kNumFreqPresets] = {10.0, 20.0, 30.0, 60.0, 120.0};
-      const double trigFreq = kFreqValues[mFreqPreset];
-      const int stepSamples = std::max(1, (int)std::round(mSampleRate / trigFreq));
+      // 3. FREQ 模式：自由扫描（sMexoscope 式）
+      // 笔随音频样本连续前进，逐样本写入显示缓冲；写满一个时间窗后回卷左缘，
+      // 继续覆盖旧迹线（右侧未覆盖部分保持可见），扫描一轮时间 = 窗口时长本身。
+      // 时间窗变化时清空缓冲、笔归零，重新扫满一屏。
+      if ((int)mDispL.size() != nDisp) {
+        mDispL.assign(nDisp, 0.f);
+        mDispR.assign(nDisp, 0.f);
+        mDispM.assign(nDisp, 0.f);
+        mDispS.assign(nDisp, 0.f);
+        mDispSum.assign(nDisp, 0.f);
+        mSweepPos = 0;
+      }
 
-      // 累加采样步长进行节拍抽取
-      const int advance = (headPos - mLastHeadPos + ringLen) & (ringLen - 1);
-      mFreqAccum += advance;
-      mLastHeadPos = headPos;
-
-      if (mFreqAccum >= stepSamples || mDispL.empty()) {
-        mFreqAccum %= stepSamples;
-        triggerPos = headPos;
-        mTrigStateActive = true;
-      } else {
-        // 未到刷新时钟周期时保持上一画面
+      if (mLastHeadPos < 0) {
+        mLastHeadPos = headPos; // 首帧只记录位置，避免假差值
         return;
       }
+      const int advance = (headPos - mLastHeadPos + ringLen) & (ringLen - 1);
+      mLastHeadPos = headPos;
+      if (advance <= 0)
+        return;
+      // 环长度远大于窗口，正常 advance 不会超过窗口长度；超长（极端卡顿）截断
+      const int nAdvance = std::min(advance, nDisp);
+
+      for (int k = nAdvance; k > 0; --k) { // 从最旧到最新逐样本落笔
+        const int p = (headPos - k + ringLen) & (ringLen - 1);
+        const float l = pRing[0][p];
+        const float r = pRing[1][p];
+        mDispL[mSweepPos] = l;
+        mDispR[mSweepPos] = r;
+        mDispM[mSweepPos] = (l + r) * 0.70710678f;
+        mDispS[mSweepPos] = (l - r) * 0.70710678f;
+        mDispSum[mSweepPos] = (l + r);
+        if (++mSweepPos >= nDisp)
+          mSweepPos = 0;
+      }
+      mTrigStateActive = true;
+      SetDirty(false);
+      return;
     }
 
     // 按照“右边缘为触发时刻”提取 nDisp 个前向历史采样点
@@ -293,7 +307,7 @@ private:
   int mChanMask = kChanBitL | kChanBitR;
   int mTimebaseIdx = kTime10ms;
   int mZoomIdx = 0;
-  int mFreqPreset = kFreq30Hz;
+  int mSweepPos = 0; // FREQ 扫描笔位置（显示缓冲槽位）
   float mTrigLevel = 0.0f;
 
   double mSampleRate = 48000.0;
@@ -301,8 +315,7 @@ private:
   bool mDraggingTrig = false;
   bool mTrigStateActive = false;
 
-  int mLastHeadPos = 0;
-  int mFreqAccum = 0;
+  int mLastHeadPos = -1;
 
   // 自相关算法检测结果与归一化曲线
   std::vector<float> mAcfCurve;
@@ -549,7 +562,7 @@ private:
       stateStr = (mDetectedLag > 0) ? "LOCKED" : "NOISE";
     } else {
       stateCol = SemColor(MeterYellow());
-      stateStr = "STROBE";
+      stateStr = "FREQ";
     }
 
     const IRECT stateBadge(plot.L + 4.f, bY, plot.L + 46.f, bY + 14.f);
@@ -568,8 +581,10 @@ private:
       else
         std::snprintf(infoBuf, sizeof(infoBuf), "%s", "Det: —");
     } else {
-      static constexpr double kFreqValues[kNumFreqPresets] = {10.0, 20.0, 30.0, 60.0, 120.0};
-      std::snprintf(infoBuf, sizeof(infoBuf), "Rate: %.0f Hz", kFreqValues[mFreqPreset]);
+      // 扫描率 = 1 / 时间窗
+      static constexpr double kTimeSecsBadge[kNumTimebases] = {
+          0.001, 0.002, 0.005, 0.010, 0.020, 0.050, 0.100, 0.500, 1.000, 2.000};
+      std::snprintf(infoBuf, sizeof(infoBuf), "Sweep: %.1f Hz", 1.0 / kTimeSecsBadge[mTimebaseIdx]);
     }
 
     const IText infoT(11, COL_700(), kFontRegular, EAlign::Near, EVAlign::Middle);

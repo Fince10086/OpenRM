@@ -365,22 +365,9 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     mScopeTrigBtn->SetCycleHandler([this](int v) {
       if (mOscilloscopeCtrl)
         mOscilloscopeCtrl->SetTrigSource(v);
-      if (mScopeSrcBtn)
-        mScopeSrcBtn->Hide(v != OscilloscopeControl::kTrigFrequency); // 刷新频率档仅 FREQ 模式需要
     });
     pGraphics->AttachControl(mScopeTrigBtn);
     bindTip(mScopeTrigBtn, orm::kTxtTipScopeTrig);
-
-    // 刷新频率档（仅 FREQ 模式显示）；触发参考通道随 L/R/M 显示掩码自动决定，无独立 SRC 按钮
-    mScopeSrcBtn = new FlatCycleButton(scopeBtnRect(64.f), kNoParameter,
-                                       {"10Hz", "20Hz", "30Hz", "60Hz", "120Hz"}, btnStyle);
-    mScopeSrcBtn->SetCycleHandler([this](int v) {
-      if (mOscilloscopeCtrl)
-        mOscilloscopeCtrl->SetFreqPreset(v);
-    });
-    mScopeSrcBtn->Hide(true);
-    pGraphics->AttachControl(mScopeSrcBtn);
-    bindTip(mScopeSrcBtn, orm::kTxtTipScopeSrc);
 
     // 声道选择：L / R / M 独立开关，弹起灰色、按下显示对应通道色
     IColor ccL, ccR, ccM;
@@ -1334,7 +1321,6 @@ void ORMAnalyzer::OnUIClose() {
   mFreezeBtn = nullptr;
   mSlopeBtn = nullptr;
   mScopeTrigBtn = nullptr;
-  mScopeSrcBtn = nullptr;
   mScopeBtnL = nullptr;
   mScopeBtnR = nullptr;
   mScopeBtnM = nullptr;
