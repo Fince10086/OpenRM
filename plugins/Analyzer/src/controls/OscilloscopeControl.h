@@ -38,7 +38,6 @@ public:
     mDispM.reserve(8192);
     mDispS.reserve(8192);
     mDispSum.reserve(8192);
-    mAcfCurve.assign(1024, 0.f);
   }
 
   void Clear() {
@@ -47,7 +46,6 @@ public:
     mDispM.clear();
     mDispS.clear();
     mDispSum.clear();
-    mAcfCurve.assign(1024, 0.f);
     mDetectedFreq = 0.f;
     mDetectedPeriodMs = 0.f;
     mDetectedLag = -1;
@@ -61,9 +59,19 @@ public:
   int GetChanMask() const { return mChanMask; }
   double GetWindowSec() const { return mWindowSec; }
   float GetZoomFactor() const { return mZoomFactor; }
+  bool GetTrigOn() const { return mTrigOn; }
   void SetTrigSource(int v) {
     mTrigSource = std::clamp(v, 0, kNumTrigSources - 1);
     mSweepPos = 0; // 切模式后从左缘开始覆盖旧画面
+    SetDirty(false);
+  }
+  // 关闭触发 = 自由扫描（逐样本写入回卷覆盖，不等待触发事件）
+  void SetTrigOn(bool on) {
+    if (mTrigOn == on)
+      return;
+    mTrigOn = on;
+    mSweepPos = 0;
+    mLastHeadPos = -1; // 首帧重记 head，避免旧差值造成画面跳变
     SetDirty(false);
   }
   void SetChanMask(int v) { mChanMask = std::clamp(v, 0, kChanBitL | kChanBitR | kChanBitM); SetDirty(false); }
@@ -108,7 +116,7 @@ public:
     int triggerPos = -1;
     mTrigStateActive = false;
 
-    if (mTrigSource == kTrigEdge) {
+    if (mTrigOn && mTrigSource == kTrigEdge) {
       // 1. RISING EDGE 模式：
       const float vTh = mTrigLevel;
       constexpr float kHys = 0.02f;
@@ -131,7 +139,7 @@ public:
       if (triggerPos < 0)
         triggerPos = headPos;
 
-    } else if (mTrigSource == kTrigAutocorr) {
+    } else if (mTrigOn && mTrigSource == kTrigAutocorr) {
       // 2. AUTOCORRELATION 模式：
       ComputeAutocorr(pRing[trigChan], ringLen, headPos);
 
@@ -153,7 +161,7 @@ public:
       }
 
     } else {
-      // 3. FREQ 模式：自由扫描（sMexoscope 式）
+      // 3. 自由扫描（sMexoscope 式）：触发关闭，或 FREQ 模式
       // 笔随音频样本连续前进，逐样本写入显示缓冲；写满一个时间窗后回卷左缘，
       // 继续覆盖旧迹线（右侧未覆盖部分保持可见），扫描一轮时间 = 窗口时长本身。
       // 时间窗变化时清空缓冲、笔归零，重新扫满一屏。
@@ -220,7 +228,7 @@ public:
     // 波形区拖拽门限 (Rising edge 模式)
     const IRECT plot = GetPlotRect();
     if (plot.Contains(x, y)) {
-      if (mTrigSource == kTrigEdge) {
+      if (mTrigOn && mTrigSource == kTrigEdge) {
         const float yTh = LevelToY(plot, mTrigLevel);
         if (std::fabs(y - yTh) < 14.f || x > plot.R - 32.f || mod.S || mod.C) {
           mDraggingTrig = true;
@@ -274,13 +282,8 @@ public:
     DrawPlotBackground(g, plot);
     DrawGrid(g, plot);
 
-    // 在 Autocorrelation 模式下叠印自相关灰色曲线与周期标尺线
-    if (mTrigSource == kTrigAutocorr) {
-      DrawAutocorrOverlay(g, plot);
-    }
-
     // 在 Rising Edge 模式下绘制可拖拽门限虚线与手柄
-    if (mTrigSource == kTrigEdge) {
+    if (mTrigOn && mTrigSource == kTrigEdge) {
       DrawTriggerLine(g, plot);
     }
 
@@ -294,7 +297,7 @@ public:
 
 private:
   // 时间窗与幅度倍率的连续范围（内嵌滑块驱动）
-  static constexpr double kMinWindowSec = 0.001;
+  static constexpr double kMinWindowSec = 0.010;
   static constexpr double kMaxWindowSec = 2.000;
   static constexpr float kMaxZoom = 8.f;
   // 画区为内嵌滑块让出的边距
@@ -302,7 +305,8 @@ private:
   static constexpr float kSliderH = 20.f;
 
   int mTrigSource = kTrigEdge;
-  int mChanMask = kChanBitL | kChanBitR;
+  bool mTrigOn = true;
+  int mChanMask = kChanBitM; // 默认显示 M
   double mWindowSec = 0.010;
   float mZoomFactor = 1.f;
   int mSweepPos = 0; // FREQ 扫描笔位置（显示缓冲槽位）
@@ -315,8 +319,7 @@ private:
 
   int mLastHeadPos = -1;
 
-  // 自相关算法检测结果与归一化曲线
-  std::vector<float> mAcfCurve;
+  // 自相关算法检测结果
   float mDetectedFreq = 0.f;
   float mDetectedPeriodMs = 0.f;
   int mDetectedLag = -1;
@@ -371,75 +374,59 @@ private:
     // 零电平中轴线
     g.DrawLine(gridCol, plot.L, cy, plot.R, cy, nullptr, 1.f);
 
-    // ±0.5 线
-    const float yPos05 = LevelToY(plot, 0.5f);
-    const float yNeg05 = LevelToY(plot, -0.5f);
-    if (yPos05 > plot.T && yPos05 < plot.B)
-      g.DrawLine(subGridCol, plot.L, yPos05, plot.R, yPos05, nullptr, 1.f);
-    if (yNeg05 > plot.T && yNeg05 < plot.B)
-      g.DrawLine(subGridCol, plot.L, yNeg05, plot.R, yNeg05, nullptr, 1.f);
+    // 幅度刻度：1.0 起逐级减半的阶梯，取 ≤ 可见最大幅度(1/zoom)的两档，
+    // 同屏最多两档；1.0 档即 0dBFS 满幅度线（绿色警戒）；文字贴刻度线下缘
+    const float visMax = 1.f / zoom;
+    static constexpr float kTicks[] = {1.f, 0.5f, 0.25f, 0.125f, 0.0625f, 0.03125f};
+    constexpr int nTicks = (int)(sizeof(kTicks) / sizeof(kTicks[0]));
+    int primary = 0;
+    while (primary < nTicks - 1 && kTicks[primary] > visMax * 1.0001f)
+      ++primary;
+    const IText tickT(10, COL_500(), kFontRegular, EAlign::Near, EVAlign::Top);
+    for (int li = primary; li < std::min(primary + 2, nTicks); ++li) {
+      const float t = kTicks[li];
+      for (int side = 0; side < 2; ++side) {
+        const float lvl = side ? -t : t;
+        const float y = LevelToY(plot, lvl);
+        if (y < plot.T - 1.f || y > plot.B + 1.f)
+          continue;
+        g.DrawLine(t == 1.f ? limitCol : subGridCol, plot.L, y, plot.R, y, nullptr, 1.f);
+        char buf[12];
+        if (std::fmod(t * 10.f, 1.f) == 0.f)
+          std::snprintf(buf, sizeof(buf), "%+.1f", lvl);
+        else
+          std::snprintf(buf, sizeof(buf), "%+.3g", lvl);
+        g.DrawText(tickT, buf, IRECT(plot.L + 3.f, y + 1.f, plot.L + 44.f, y + 14.f));
+      }
+    }
 
-    // ±1.0 极限线 (0 dBFS)
-    const float yPos10 = LevelToY(plot, 1.0f);
-    const float yNeg10 = LevelToY(plot, -1.0f);
-    if (yPos10 >= plot.T)
-      g.DrawLine(limitCol, plot.L, yPos10, plot.R, yPos10, nullptr, 1.f);
-    if (yNeg10 <= plot.B)
-      g.DrawLine(limitCol, plot.L, yNeg10, plot.R, yNeg10, nullptr, 1.f);
-
-    // 垂直等分线
-    for (int i = 1; i <= 3; ++i) {
-      const float vx = plot.L + (float)i * 0.25f * plot.W();
-      g.DrawLine(subGridCol, vx, plot.T, vx, plot.B, nullptr, 1.f);
+    // 时间刻度：10/20/50/100/200/500/1s/2s 阶梯（1-2-5 序列），同屏最多两档：
+    // 取严格小于时间窗的两档（右缘为触发时刻 t=0，向左时间增大）；文字贴画区底缘
+    const double winMs = mWindowSec * 1000.0;
+    static constexpr double kTimeTicks[] = {10.0, 20.0, 50.0, 100.0, 200.0, 500.0, 1000.0, 2000.0};
+    constexpr int nTimeTicks = (int)(sizeof(kTimeTicks) / sizeof(kTimeTicks[0]));
+    int tp = nTimeTicks - 1;
+    while (tp >= 0 && kTimeTicks[tp] >= winMs - 0.01)
+      --tp;
+    const IText timeT(10, COL_500(), kFontRegular, EAlign::Center, EVAlign::Bottom);
+    for (int li = tp; li >= 0 && li > tp - 2; --li) {
+      const double tMs = kTimeTicks[li];
+      const float x = plot.R - (float)(tMs / winMs) * plot.W();
+      if (x < plot.L + 1.f || x > plot.R - 1.f)
+        continue;
+      g.DrawLine(subGridCol, x, plot.T, x, plot.B, nullptr, 1.f);
+      char buf[12];
+      if (tMs < 1000.0)
+        std::snprintf(buf, sizeof(buf), "-%.0fms", tMs);
+      else
+        std::snprintf(buf, sizeof(buf), "-%.1fs", tMs / 1000.0);
+      const float cx = std::clamp(x, plot.L + 26.f, plot.R - 26.f);
+      g.DrawText(timeT, buf, IRECT(cx - 26.f, plot.B - 15.f, cx + 26.f, plot.B - 2.f));
     }
 
     // 右侧触发时刻边界线 (GRM 规范：最右侧是触发事件发生时刻)
-    const IColor eventCol = (mTrigSource == kTrigEdge) ? SemColor(MeterYellow()) : gridCol;
+    const IColor eventCol = (mTrigOn && mTrigSource == kTrigEdge) ? SemColor(MeterYellow()) : gridCol;
     g.DrawLine(eventCol, plot.R, plot.T, plot.R, plot.B, nullptr, 1.5f);
-
-    // 幅度刻度微标
-    const IText tickT(10, COL_500(), kFontRegular, EAlign::Near, EVAlign::Middle);
-    char buf[16];
-    std::snprintf(buf, sizeof(buf), "%+.1f", 1.0f / zoom);
-    g.DrawText(tickT, buf, IRECT(plot.L + 3.f, yPos10 - 6.f, plot.L + 32.f, yPos10 + 6.f));
-    std::snprintf(buf, sizeof(buf), "%+.1f", -1.0f / zoom);
-    g.DrawText(tickT, buf, IRECT(plot.L + 3.f, yNeg10 - 6.f, plot.L + 32.f, yNeg10 + 6.f));
-  }
-
-  // 绘制 Autocorrelation 模式专有的叠加信息：灰色 ACF 曲线与垂直周期点线
-  void DrawAutocorrOverlay(IGraphics &g, const IRECT &plot) {
-    if (mAcfCurve.empty())
-      return;
-
-    const int nAcf = (int)mAcfCurve.size();
-    const float cy = plot.MH();
-    const float halfH = plot.H() * 0.45f;
-    const float w = plot.W();
-
-    // 1. 灰色自相关波形曲线 (grey line)
-    const IColor acfCol = ThemeMode() ? IColor(110, 160, 160, 160) : IColor(110, 90, 90, 90);
-    g.PathClear();
-    for (int px = 0; px < (int)w; ++px) {
-      const float frac = (float)px / w;
-      const int idx = std::clamp((int)(frac * (float)nAcf), 0, nAcf - 1);
-      const float y = cy - mAcfCurve[idx] * halfH;
-      if (px == 0)
-        g.PathMoveTo(plot.L + (float)px, y);
-      else
-        g.PathLineTo(plot.L + (float)px, y);
-    }
-    g.PathStroke(IPattern(acfCol), 1.2f);
-
-    // 2. 垂直点状指示线：标注最可信周期 (vertical dotted bar indicates most probable period)
-    if (mDetectedLag > 0 && mDetectedLag < nAcf) {
-      const float peakX = plot.L + ((float)mDetectedLag / (float)nAcf) * w;
-      if (peakX >= plot.L && peakX <= plot.R) {
-        const IColor barCol = SemColor(MeterGreen());
-        for (float y = plot.T + 2.f; y < plot.B - 2.f; y += 6.f) {
-          g.DrawLine(barCol, peakX, y, peakX, std::min(y + 3.f, plot.B - 2.f), nullptr, 1.5f);
-        }
-      }
-    }
   }
 
   // 绘制 Rising Edge 模式下的可拖动水平门限线
@@ -552,7 +539,10 @@ private:
     // 左上角状态徽标
     IColor stateCol;
     const char *stateStr = "";
-    if (mTrigSource == kTrigEdge) {
+    if (!mTrigOn) {
+      stateCol = COL_500();
+      stateStr = "FREE";
+    } else if (mTrigSource == kTrigEdge) {
       stateCol = mTrigStateActive ? SemColor(MeterGreen()) : COL_500();
       stateStr = mTrigStateActive ? "TRIG'D" : "WAIT";
     } else if (mTrigSource == kTrigAutocorr) {
@@ -569,9 +559,11 @@ private:
                    kFontBold, EAlign::Center, EVAlign::Middle);
     g.DrawText(sT, stateStr, stateBadge);
 
-    // 模式专有读数（徽标右侧；FREQ 自由扫描无读数）
+    // 模式专有读数（徽标右侧；触发关闭或 FREQ 自由扫描无读数）
     char infoBuf[48] = "";
-    if (mTrigSource == kTrigEdge) {
+    if (!mTrigOn) {
+      // 自由扫描无读数
+    } else if (mTrigSource == kTrigEdge) {
       std::snprintf(infoBuf, sizeof(infoBuf), "Trig: %+.2f", mTrigLevel);
     } else if (mTrigSource == kTrigAutocorr) {
       if (mDetectedFreq > 0.f)
@@ -658,18 +650,17 @@ private:
 
     const float energy0 = re[0];
     if (energy0 < 1e-8f) {
-      mAcfCurve.assign(N, 0.f);
       mDetectedFreq = 0.f;
       mDetectedPeriodMs = 0.f;
       mDetectedLag = -1;
       return;
     }
 
-    // 归一化自相关曲线
-    mAcfCurve.resize(N);
+    // 归一化自相关曲线（仅用于峰值搜索，不再绘制）
+    std::array<float, N> acf{};
     const float invE = 1.0f / energy0;
     for (int tau = 0; tau < N; ++tau) {
-      mAcfCurve[tau] = std::clamp(re[tau] * invE, -1.0f, 1.0f);
+      acf[tau] = std::clamp(re[tau] * invE, -1.0f, 1.0f);
     }
 
     // 4. 寻找最可信周期峰 (Most probable period)
@@ -678,7 +669,7 @@ private:
 
     // 跨过主瓣下降区
     int valleyLag = 1;
-    while (valleyLag < maxLag && mAcfCurve[valleyLag] > 0.3f && mAcfCurve[valleyLag] <= mAcfCurve[valleyLag - 1]) {
+    while (valleyLag < maxLag && acf[valleyLag] > 0.3f && acf[valleyLag] <= acf[valleyLag - 1]) {
       ++valleyLag;
     }
 
@@ -686,19 +677,19 @@ private:
     float bestPeak = 0.25f; // 最低自相关置信门限
 
     for (int lag = std::max(minLag, valleyLag); lag < maxLag; ++lag) {
-      if (mAcfCurve[lag] > bestPeak &&
-          mAcfCurve[lag] > mAcfCurve[lag - 1] &&
-          mAcfCurve[lag] >= mAcfCurve[lag + 1]) {
-        bestPeak = mAcfCurve[lag];
+      if (acf[lag] > bestPeak &&
+          acf[lag] > acf[lag - 1] &&
+          acf[lag] >= acf[lag + 1]) {
+        bestPeak = acf[lag];
         bestLag = lag;
       }
     }
 
     if (bestLag > 0) {
       // 二次抛物线亚采样插值
-      const float y0 = mAcfCurve[bestLag - 1];
-      const float y1 = mAcfCurve[bestLag];
-      const float y2 = mAcfCurve[bestLag + 1];
+      const float y0 = acf[bestLag - 1];
+      const float y1 = acf[bestLag];
+      const float y2 = acf[bestLag + 1];
       const float denom = 2.0f * (y0 - 2.0f * y1 + y2);
       const float delta = (std::fabs(denom) > 1e-6f) ? (y0 - y2) / denom : 0.f;
       const float exactLag = (float)bestLag + std::clamp(delta, -0.5f, 0.5f);

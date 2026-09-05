@@ -295,6 +295,13 @@ public:
     SetDirty(false);
   }
 
+  // 每档底色（可选）：设置后当前档位填充对应颜色、文字用与背景同灰度的反白样式
+  // （示波器声道选择：单按钮循环 M/L/R 并显示当前通道色）
+  void SetIndexColors(const std::vector<IColor> &cols) {
+    mIndexColors = cols;
+    SetDirty(false);
+  }
+
   // 幽灵样式: 无背景方块，退成条上水印标签；文字色随条上是否有渐变切换
   void SetGhostStyle(bool b) { mGhostStyle = b; }
 
@@ -372,13 +379,15 @@ public:
       return;
     }
 
-    g.FillRect(COL_300(), b);
+    const bool hasIdxColors = !mIndexColors.empty();
+    const IColor bg = (hasIdxColors && idx >= 0 && idx < (int)mIndexColors.size()) ? mIndexColors[idx] : COL_300();
+    g.FillRect(bg, b);
     if (GetMouseIsOver())
       g.FillRect(HoverOverlay(), b);
     IText t = mStyle.valueText;
     if (mTextSize > 0.f)
       t.mSize = mTextSize;
-    t.mFGColor = COL_900();
+    t.mFGColor = hasIdxColors ? SplitBtnTextColor() : COL_900();
     strcpy(t.mFont, kFontSemiBold);
     if (idx >= 0 && idx < num)
       g.DrawText(t, mLabels[idx], b);
@@ -395,6 +404,7 @@ private:
   float mTextSize = 0.f;
   int mFreeIdx = 0;                          // 无参数模式的当前档位
   std::function<void(int)> mCycleFn;         // 无参数模式点击回调
+  std::vector<IColor> mIndexColors;          // 每档底色（可选）
 };
 
 // 彩色开关按钮: 弹起为普通灰按钮，按下填充指定颜色表示选中（示波器声道选择等）

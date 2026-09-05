@@ -369,28 +369,30 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     pGraphics->AttachControl(mScopeTrigBtn);
     bindTip(mScopeTrigBtn, orm::kTxtTipScopeTrig);
 
-    // 声道选择：L / R / M 独立开关，弹起灰色、按下显示对应通道色
+    // 声道选择：单击循环 M → L → R，按钮填充当前通道色；触发参考随显示通道自动决定
     IColor ccL, ccR, ccM;
     GetChannelColors(ccL, ccR, ccM);
-    mScopeBtnL = new FlatColorToggleControl(scopeBtnRect(34.f), "L", btnStyle);
-    mScopeBtnL->SetColor(ccL);
-    mScopeBtnL->SetValue(1.0); // 默认 L+R 叠加
-    mScopeBtnL->SetActionFunction([this](IControl *) { SyncScopeChanMask(); });
-    pGraphics->AttachControl(mScopeBtnL);
-    bindTip(mScopeBtnL, orm::kTxtTipScopeChan);
+    mScopeChanBtn = new FlatCycleButton(scopeBtnRect(34.f), kNoParameter, {"M", "L", "R"}, btnStyle);
+    mScopeChanBtn->SetIndexColors({ccM, ccL, ccR});
+    mScopeChanBtn->SetCycleHandler([this](int v) {
+      if (!mOscilloscopeCtrl)
+        return;
+      static constexpr int kChanBits[3] = {OscilloscopeControl::kChanBitM, OscilloscopeControl::kChanBitL,
+                                           OscilloscopeControl::kChanBitR};
+      mOscilloscopeCtrl->SetChanMask(kChanBits[v]);
+    });
+    pGraphics->AttachControl(mScopeChanBtn);
+    bindTip(mScopeChanBtn, orm::kTxtTipScopeChan);
 
-    mScopeBtnR = new FlatColorToggleControl(scopeBtnRect(34.f), "R", btnStyle);
-    mScopeBtnR->SetColor(ccR);
-    mScopeBtnR->SetValue(1.0);
-    mScopeBtnR->SetActionFunction([this](IControl *) { SyncScopeChanMask(); });
-    pGraphics->AttachControl(mScopeBtnR);
-    bindTip(mScopeBtnR, orm::kTxtTipScopeChan);
-
-    mScopeBtnM = new FlatColorToggleControl(scopeBtnRect(34.f), "M", btnStyle);
-    mScopeBtnM->SetColor(ccM);
-    mScopeBtnM->SetActionFunction([this](IControl *) { SyncScopeChanMask(); });
-    pGraphics->AttachControl(mScopeBtnM);
-    bindTip(mScopeBtnM, orm::kTxtTipScopeChan);
+    // 触发开关：关闭后为自由扫描（不等待触发事件），样式同 FREEZE/HOLD
+    mScopeTrgBtn = new FlatToggleControl(scopeBtnRect(44.f), kNoParameter, " ", toggleStyle, "TRG", "TRG");
+    mScopeTrgBtn->SetValue(1.0); // 默认开启触发
+    mScopeTrgBtn->SetActionFunction([this](IControl *p) {
+      if (mOscilloscopeCtrl)
+        mOscilloscopeCtrl->SetTrigOn(p->GetValue() > 0.5);
+    });
+    pGraphics->AttachControl(mScopeTrgBtn);
+    bindTip(mScopeTrgBtn, orm::kTxtTipScopeTrgOn);
 
     mScopeCtrl = new StereoFieldControl(IRECT(20.f, kBottomTop, kBottomMidX - 4.f, kBottomB));
     pGraphics->AttachControl(mScopeCtrl, kCtrlTagScope);
@@ -413,7 +415,7 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     mScopeTimeSlider = new ORMSlider(mOscilloscopeCtrl->GetTimeSliderRect(),
                                      [this](IControl *p) {
                                        if (mOscilloscopeCtrl)
-                                         mOscilloscopeCtrl->SetWindowSec(0.001 * std::pow(2000.0, p->GetValue()));
+                                         mOscilloscopeCtrl->SetWindowSec(0.010 * std::pow(200.0, p->GetValue()));
                                      },
                                      "", style, EDirection::Horizontal);
     mScopeTimeSlider->SetHeaderVisible(false);
@@ -1212,7 +1214,7 @@ void ORMAnalyzer::OnIdle() {
       mScopeZoomSlider->SetValueFromDelegate(want, 0);
   }
   if (mScopeTimeSlider && mOscilloscopeCtrl) {
-    const double want = std::log(mOscilloscopeCtrl->GetWindowSec() / 0.001) / std::log(2000.0);
+    const double want = std::log(mOscilloscopeCtrl->GetWindowSec() / 0.010) / std::log(200.0);
     if (std::fabs(mScopeTimeSlider->GetValue() - want) > 0.001)
       mScopeTimeSlider->SetValueFromDelegate(want, 0);
   }
@@ -1334,9 +1336,8 @@ void ORMAnalyzer::OnUIClose() {
   mFreezeBtn = nullptr;
   mSlopeBtn = nullptr;
   mScopeTrigBtn = nullptr;
-  mScopeBtnL = nullptr;
-  mScopeBtnR = nullptr;
-  mScopeBtnM = nullptr;
+  mScopeChanBtn = nullptr;
+  mScopeTrgBtn = nullptr;
   mScopeZoomSlider = nullptr;
   mScopeTimeSlider = nullptr;
   mSettingsPanel = nullptr;
@@ -1569,20 +1570,6 @@ void ORMAnalyzer::ReadStateFileFrom(const std::string &path, std::string &err) {
   err.clear();
 }
 
-// 示波器声道开关：把 L/R/M 三个按钮的按下状态合成掩码下发给示波器
-void ORMAnalyzer::SyncScopeChanMask() {
-  if (!mOscilloscopeCtrl)
-    return;
-  int mask = 0;
-  if (mScopeBtnL && mScopeBtnL->GetValue() > 0.5)
-    mask |= OscilloscopeControl::kChanBitL;
-  if (mScopeBtnR && mScopeBtnR->GetValue() > 0.5)
-    mask |= OscilloscopeControl::kChanBitR;
-  if (mScopeBtnM && mScopeBtnM->GetValue() > 0.5)
-    mask |= OscilloscopeControl::kChanBitM;
-  mOscilloscopeCtrl->SetChanMask(mask);
-}
-
 void ORMAnalyzer::ApplyLanguage() {
   for (auto &binding : mTextBindings)
     if (binding.second)
@@ -1650,15 +1637,11 @@ void ORMAnalyzer::ApplyTheme() {
 void ORMAnalyzer::RefreshThemeColors() {
 #if IPLUG_EDITOR
   if (GetUI()) {
-    // 通道色随色相/饱和度变化，同步示波器声道开关按钮的按下色
+    // 通道色随色相/饱和度变化，同步示波器声道按钮的每档底色
     IColor cL, cR, cM;
     GetChannelColors(cL, cR, cM);
-    if (mScopeBtnL)
-      mScopeBtnL->SetColor(cL);
-    if (mScopeBtnR)
-      mScopeBtnR->SetColor(cR);
-    if (mScopeBtnM)
-      mScopeBtnM->SetColor(cM);
+    if (mScopeChanBtn)
+      mScopeChanBtn->SetIndexColors({cM, cL, cR});
     if (IControl *pBG = GetUI()->GetBackgroundControl()) {
       if (IPanelControl *pPanel = dynamic_cast<IPanelControl *>(pBG))
         pPanel->SetPattern(COL_100());
