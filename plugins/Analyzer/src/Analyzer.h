@@ -38,6 +38,7 @@ class SettingsPanelControl;
 class CpuMeterControl;
 class FlatToggleControl;
 class FlatCycleButton;
+class FlatColorToggleControl;
 class OscilloscopeControl;
 } // namespace igraphics
 } // namespace iplug
@@ -133,6 +134,14 @@ private:
   FlatToggleControl *mLevelHoldBtn = nullptr;
   FlatCycleButton *mLevelHoldTimeBtn = nullptr;
   FlatToggleControl *mFreezeBtn = nullptr;
+  FlatCycleButton *mScopeTrigBtn = nullptr;
+  FlatCycleButton *mScopeSrcBtn = nullptr;
+  FlatColorToggleControl *mScopeBtnL = nullptr;
+  FlatColorToggleControl *mScopeBtnR = nullptr;
+  FlatColorToggleControl *mScopeBtnM = nullptr;
+  FlatCycleButton *mScopeTimeBtn = nullptr;
+  FlatCycleButton *mScopeZoomBtn = nullptr;
+  void SyncScopeChanMask(); // L/R/M 开关状态 -> 示波器声道掩码
 
   int mSentMode = -1;
   int mSentWindowFFT = -1;

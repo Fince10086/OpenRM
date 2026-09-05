@@ -259,12 +259,20 @@ public:
   }
 
   void OnMouseDown(float x, float y, const IMouseMod &mod) override {
-    if (mod.L && !mod.A && GetParam() && !mLabels.empty()) {
-      const int num = (int)mLabels.size();
+    if (!mod.L || mod.A || mLabels.empty())
+      return;
+    const int num = (int)mLabels.size();
+    if (GetParam()) {
       const int cur = (int)std::clamp(std::lround(GetParam()->Value()), 0L, (long)num - 1);
       const int next = (cur + 1) % num;
       const double norm = (num > 1) ? (double)next / (double)(num - 1) : 0.0;
       SetValueFromUserInput(norm);
+    } else {
+      // 无参数模式：档位存内部索引，点击后回调外部同步纯 UI 状态（如示波器）
+      mFreeIdx = (mFreeIdx + 1) % num;
+      SetDirty(false);
+      if (mCycleFn)
+        mCycleFn(mFreeIdx);
     }
   }
 
@@ -279,6 +287,13 @@ public:
 
   // 刻度样式: 按钮伪装成刻度文字 (如频谱底部 Range 按钮)，背景方块 + 与刻度一致的文字
   void SetScaleLabelStyle(bool b) { mScaleStyle = b; }
+
+  // 无参数模式: 设置外部回调（点击循环后调用）与当前档位索引
+  void SetCycleHandler(std::function<void(int)> fn) { mCycleFn = std::move(fn); }
+  void SetFreeIndex(int idx) {
+    mFreeIdx = idx;
+    SetDirty(false);
+  }
 
   // 幽灵样式: 无背景方块，退成条上水印标签；文字色随条上是否有渐变切换
   void SetGhostStyle(bool b) { mGhostStyle = b; }
@@ -304,7 +319,8 @@ public:
   void Draw(IGraphics &g) override {
     const IRECT b = mRECT;
     const int num = (int)mLabels.size();
-    const int idx = GetParam() ? (int)std::clamp(std::lround(GetParam()->Value()), 0L, (long)num - 1) : 0;
+    const int idx = GetParam() ? (int)std::clamp(std::lround(GetParam()->Value()), 0L, (long)num - 1)
+                               : std::clamp(mFreeIdx, 0, num - 1);
 
     if (mSplitChannels) {
       // L/R 档左半 L 色右半 R 色；其余档整块 M 色 + 居中标签
@@ -377,6 +393,43 @@ private:
   bool mGhostStyle = false;
   bool mGhostSignalActive = false;
   float mTextSize = 0.f;
+  int mFreeIdx = 0;                          // 无参数模式的当前档位
+  std::function<void(int)> mCycleFn;         // 无参数模式点击回调
+};
+
+// 彩色开关按钮: 弹起为普通灰按钮，按下填充指定颜色表示选中（示波器声道选择等）
+class FlatColorToggleControl : public FlatToggleControl {
+public:
+  FlatColorToggleControl(const IRECT &bounds, const char *label, const IVStyle &style)
+      : FlatToggleControl(bounds, kNoParameter, " ", style, label, label) {
+    // 不使用 IV 内建 label；否则 MakeRects 会把可点击区从顶部按 label 高度削掉
+    // （按钮仅 26px 高，命中区只剩 ~2px，表现为“点不动”），须像 FREEZE/HOLD 一样关掉
+    mStyle.showLabel = false;
+  }
+
+  void SetColor(const IColor &c) {
+    mColor = c;
+    SetDirty(false);
+  }
+
+  // 双击视为再次按下，避免偶数次连击走默认重置
+  void OnMouseDblClick(float x, float y, const IMouseMod &mod) override { OnMouseDown(x, y, mod); }
+
+  void Draw(IGraphics &g) override {
+    const IRECT b = mRECT;
+    const bool on = GetValue() > 0.5;
+    g.FillRect(on ? mColor : COL_300(), b);
+    if (!on && GetMouseIsOver())
+      g.FillRect(HoverOverlay(), b);
+    IText t = mStyle.valueText;
+    // 按下时用与背景同灰度的文字（同 L/R 分色块按钮的反白样式）
+    t.mFGColor = on ? FlatCycleButton::SplitBtnTextColor() : COL_900();
+    strcpy(t.mFont, kFontSemiBold);
+    g.DrawText(t, mOnText.Get(), b);
+  }
+
+private:
+  IColor mColor = COL_300();
 };
 
 END_IGRAPHICS_NAMESPACE

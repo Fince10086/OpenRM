@@ -5,7 +5,6 @@
 #include "IControls.h"
 #include "UiUtils.h"
 #include "../Theme.h"
-#include "../Strings.h"
 
 #include <algorithm>
 #include <array>
@@ -26,13 +25,11 @@ public:
     kNumTrigSources
   };
 
-  enum EChanMode {
-    kChanLR = 0,
-    kChanL,
-    kChanR,
-    kChanMS,
-    kChanSum,           // GRM 特色纯白全声道求和线
-    kNumChans
+  // 声道显示掩码：bit0=L, bit1=R, bit2=M，可任意组合叠加
+  enum EChanBit {
+    kChanBitL = 1,
+    kChanBitR = 2,
+    kChanBitM = 4,
   };
 
   enum ETimebase {
@@ -58,13 +55,6 @@ public:
     kNumFreqPresets
   };
 
-  enum ETrigChan {
-    kSrcMid = 0,
-    kSrcL,
-    kSrcR,
-    kNumTrigChans
-  };
-
   explicit OscilloscopeControl(const IRECT &bounds) : IControl(bounds) {
     mDispL.reserve(8192);
     mDispR.reserve(8192);
@@ -88,6 +78,29 @@ public:
     SetDirty(false);
   }
 
+  // 顶栏按钮行（Analyzer.cpp 布局）直接驱动的纯 UI 状态
+  int GetTrigSource() const { return mTrigSource; }
+  int GetFreqPreset() const { return mFreqPreset; }
+  int GetChanMask() const { return mChanMask; }
+  int GetTimebase() const { return mTimebaseIdx; }
+  int GetZoom() const { return mZoomIdx; }
+  void SetTrigSource(int v) { mTrigSource = std::clamp(v, 0, kNumTrigSources - 1); SetDirty(false); }
+  void SetFreqPreset(int v) { mFreqPreset = std::clamp(v, 0, kNumFreqPresets - 1); SetDirty(false); }
+  void SetChanMask(int v) { mChanMask = std::clamp(v, 0, kChanBitL | kChanBitR | kChanBitM); SetDirty(false); }
+  void SetTimebase(int v) { mTimebaseIdx = std::clamp(v, 0, kNumTimebases - 1); SetDirty(false); }
+  void SetZoom(int v) { mZoomIdx = std::clamp(v, 0, 3); SetDirty(false); }
+
+  // 触发参考通道随显示声道自动决定：M 开启（或 L+R 同显）用 M，仅 L/R 单显用该声道
+  int EffectiveTrigChan() const {
+    if (mChanMask & kChanBitM)
+      return 2;
+    if ((mChanMask & kChanBitL) && !(mChanMask & kChanBitR))
+      return 0;
+    if ((mChanMask & kChanBitR) && !(mChanMask & kChanBitL))
+      return 1;
+    return 2;
+  }
+
   // 插件 OnIdle() 每帧调用：根据当前模式执行触发并提取波形切片
   void UpdateAudio(const float *const *pRing, int ringLen, int headPos, double sampleRate, bool frozen) {
     if (frozen && mFrozen)
@@ -103,8 +116,8 @@ public:
     if (ringLen < nDisp + 128)
       return;
 
-    // 选择触发参考通道：L=0, R=1, Mid=2
-    const int trigChan = (mTrigChan == kSrcMid) ? 2 : (mTrigChan == kSrcL) ? 0 : 1;
+    // 触发参考通道随显示声道掩码自动决定（L=0, R=1, Mid=2）
+    const int trigChan = EffectiveTrigChan();
 
     int triggerPos = -1;
     mTrigStateActive = false;
@@ -198,40 +211,7 @@ public:
   }
 
   void OnMouseDown(float x, float y, const IMouseMod &mod) override {
-    // 1. 顶栏按钮交互
-    if (y < mRECT.T + kHeaderH) {
-      if (mBtnMode.Contains(x, y)) {
-        mTrigSource = (mTrigSource + 1) % kNumTrigSources;
-        SetDirty(false);
-        return;
-      }
-      if (mBtnSecondary.Contains(x, y)) {
-        if (mTrigSource == kTrigFrequency) {
-          mFreqPreset = (mFreqPreset + 1) % kNumFreqPresets;
-        } else {
-          mTrigChan = (mTrigChan + 1) % kNumTrigChans;
-        }
-        SetDirty(false);
-        return;
-      }
-      if (mBtnChan.Contains(x, y)) {
-        mChanMode = (mChanMode + 1) % kNumChans;
-        SetDirty(false);
-        return;
-      }
-      if (mBtnTime.Contains(x, y)) {
-        mTimebaseIdx = (mTimebaseIdx + 1) % kNumTimebases;
-        SetDirty(false);
-        return;
-      }
-      if (mBtnZoom.Contains(x, y)) {
-        mZoomIdx = (mZoomIdx + 1) % 4;
-        SetDirty(false);
-        return;
-      }
-    }
-
-    // 2. 波形区拖拽门限 (Rising edge 模式)
+    // 波形区拖拽门限 (Rising edge 模式)
     const IRECT plot = GetPlotRect();
     if (plot.Contains(x, y)) {
       if (mTrigSource == kTrigEdge) {
@@ -284,9 +264,6 @@ public:
   void Draw(IGraphics &g) override {
     g.FillRect(COL_100(), mRECT);
 
-    UpdatePillLayout();
-    DrawHeader(g);
-
     const IRECT plot = GetPlotRect();
     DrawPlotBackground(g, plot);
     DrawGrid(g, plot);
@@ -310,15 +287,13 @@ public:
   }
 
 private:
-  static constexpr float kHeaderH = 26.f;
   static constexpr float kZooms[4] = {1.0f, 2.0f, 4.0f, 8.0f};
 
   int mTrigSource = kTrigEdge;
-  int mChanMode = kChanLR;
+  int mChanMask = kChanBitL | kChanBitR;
   int mTimebaseIdx = kTime10ms;
   int mZoomIdx = 0;
   int mFreqPreset = kFreq30Hz;
-  int mTrigChan = kSrcMid;
   float mTrigLevel = 0.0f;
 
   double mSampleRate = 48000.0;
@@ -345,11 +320,12 @@ private:
   std::vector<float> mDispS;
   std::vector<float> mDispSum;
 
-  // 顶栏按钮布局区域
-  IRECT mBtnMode, mBtnSecondary, mBtnChan, mBtnTime, mBtnZoom;
+  // 抽稀包络的复用缓冲（高时基 min/max 填充带渲染）
+  std::vector<float> mEnvTop;
+  std::vector<float> mEnvBot;
 
   IRECT GetPlotRect() const {
-    return IRECT(mRECT.L + 2.f, mRECT.T + kHeaderH + 2.f, mRECT.R - 2.f, mRECT.B - 2.f);
+    return IRECT(mRECT.L + 2.f, mRECT.T + 2.f, mRECT.R - 2.f, mRECT.B - 2.f);
   }
 
   float GetCurrentZoom() const {
@@ -367,83 +343,6 @@ private:
     const float halfH = plot.H() * 0.48f;
     const float raw = (cy - y) / (halfH * GetCurrentZoom());
     return std::clamp(raw, -1.0f, 1.0f);
-  }
-
-  void UpdatePillLayout() {
-    float curR = mRECT.R - 4.f;
-    constexpr float btnH = 20.f;
-    const float y0 = mRECT.T + 3.f;
-    const float y1 = y0 + btnH;
-    constexpr float gap = 3.f;
-
-    // 从右往左排布快捷按钮
-    // 1. ZOOM (1x / 2x / 4x / 8x)
-    constexpr float wZoom = 26.f;
-    mBtnZoom = IRECT(curR - wZoom, y0, curR, y1);
-    curR -= (wZoom + gap);
-
-    // 2. TIMEBASE (1ms..2s)
-    constexpr float wTime = 42.f;
-    mBtnTime = IRECT(curR - wTime, y0, curR, y1);
-    curR -= (wTime + gap);
-
-    // 3. CHAN (L/R, L, R, M/S, SUM)
-    constexpr float wChan = 38.f;
-    mBtnChan = IRECT(curR - wChan, y0, curR, y1);
-    curR -= (wChan + gap);
-
-    // 4. SECONDARY (SRC: L/R/M 或 FREQ: 30Hz)
-    const float wSec = (mTrigSource == kTrigFrequency) ? 46.f : 50.f;
-    mBtnSecondary = IRECT(curR - wSec, y0, curR, y1);
-    curR -= (wSec + gap);
-
-    // 5. MODE (EDGE / AUTOCORR / FREQ)
-    constexpr float wMode = 68.f;
-    mBtnMode = IRECT(curR - wMode, y0, curR, y1);
-  }
-
-  void DrawPill(IGraphics &g, const IRECT &box, const char *txt, bool active = false) {
-    const bool hov = mHoverActive && box.Contains(mHoverX, mHoverY);
-    const IColor bg = active ? COL_300() : COL_100();
-    g.FillRect(bg, box);
-    g.DrawRect(COL_300(), box);
-    if (hov) {
-      g.FillRect(HoverOverlay(), box);
-    }
-    const IText t(11, COL_900(), kFontSemiBold, EAlign::Center, EVAlign::Middle);
-    g.DrawText(t, txt, box);
-  }
-
-  void DrawHeader(IGraphics &g) {
-    const IText titleT(14, COL_900(), kFontBold, EAlign::Near, EVAlign::Middle);
-    const char *titleStr = (orm::UILang() == orm::kLangZH) ? "示波器" : "SCOPE";
-    g.DrawText(titleT, titleStr, IRECT(mRECT.L + 6.f, mRECT.T + 3.f, mBtnMode.L - 4.f, mRECT.T + kHeaderH));
-
-    // 1. 触发模式按钮
-    static const char *kModeNames[kNumTrigSources] = {"EDGE", "AUTOCORR", "FREQ"};
-    DrawPill(g, mBtnMode, kModeNames[mTrigSource], true);
-
-    // 2. 二级控制项
-    if (mTrigSource == kTrigFrequency) {
-      static const char *kFreqNames[kNumFreqPresets] = {"10Hz", "20Hz", "30Hz", "60Hz", "120Hz"};
-      DrawPill(g, mBtnSecondary, kFreqNames[mFreqPreset]);
-    } else {
-      static const char *kSrcNames[kNumTrigChans] = {"SRC: M", "SRC: L", "SRC: R"};
-      DrawPill(g, mBtnSecondary, kSrcNames[mTrigChan]);
-    }
-
-    // 3. 通道模式按钮 (包含 SUM)
-    static const char *kChanNames[kNumChans] = {"L/R", "L", "R", "M/S", "SUM"};
-    DrawPill(g, mBtnChan, kChanNames[mChanMode]);
-
-    // 4. 时基
-    static const char *kTimeNames[kNumTimebases] = {
-        "1ms", "2ms", "5ms", "10ms", "20ms", "50ms", "100ms", "500ms", "1s", "2s"};
-    DrawPill(g, mBtnTime, kTimeNames[mTimebaseIdx]);
-
-    // 5. 垂直缩放
-    static const char *kZoomNames[4] = {"1x", "2x", "4x", "8x"};
-    DrawPill(g, mBtnZoom, kZoomNames[mZoomIdx]);
   }
 
   void DrawPlotBackground(IGraphics &g, const IRECT &plot) {
@@ -562,10 +461,13 @@ private:
     const float w = plot.W();
 
     if (n > (int)w) {
-      const float step = (float)n / w;
-      float prevTop = cy, prevBot = cy;
-
-      for (int px = 0; px < (int)w; ++px) {
+      // 点数超过像素列数时抽稀为每列 min/max 包络，画成上下折线闭合的填充带：
+      // 相邻列间走抗锯齿斜面，避免逐列硬边竖条在高时基下的像素感
+      const int cols = std::max(2, (int)w);
+      const float step = (float)n / cols;
+      mEnvTop.resize(cols);
+      mEnvBot.resize(cols);
+      for (int px = 0; px < cols; ++px) {
         const int i0 = (int)(px * step);
         const int i1 = std::min(n, (int)((px + 1) * step));
         float minVal = wave[i0];
@@ -574,18 +476,22 @@ private:
           minVal = std::min(minVal, wave[i]);
           maxVal = std::max(maxVal, wave[i]);
         }
-
-        const float yTop = cy - std::clamp(maxVal * zoom, -1.15f, 1.15f) * halfH;
-        const float yBot = cy - std::clamp(minVal * zoom, -1.15f, 1.15f) * halfH;
-        const float x = plot.L + (float)px;
-
-        const float drawTop = std::min(yTop, prevBot);
-        const float drawBot = std::max(yBot, prevTop);
-        g.DrawLine(col, x, drawTop, x, std::max(drawBot, drawTop + 1.f), nullptr, 1.2f);
-
-        prevTop = yTop;
-        prevBot = yBot;
+        mEnvTop[px] = cy - std::clamp(maxVal * zoom, -1.15f, 1.15f) * halfH;
+        mEnvBot[px] = cy - std::clamp(minVal * zoom, -1.15f, 1.15f) * halfH;
       }
+
+      g.PathClear();
+      for (int px = 0; px < cols; ++px) {
+        const float x = plot.L + px + 0.5f;
+        if (px == 0)
+          g.PathMoveTo(x, mEnvTop[0]);
+        else
+          g.PathLineTo(x, mEnvTop[px]);
+      }
+      for (int px = cols - 1; px >= 0; --px)
+        g.PathLineTo(plot.L + px + 0.5f, mEnvBot[px]);
+      g.PathClose();
+      g.PathFill(IPattern(col));
     } else {
       g.PathClear();
       for (int i = 0; i < n; ++i) {
@@ -613,31 +519,20 @@ private:
   void DrawWaveforms(IGraphics &g, const IRECT &plot) {
     IColor cL, cR, cM;
     GetChannelColors(cL, cR, cM);
-    const IColor cS = IColor(255, 240, 185, 45);
-    // GRM 全声道求和线：明亮纯白
-    const IColor cSum = ThemeMode() ? IColor(255, 255, 255, 255) : IColor(255, 30, 30, 30);
 
-    if (mChanMode == kChanLR) {
-      if (!mDispR.empty())
-        DrawWaveformLine(g, plot, mDispR, IColor(210, cR.R, cR.G, cR.B));
-      if (!mDispL.empty())
-        DrawWaveformLine(g, plot, mDispL, IColor(240, cL.R, cL.G, cL.B));
-    } else if (mChanMode == kChanL) {
-      if (!mDispL.empty())
-        DrawWaveformLine(g, plot, mDispL, cL);
-    } else if (mChanMode == kChanR) {
-      if (!mDispR.empty())
-        DrawWaveformLine(g, plot, mDispR, cR);
-    } else if (mChanMode == kChanMS) {
-      if (!mDispS.empty())
-        DrawWaveformLine(g, plot, mDispS, IColor(200, cS.R, cS.G, cS.B));
-      if (!mDispM.empty())
-        DrawWaveformLine(g, plot, mDispM, IColor(240, cM.R, cM.G, cM.B));
-    } else if (mChanMode == kChanSum) {
-      // 纯白求和线
-      if (!mDispSum.empty())
-        DrawWaveformLine(g, plot, mDispSum, cSum);
-    }
+    const int mask = std::clamp(mChanMask, 0, kChanBitL | kChanBitR | kChanBitM);
+    const int nSel = ((mask & kChanBitL) ? 1 : 0) + ((mask & kChanBitR) ? 1 : 0) + ((mask & kChanBitM) ? 1 : 0);
+    if (!nSel)
+      return;
+
+    // 多选叠加时降低不透明度（绘制顺序 R → L → M），单选全亮
+    const int alpha = (nSel > 1) ? 210 : 255;
+    if (mask & kChanBitR)
+      DrawWaveformLine(g, plot, mDispR, IColor(alpha, cR.R, cR.G, cR.B));
+    if (mask & kChanBitL)
+      DrawWaveformLine(g, plot, mDispL, IColor(alpha, cL.R, cL.G, cL.B));
+    if (mask & kChanBitM)
+      DrawWaveformLine(g, plot, mDispM, IColor(alpha, cM.R, cM.G, cM.B));
   }
 
   void DrawStatusBadges(IGraphics &g, const IRECT &plot) {

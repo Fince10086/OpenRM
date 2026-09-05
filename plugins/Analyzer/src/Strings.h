@@ -87,6 +87,11 @@ enum EText {
   kTxtSpeedFast,
   kTxtSpeedMax,
   kTxtTipSpeed,
+  kTxtTipScopeTrig,
+  kTxtTipScopeSrc,
+  kTxtTipScopeChan,
+  kTxtTipScopeTime,
+  kTxtTipScopeZoom,
   kNumTexts
 };
 
@@ -169,6 +174,11 @@ inline const char *Tr(int id, int lang) {
           "FAST",
           "MAX",
           "Analyzer response speed (release time): LOG 4/2/1/0.5/0.2 s for MIN..MAX; LIN ≈ ×1.2 (4.8/2.4/1.2/0.6/0.25 s). Attack fixed 0.05 s. Click cycles slow → fast.",
+          "Oscilloscope trigger mode: EDGE (rising-edge threshold, drag the T handle in the plot) / AUTOCORR (period-locked) / FREQ (strobe refresh at a fixed rate)",
+          "Trigger reference follows the display: M when shown (also when L+R are both shown), otherwise the single L or R channel",
+          "Oscilloscope channel display: toggle L / R / M independently, combine to overlay; pressed buttons show their channel color. Trigger reference: M when shown (also L+R), otherwise the single L/R",
+          "Oscilloscope timebase (window span, right edge = trigger moment): click to cycle 1ms - 2s",
+          "Oscilloscope vertical zoom: click to cycle 1x - 8x (double-click the plot to reset zoom and trigger level)",
       },
       {
           "释放",
@@ -247,6 +257,11 @@ inline const char *Tr(int id, int lang) {
           "快速",
           "最快",
           "频谱响应速度档位（释放时间）：LOG 下 MIN~MAX 为 4/2/1/0.5/0.2 秒；LIN 下约为 ×1.2（4.8/2.4/1.2/0.6/0.25 秒）。上升时间固定 0.05 秒。点击循环：慢 → 快。",
+          "示波器触发模式：EDGE（上升沿门限，可在波形区拖动 T 手柄）/ AUTOCORR（自相关周期锁定）/ FREQ（定频定时刷新）",
+          "触发源通道（EDGE/AUTOCORR 模式）或定频刷新频率（FREQ 模式）：点击循环切换",
+          "示波器声道显示：L / R / M 独立开关，可任意组合叠加；按下显示对应通道色，弹起为灰色。触发参考随显示决定：显示 M（或 L+R 同显）用 M，仅 L/R 单显用该声道",
+          "示波器时基（窗口时间跨度，右缘为触发时刻）：点击循环切换 1ms–2s",
+          "示波器垂直缩放：点击循环切换 1x–8x（双击波形区复位缩放与触发门限）",
       },
   };
   return kTable[lang][id];

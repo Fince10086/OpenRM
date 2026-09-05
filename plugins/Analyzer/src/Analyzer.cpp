@@ -344,12 +344,92 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
       }
     };
 
-    // 下半区并排布局：左侧立体声像（Stereo Field），右侧时域示波器（Oscilloscope）
+    // 下半区布局：频谱下新增一排示波器按钮（同频谱顶行风格），
+    // 下方左侧立体声像（Stereo Field），右侧时域示波器（Oscilloscope）
+    constexpr float kBotBtnY = 336.f;  // 频谱下沿 328 + 8
+    constexpr float kBotBtnH = 26.f;
+    constexpr float kBotBtnGap = 6.f;
+    constexpr float kBottomTop = kBotBtnY + kBotBtnH + 10.f; // 372
+    constexpr float kBottomB = kBottomTop + 268.f;           // 640：面板整体下移，原高度不变
     constexpr float kBottomMidX = 398.f;
-    mScopeCtrl = new StereoFieldControl(IRECT(20.f, 336.f, kBottomMidX - 4.f, 604.f));
+
+    float scopeBtnX = 20.f;
+    auto scopeBtnRect = [&](float w) {
+      const IRECT r(scopeBtnX, kBotBtnY, scopeBtnX + w, kBotBtnY + kBotBtnH);
+      scopeBtnX += w + kBotBtnGap;
+      return r;
+    };
+
+    // 触发模式（EDGE / AUTOCORR / FREQ）
+    mScopeTrigBtn = new FlatCycleButton(scopeBtnRect(104.f), kNoParameter, {"EDGE", "AUTOCORR", "FREQ"}, btnStyle);
+    mScopeTrigBtn->SetCycleHandler([this](int v) {
+      if (mOscilloscopeCtrl)
+        mOscilloscopeCtrl->SetTrigSource(v);
+      if (mScopeSrcBtn)
+        mScopeSrcBtn->Hide(v != OscilloscopeControl::kTrigFrequency); // 刷新频率档仅 FREQ 模式需要
+    });
+    pGraphics->AttachControl(mScopeTrigBtn);
+    bindTip(mScopeTrigBtn, orm::kTxtTipScopeTrig);
+
+    // 刷新频率档（仅 FREQ 模式显示）；触发参考通道随 L/R/M 显示掩码自动决定，无独立 SRC 按钮
+    mScopeSrcBtn = new FlatCycleButton(scopeBtnRect(64.f), kNoParameter,
+                                       {"10Hz", "20Hz", "30Hz", "60Hz", "120Hz"}, btnStyle);
+    mScopeSrcBtn->SetCycleHandler([this](int v) {
+      if (mOscilloscopeCtrl)
+        mOscilloscopeCtrl->SetFreqPreset(v);
+    });
+    mScopeSrcBtn->Hide(true);
+    pGraphics->AttachControl(mScopeSrcBtn);
+    bindTip(mScopeSrcBtn, orm::kTxtTipScopeSrc);
+
+    // 声道选择：L / R / M 独立开关，弹起灰色、按下显示对应通道色
+    IColor ccL, ccR, ccM;
+    GetChannelColors(ccL, ccR, ccM);
+    mScopeBtnL = new FlatColorToggleControl(scopeBtnRect(34.f), "L", btnStyle);
+    mScopeBtnL->SetColor(ccL);
+    mScopeBtnL->SetValue(1.0); // 默认 L+R 叠加
+    mScopeBtnL->SetActionFunction([this](IControl *) { SyncScopeChanMask(); });
+    pGraphics->AttachControl(mScopeBtnL);
+    bindTip(mScopeBtnL, orm::kTxtTipScopeChan);
+
+    mScopeBtnR = new FlatColorToggleControl(scopeBtnRect(34.f), "R", btnStyle);
+    mScopeBtnR->SetColor(ccR);
+    mScopeBtnR->SetValue(1.0);
+    mScopeBtnR->SetActionFunction([this](IControl *) { SyncScopeChanMask(); });
+    pGraphics->AttachControl(mScopeBtnR);
+    bindTip(mScopeBtnR, orm::kTxtTipScopeChan);
+
+    mScopeBtnM = new FlatColorToggleControl(scopeBtnRect(34.f), "M", btnStyle);
+    mScopeBtnM->SetColor(ccM);
+    mScopeBtnM->SetActionFunction([this](IControl *) { SyncScopeChanMask(); });
+    pGraphics->AttachControl(mScopeBtnM);
+    bindTip(mScopeBtnM, orm::kTxtTipScopeChan);
+
+    // 时基（1ms..2s）
+    mScopeTimeBtn = new FlatCycleButton(
+        scopeBtnRect(64.f), kNoParameter,
+        {"1ms", "2ms", "5ms", "10ms", "20ms", "50ms", "100ms", "500ms", "1s", "2s"}, btnStyle);
+    mScopeTimeBtn->SetCycleHandler([this](int v) {
+      if (mOscilloscopeCtrl)
+        mOscilloscopeCtrl->SetTimebase(v);
+    });
+    pGraphics->AttachControl(mScopeTimeBtn);
+    bindTip(mScopeTimeBtn, orm::kTxtTipScopeTime);
+
+    // 垂直缩放（1x..8x）
+    mScopeZoomBtn = new FlatCycleButton(scopeBtnRect(40.f), kNoParameter, {"1x", "2x", "4x", "8x"}, btnStyle);
+    mScopeZoomBtn->SetCycleHandler([this](int v) {
+      if (mOscilloscopeCtrl)
+        mOscilloscopeCtrl->SetZoom(v);
+    });
+    pGraphics->AttachControl(mScopeZoomBtn);
+    bindTip(mScopeZoomBtn, orm::kTxtTipScopeZoom);
+
+    mScopeCtrl = new StereoFieldControl(IRECT(20.f, kBottomTop, kBottomMidX - 4.f, kBottomB));
     pGraphics->AttachControl(mScopeCtrl, kCtrlTagScope);
 
-    mOscilloscopeCtrl = new OscilloscopeControl(IRECT(kBottomMidX + 2.f, 336.f, 784.f, 604.f));
+    // 右缘 780（原 784）：与右栏按钮留出间隙，不再紧贴
+    mOscilloscopeCtrl = new OscilloscopeControl(IRECT(kBottomMidX + 2.f, kBottomTop, 780.f, kBottomB));
     pGraphics->AttachControl(mOscilloscopeCtrl, kCtrlTagOscilloscope);
 
     // 动态范围按钮（频谱底部右缘）
@@ -1253,6 +1333,13 @@ void ORMAnalyzer::OnUIClose() {
   mWindowBtn = nullptr;
   mFreezeBtn = nullptr;
   mSlopeBtn = nullptr;
+  mScopeTrigBtn = nullptr;
+  mScopeSrcBtn = nullptr;
+  mScopeBtnL = nullptr;
+  mScopeBtnR = nullptr;
+  mScopeBtnM = nullptr;
+  mScopeTimeBtn = nullptr;
+  mScopeZoomBtn = nullptr;
   mSettingsPanel = nullptr;
   mTextBindings.clear();
   mTooltipBindings.clear();
@@ -1483,6 +1570,20 @@ void ORMAnalyzer::ReadStateFileFrom(const std::string &path, std::string &err) {
   err.clear();
 }
 
+// 示波器声道开关：把 L/R/M 三个按钮的按下状态合成掩码下发给示波器
+void ORMAnalyzer::SyncScopeChanMask() {
+  if (!mOscilloscopeCtrl)
+    return;
+  int mask = 0;
+  if (mScopeBtnL && mScopeBtnL->GetValue() > 0.5)
+    mask |= OscilloscopeControl::kChanBitL;
+  if (mScopeBtnR && mScopeBtnR->GetValue() > 0.5)
+    mask |= OscilloscopeControl::kChanBitR;
+  if (mScopeBtnM && mScopeBtnM->GetValue() > 0.5)
+    mask |= OscilloscopeControl::kChanBitM;
+  mOscilloscopeCtrl->SetChanMask(mask);
+}
+
 void ORMAnalyzer::ApplyLanguage() {
   for (auto &binding : mTextBindings)
     if (binding.second)
@@ -1550,6 +1651,15 @@ void ORMAnalyzer::ApplyTheme() {
 void ORMAnalyzer::RefreshThemeColors() {
 #if IPLUG_EDITOR
   if (GetUI()) {
+    // 通道色随色相/饱和度变化，同步示波器声道开关按钮的按下色
+    IColor cL, cR, cM;
+    GetChannelColors(cL, cR, cM);
+    if (mScopeBtnL)
+      mScopeBtnL->SetColor(cL);
+    if (mScopeBtnR)
+      mScopeBtnR->SetColor(cR);
+    if (mScopeBtnM)
+      mScopeBtnM->SetColor(cM);
     if (IControl *pBG = GetUI()->GetBackgroundControl()) {
       if (IPanelControl *pPanel = dynamic_cast<IPanelControl *>(pBG))
         pPanel->SetPattern(COL_100());
