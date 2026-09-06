@@ -57,6 +57,9 @@ public:
     mSweepPos = 0;
     mFrozenAnchor = -1;
     mExtractedWinSec = -1.0;
+    mAbsHead = 0;
+    mPrevHeadPos = -1;
+    mDispRightAbs = -1;
     SetDirty(false);
   }
 
@@ -75,11 +78,14 @@ public:
   void SetZoomFactor(float z) { mZoomFactor = std::clamp(z, 1.f, kMaxZoom); SetDirty(false); }
 
   // 内嵌滑块的布局矩形（Analyzer.cpp 布局用），画区为其让位
+  // 缩放滑块在左缘：条左缘贴控件边、右缘贴画区 (无缝)，纵向上下与画区齐平
+  static constexpr float kSliderW = 20.f;
+  static constexpr float kSliderH = 20.f;
   IRECT GetZoomSliderRect() const {
-    return IRECT(mRECT.R - kSliderW - 2.f, mRECT.T + 3.f, mRECT.R - 2.f, mRECT.B - kSliderH - 8.f);
+    return IRECT(mRECT.L, mRECT.T + 2.f, mRECT.L + kSliderW, mRECT.B - kSliderH - 6.f);
   }
   IRECT GetTimeSliderRect() const {
-    return IRECT(mRECT.L + 3.f, mRECT.B - kSliderH - 2.f, mRECT.R - kSliderW - 8.f, mRECT.B - 2.f);
+    return IRECT(mRECT.L + kSliderW, mRECT.B - kSliderH - 2.f, mRECT.R - 2.f, mRECT.B - 2.f);
   }
 
   // 触发参考通道随显示声道自动决定：M 开启（或 L+R 同显）用 M，仅 L/R 单显用该声道
@@ -106,6 +112,7 @@ public:
     if (frozen && mFrozen) {
       if (mFrozenAnchor >= 0 && winSec != mExtractedWinSec) {
         ExtractWindow(pRing, ringLen, mFrozenAnchor, nDisp);
+        mDispRightAbs = mAbsHead - 1 - ((headPos - mFrozenAnchor + ringLen) & (ringLen - 1));
         mSweepPos = 0; // SWEEP 解冻后扫描笔从左缘重写
         mExtractedWinSec = winSec;
         SetDirty(false);
@@ -113,6 +120,13 @@ public:
       return;
     }
     mFrozen = frozen;
+
+    // 绝对样本计数: 环位置回卷也能累计单调递增的头部绝对号 (数据锁定分箱用)
+    if (mPrevHeadPos >= 0) {
+      const int adv = (headPos - mPrevHeadPos + ringLen) & (ringLen - 1);
+      mAbsHead += adv;
+    }
+    mPrevHeadPos = headPos;
 
     // 触发参考通道随显示声道掩码自动决定（L=0, R=1, Mid=2）
     const int trigChan = EffectiveTrigChan();
@@ -152,6 +166,7 @@ public:
       // 笔随音频样本连续前进，逐样本写入显示缓冲；写满一个时间窗后回卷左缘，
       // 继续覆盖旧迹线（右侧未覆盖部分保持可见），扫描一轮时间 = 窗口时长本身。
       // 时间窗变化时清空缓冲、笔归零，重新扫满一屏。
+      mDispRightAbs = -1; // 扫描笔缓冲非连续时间窗, 包络退回像素锁定分箱
       if ((int)mDispL.size() != nDisp) {
         mDispL.assign(nDisp, 0.f);
         mDispR.assign(nDisp, 0.f);
@@ -198,6 +213,7 @@ public:
       mFrozenAnchor = triggerPos;
 
     ExtractWindow(pRing, ringLen, triggerPos, nDisp);
+    mDispRightAbs = mAbsHead - 1 - ((headPos - triggerPos + ringLen) & (ringLen - 1));
     mExtractedWinSec = winSec;
     SetDirty(false);
   }
@@ -282,9 +298,6 @@ private:
   static constexpr double kMinWindowSec = 0.010;
   static constexpr double kMaxWindowSec = 2.000;
   static constexpr float kMaxZoom = 8.f;
-  // 画区为内嵌滑块让出的边距
-  static constexpr float kSliderW = 20.f;
-  static constexpr float kSliderH = 20.f;
   // 贴边标签几何 (与频谱图刻度排版一致)
   static constexpr float kTickRight = 3.f;
   static constexpr float kLabelH = 16.f;
@@ -302,7 +315,7 @@ private:
   static constexpr int kNumTimeCells = (int)(sizeof(kTimeCells) / sizeof(kTimeCells[0]));
   static constexpr int kNumAmpSteps = (int)(sizeof(kAmpLadder) / sizeof(kAmpLadder[0]));
 
-  int mTrigSource = kTrigRoll;
+  int mTrigSource = kTrigSync; // 默认 SYNC 模式
   int mChanMask = kChanBitM; // 默认显示 M
   double mWindowSec = kDefaultWindowSec;
   float mZoomFactor = kDefaultZoom;
@@ -313,6 +326,11 @@ private:
   bool mTrigStateActive = false;
 
   int mLastHeadPos = -1;
+  // 绝对样本计数 (跨环回卷单调递增) 与显示窗右缘样本的绝对号:
+  // 抽稀包络按绝对号锁定分箱边界, 包络随数据亚像素平滑平移, 消除长时基下的逐帧重相位抖动
+  long long mAbsHead = 0;
+  int mPrevHeadPos = -1;
+  long long mDispRightAbs = -1;
   // 冻结锚点: 冻结瞬间迹线右缘的环内位置; 冻结中拖时间窗据此按新窗长重取迹线
   int mFrozenAnchor = -1;
   // 迹线当前对应的窗长 (秒); 冻结中用于检测时间窗是否被拖动
@@ -347,9 +365,11 @@ private:
   // 抽稀包络的复用缓冲（高时基 min/max 填充带渲染）
   std::vector<float> mEnvTop;
   std::vector<float> mEnvBot;
+  std::vector<float> mEnvX;
 
   IRECT GetPlotRect() const {
-    return IRECT(mRECT.L + 2.f, mRECT.T + 2.f, mRECT.R - kSliderW - 6.f, mRECT.B - kSliderH - 6.f);
+    // 左缘 = 缩放滑块条右缘 (无缝), 下缘 = 时间滑块条上缘 (无缝), 右/上各留 2px
+    return IRECT(mRECT.L + kSliderW, mRECT.T + 2.f, mRECT.R - 2.f, mRECT.B - kSliderH - 2.f);
   }
 
   float GetCurrentZoom() const {
@@ -567,34 +587,52 @@ private:
 
     if (n > (int)w) {
       // 点数超过像素列数时抽稀为每列 min/max 包络，画成上下折线闭合的填充带：
-      // 相邻列间走抗锯齿斜面，避免逐列硬边竖条在高时基下的像素感
+      // 相邻列间走抗锯齿斜面，避免逐列硬边竖条在高时基下的像素感。
+      // 分箱边界锚定绝对样本号 (随数据一同平移) 而非像素列：长时基下每帧内容平移量
+      // 不是列宽整数倍，像素锁定分箱各列 min/max 的相位逐帧漂移，包络边缘会轻微抖动；
+      // 数据锁定后旧样本恒在同一箱内，包络形状稳定，整体随内容亚像素平滑左移。
+      // SWEEP 扫描笔缓冲非连续时间窗 (mDispRightAbs < 0)，phase=0 退化为像素锁定分箱。
       const int cols = std::max(2, (int)w);
-      const float step = (float)n / cols;
-      mEnvTop.resize(cols);
-      mEnvBot.resize(cols);
-      for (int px = 0; px < cols; ++px) {
-        const int i0 = (int)(px * step);
-        const int i1 = std::min(n, (int)((px + 1) * step));
-        float minVal = wave[i0];
-        float maxVal = wave[i0];
-        for (int i = i0 + 1; i < i1; ++i) {
-          minVal = std::min(minVal, wave[i]);
-          maxVal = std::max(maxVal, wave[i]);
+      const double stepD = (double)n / (double)cols;
+      double phase = 0.0;
+      if (mDispRightAbs >= 0) {
+        phase = std::fmod((double)(n - 1) - (double)mDispRightAbs, stepD);
+        if (phase < 0.0)
+          phase += stepD;
+      }
+      mEnvTop.clear();
+      mEnvBot.clear();
+      mEnvX.clear();
+      double bPrev = 0.0;
+      double b = (phase > 0.0) ? phase : stepD;
+      while (bPrev < (double)n - 0.5) {
+        const int i0 = std::max(0, (int)std::ceil(bPrev));
+        const int i1 = std::min(n, (int)std::ceil(b));
+        if (i1 > i0) {
+          float minVal = wave[i0];
+          float maxVal = wave[i0];
+          for (int i = i0 + 1; i < i1; ++i) {
+            minVal = std::min(minVal, wave[i]);
+            maxVal = std::max(maxVal, wave[i]);
+          }
+          mEnvTop.push_back(cy - std::clamp(maxVal * zoom, -1.15f, 1.15f) * halfH);
+          mEnvBot.push_back(cy - std::clamp(minVal * zoom, -1.15f, 1.15f) * halfH);
+          mEnvX.push_back(plot.L + (float)((bPrev + b) * 0.5 / (double)n) * w); // 箱中心 → 亚像素 x
         }
-        mEnvTop[px] = cy - std::clamp(maxVal * zoom, -1.15f, 1.15f) * halfH;
-        mEnvBot[px] = cy - std::clamp(minVal * zoom, -1.15f, 1.15f) * halfH;
+        bPrev = b;
+        b += stepD;
       }
 
+      const int nb = (int)mEnvX.size();
       g.PathClear();
-      for (int px = 0; px < cols; ++px) {
-        const float x = plot.L + px + 0.5f;
+      for (int px = 0; px < nb; ++px) {
         if (px == 0)
-          g.PathMoveTo(x, mEnvTop[0]);
+          g.PathMoveTo(mEnvX[0], mEnvTop[0]);
         else
-          g.PathLineTo(x, mEnvTop[px]);
+          g.PathLineTo(mEnvX[px], mEnvTop[px]);
       }
-      for (int px = cols - 1; px >= 0; --px)
-        g.PathLineTo(plot.L + px + 0.5f, mEnvBot[px]);
+      for (int px = nb - 1; px >= 0; --px)
+        g.PathLineTo(mEnvX[px], mEnvBot[px]);
       g.PathClose();
       g.PathFill(IPattern(col));
     } else {
@@ -640,9 +678,9 @@ private:
       DrawWaveformLine(g, plot, mDispM, IColor(alpha, cM.R, cM.G, cM.B));
   }
 
-  // SYNC 基频检测读数: 顶缘右上, 贴边纯文本 (同频谱刻度排版)
+  // SYNC 基频检测读数: 底缘右下, 贴边纯文本 (同频谱刻度排版)
   IRECT DetRect(const IRECT &plot) const {
-    return IRECT(plot.R - 190.f, plot.T + 2.f, plot.R - kTickRight, plot.T + 2.f + kLabelH);
+    return IRECT(plot.R - 190.f, plot.B - 2.f - kLabelH, plot.R - kTickRight, plot.B - 2.f);
   }
 
   void DrawStatusReadout(IGraphics &g, const IRECT &plot) {

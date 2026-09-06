@@ -102,10 +102,10 @@ private:
   static constexpr float kImgWinFrames = 8.f;
   static constexpr double kFftCal = 0.375 * (double)kFftN * (double)kFftN; // 满幅正弦 = 0 dB
 
-  static constexpr float kBaseGap = 60.f;    // 基线以下条带高度
-  static constexpr float kRimLabelH = 19.f;
-  static constexpr float kBarGap = 5.f;      // 复合条与基线的间距
-  static constexpr float kBarH = 8.f;        // 复合条轨道厚度
+  static constexpr float kBarH = 14.f;       // 复合条轨道厚度 (L/R 内嵌其中, 需容纳文字)
+  static constexpr float kReadoutH = 22.f;   // 基线下 CORR/BAL 读数行高
+  // 基线以下固定占用: 横条 + 间距 + 读数行 + 底缘边距, 供扇形半径计算预留
+  static constexpr float kBelowH = kBarH + 4.f + kReadoutH + 2.f;
   static constexpr float kBalRangeDb = 24.f; // 平衡量程 ±24 dB
   static constexpr float kCxN = 0.28f;
 
@@ -261,12 +261,13 @@ private:
     SetDirty(false);
   }
 
+  // 扇形弧顶贴画区顶缘 (与示波器按钮排顶对齐), 基线 = 顶缘 + 半径; 左右各留 2px 与频谱画区同款
   void FanGeom(const IRECT &cv, float &cx, float &cy, float &rMax) const {
     cx = (cv.W() <= 500.f) ? cv.MW() : (cv.L + cv.W() * kCxN);
-    cy = cv.B - kBaseGap;
-    const float rVert = std::max((cy - cv.T) - kRimLabelH, 12.f);
-    const float rHoriz = std::max(cv.W() * 0.5f - 15.f, 12.f);
+    const float rHoriz = std::max(cv.W() * 0.5f - 2.f, 12.f);
+    const float rVert = std::max(cv.B - kBelowH - cv.T, 12.f);
     rMax = (cv.W() <= 500.f) ? std::min(rVert, rHoriz) : rVert;
+    cy = cv.T + rMax;
   }
 
   float RadiusFor(float db, float rMax) const {
@@ -448,55 +449,39 @@ private:
                          : SemColor(MeterRed());
   }
 
-  // 复合条: 相关性单声道窗口 + ±24dB 平衡指针, 紧贴基线, 宽度 = 半圆直径
+  // 复合条: 相关性单声道窗口 + ±24dB 平衡指针, 与半圆基线无缝相接, 宽度 = 半圆直径
   void DrawBalanceBar(IGraphics &g, const IRECT &cv) {
     float cx, cy, rMax;
     FanGeom(cv, cx, cy, rMax);
     const float half = std::min(rMax, std::min(cx - cv.L - 2.f, cv.R - cx - 2.f));
     const float x0 = cx - half, x1 = cx + half;
-    const float trackT = cy + kBarGap, trackB = trackT + kBarH;
-    const float tickT = trackB + 4.f, tickB = tickT + 16.f;
-    const float roT = tickB + 2.f, roB = cv.B - 2.f;
+    const float trackT = cy, trackB = trackT + kBarH;
+    const float roT = trackB + 4.f, roB = roT + kReadoutH;
     IColor cL, cR, cM;
     GetChannelColors(cL, cR, cM);
 
-    // 轨道 + ±6dB 小刻度
+    // 轨道 (下缘不再带 ±6dB 小刻度)
     g.FillRect(COL_300(), IRECT(x0, trackT, x1, trackB));
-    for (int d = -18; d <= 18; d += 6) {
-      if (d == 0)
-        continue;
-      const float tx = cx + (d / kBalRangeDb) * half;
-      g.FillRect(COL_500(), IRECT(tx - 0.5f, trackB + 1.f, tx + 0.5f, trackB + 4.f));
-    }
 
     if (mCorrValid) {
       const float c = std::clamp(mCorrDisp, -1.f, 1.f);
       const IColor cc = CorrColor(c);
 
-      // 单声道窗口: 半宽 = |corr|·半条宽, 负相关转红; 中心 2px 基准刻度
-      // 常显 (corr≈0 窗口收缩后仍有可见标记)
+      // 单声道窗口: 半宽 = |corr|·半条宽, 负相关转红; 只保留颜色填充, 不画中心基准竖条
       const float halfW = 0.5f * std::fabs(c) * (x1 - x0);
       g.FillRect(IColor(150, cc.R, cc.G, cc.B), IRECT(cx - halfW, trackT, cx + halfW, trackB));
-      g.FillRect(cc, IRECT(cx - 1.f, trackT - 3.f, cx + 1.f, trackB + 3.f));
 
-      // 平衡指针: 通道色填充 + 深色针头
+      // 平衡指针: 不再填充通道色, 仅一根深灰竖条, 与轨道上下同高
       const float bal = std::clamp(mBalDisp, -kBalRangeDb, kBalRangeDb);
       const float nx = cx + (bal / kBalRangeDb) * half;
-      if (std::fabs(bal) > 0.05f) {
-        const IColor nc = (mBalDisp > 0.f) ? cR : cL;
-        g.FillRect(IColor(120, nc.R, nc.G, nc.B),
-                   IRECT(std::min(cx, nx), trackT, std::max(cx, nx), trackB));
-      }
-      g.FillRect(COL_900(), IRECT(nx - 1.f, trackT - 4.f, nx + 1.f, trackB + 4.f));
+      g.FillRect(COL_700(), IRECT(nx - 1.5f, trackT, nx + 1.5f, trackB));
     }
 
-    // 刻度标签: 两端 L/R (通道色), 中心 0
-    const IText lT(14, IColor(255, cL.R, cL.G, cL.B), kFontRegular, EAlign::Near, EVAlign::Top);
-    const IText rT(14, IColor(255, cR.R, cR.G, cR.B), kFontRegular, EAlign::Far, EVAlign::Top);
-    const IText cT(14, COL_700(), kFontRegular, EAlign::Center, EVAlign::Top);
-    g.DrawText(lT, "L", IRECT(x0, tickT, x0 + 20.f, tickB));
-    g.DrawText(cT, "0", IRECT(cx - 12.f, tickT, cx + 12.f, tickB));
-    g.DrawText(rT, "R", IRECT(x1 - 20.f, tickT, x1, tickB));
+    // L/R 标识内嵌轨道两端 (通道色), 不再显示中心 0
+    const IText lT(12, IColor(255, cL.R, cL.G, cL.B), kFontSemiBold, EAlign::Near, EVAlign::Middle);
+    const IText rT(12, IColor(255, cR.R, cR.G, cR.B), kFontSemiBold, EAlign::Far, EVAlign::Middle);
+    g.DrawText(lT, "L", IRECT(x0 + 5.f, trackT, x0 + 25.f, trackB));
+    g.DrawText(rT, "R", IRECT(x1 - 25.f, trackT, x1 - 5.f, trackB));
 
     // 两角读数: 左 CORR (状态色), 右 BAL
     char buf[24];
@@ -560,10 +545,10 @@ private:
       std::snprintf(mHoverBuf, sizeof(mHoverBuf), "%.1f°", mHoverTh * 180.f / (float)PI);
     }
 
-    // 标签沿指针方向放弧缘外侧，超出画布时平移回画布内
+    // 标签沿指针方向放弧缘外侧，超出画布时平移回画布内 (弧顶已贴顶缘, 纵向一并收紧)
     const IText t(14, COL_700(), kFontRegular, EAlign::Center, EVAlign::Bottom);
     const float px = cx + (rMax + 18.f) * std::sin(mHoverTh);
-    const float py = cy - (rMax + 18.f) * std::cos(mHoverTh);
+    const float py = std::max(cy - (rMax + 18.f) * std::cos(mHoverTh), cv.T + 17.f);
     IRECT box(px - 60.f, py - 17.f, px + 60.f, py - 1.f);
     g.MeasureText(t, mHoverBuf, box);
     const float w = box.W();

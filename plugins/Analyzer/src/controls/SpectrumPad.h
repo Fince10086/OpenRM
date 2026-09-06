@@ -719,24 +719,26 @@ private:
       return bar.B - (vu - kVuBottomVU) / (kVuTopDb - kVuBottomVU) * bar.H();
     };
 
-    // OKLCH 色标，只有红/绿两区：红与 dB 条顶端同色相，绿收到 dB 条底色。
-    // 绿→红跨度大，接缝只留 1.5% 表高——段内是 sRGB 插值，缝太宽会拉出一条橄榄色
+    // OKLCH 色标：-3 以下恒绿，-3~+3 (表头顶段) 绿→黄→红逐档过渡。
+    // 绿→红跨度大，单段 sRGB 插值会拉出一条橄榄色，故拆成多段窄渐变、每段色相相近
     struct VuStop {
       float t;
       float l, c, h;
     };
     const float vuSeam = tOfV(-3.f);
     const VuStop kVuStopsLight[] = {
-      {0.f,        0.620f, 0.205f, 27.f},
-      {vuSeam,     0.620f, 0.205f, 27.f},
-      {vuSeam + 0.015f, 0.560f, 0.135f, 140.f},
-      {1.f,        0.420f, 0.095f, 165.f},
+      {0.f,             0.620f, 0.205f, 27.f},
+      {vuSeam * 0.33f,  0.600f, 0.185f, 65.f},
+      {vuSeam * 0.67f,  0.578f, 0.158f, 102.f},
+      {vuSeam,          0.560f, 0.135f, 140.f},
+      {1.f,             0.420f, 0.095f, 165.f},
     };
     const VuStop kVuStopsDark[] = {
-      {0.f,        0.720f, 0.200f, 25.f},
-      {vuSeam,     0.720f, 0.200f, 25.f},
-      {vuSeam + 0.015f, 0.660f, 0.145f, 138.f},
-      {1.f,        0.510f, 0.085f, 165.f},
+      {0.f,             0.720f, 0.200f, 25.f},
+      {vuSeam * 0.33f,  0.700f, 0.180f, 63.f},
+      {vuSeam * 0.67f,  0.678f, 0.158f, 100.f},
+      {vuSeam,          0.660f, 0.145f, 138.f},
+      {1.f,             0.510f, 0.085f, 165.f},
     };
     const VuStop *stops = ThemeMode() ? kVuStopsDark : kVuStopsLight;
     const int nStops = (int)(sizeof(kVuStopsLight) / sizeof(kVuStopsLight[0]));
@@ -954,35 +956,31 @@ private:
     const float yBot = LoudYOf(plot, std::clamp(mLraMin, botL, topL));
     if (yBot - yTop < 1.f)
       return;
-
-    const float zoneL = plot.R + kMeterStripW - kLraZoneW;
-    const float zoneR = plot.R + kMeterStripW;
     int nStops = 0;
     const IColor col = LoudStopColor(LoudStopTable(nStops)[nStops - 1]);
 
-    // 右括号: 脊线贴列右缘, 两端横帽向左伸出
-    constexpr float kSpineW = 1.5f, kCapH = 1.5f, kCapLen = 6.f;
-    g.FillRect(col, IRECT(zoneR - kSpineW, yTop, zoneR, yBot));
-    g.FillRect(col, IRECT(zoneR - kCapLen, yTop - kCapH * 0.5f, zoneR, yTop + kCapH * 0.5f));
-    g.FillRect(col, IRECT(zoneR - kCapLen, yBot - kCapH * 0.5f, zoneR, yBot + kCapH * 0.5f));
-
-    // 读数竖排 (逆时针 90°, 字头朝左、自下而上读), 右缘贴住括弧脊线, 沿跨度居中;
-    // 长度超出括弧跨度时按跨度缩小字号
+    // 整体紧贴 LUFS 电平条右缘 (不再锚定列右缘); 读数竖排 (逆时针 90°, 字头朝左、自下而上读),
+    // 固定最大字号、沿跨度居中; 右括号脊线贴文字右侧, 横帽向左拉到与文字左缘齐平
+    constexpr float kGapBars = 4.f, kSpineW = 1.5f, kCapH = 1.5f, kTextPad = 2.f;
+    const float barsR = VuZoneR(plot) + kLufsScaleW + 4.f * kLoudBarW;
     const float span = yBot - yTop;
     const float midY = (yTop + yBot) * 0.5f;
     char valBuf[16];
     std::snprintf(valBuf, sizeof(valBuf), "LRA %.1f", mRange);
-    float txtSize = 14.f;
-    IText txtT = IText(txtSize, col, kFontSemiBold, EAlign::Center, EVAlign::Middle).WithAngle(90.f);
-    IRECT mr(zoneL, yTop, zoneR, yBot);
+    const IText txtT = IText(14.f, col, kFontSemiBold, EAlign::Center, EVAlign::Middle).WithAngle(90.f);
+    IRECT mr(0.f, 0.f, 1.f, 1.f);
     g.MeasureText(txtT, valBuf, mr);
-    if (mr.H() > span - 2.f) {
-      txtSize = std::clamp(txtSize * (span - 2.f) / mr.H(), 9.f, 14.f);
-      txtT = IText(txtSize, col, kFontSemiBold, EAlign::Center, EVAlign::Middle).WithAngle(90.f);
-      g.MeasureText(txtT, valBuf, mr);
-    }
-    const float boxR = zoneR - kSpineW - 2.f;
-    g.DrawText(txtT, valBuf, IRECT(boxR - mr.W(), midY - mr.H() * 0.5f, boxR, midY + mr.H() * 0.5f));
+
+    const float textL = barsR + kGapBars;
+    g.DrawText(txtT, valBuf, IRECT(textL, midY - mr.H() * 0.5f, textL + mr.W(), midY + mr.H() * 0.5f));
+
+    // 括弧跨度容不下文字时只显示文字, 避免横帽与文字打架
+    if (mr.H() > span)
+      return;
+    const float spineL = textL + mr.W() + kTextPad;
+    g.FillRect(col, IRECT(spineL, yTop, spineL + kSpineW, yBot));
+    g.FillRect(col, IRECT(textL, yTop - kCapH * 0.5f, spineL + kSpineW, yTop + kCapH * 0.5f));
+    g.FillRect(col, IRECT(textL, yBot - kCapH * 0.5f, spineL + kSpineW, yBot + kCapH * 0.5f));
   }
 
   void DrawMeterBar(IGraphics &g, const IRECT &plot, const IRECT &bar, const IColor &chan, int ch) {
@@ -1336,6 +1334,7 @@ private:
     mSpecPtsM.clear();
     mHoldPts.clear();
     const int have = std::min(nb, (int)mSpectrum[0].size());
+    bool edgePadded = false;
     for (int b = 0; b < have; ++b) {
       if (mMode == 0 && !mBandUsed[b])
         continue;
@@ -1352,12 +1351,23 @@ private:
       const float dL = mSpectrum[0][b];
       const float dR = mSpectrum[1][b];
       const float dSum = (mSpectrum[2].size() > (size_t)b) ? mSpectrum[2][b] : mBottomDb;
-      mSpecPtsL.push_back({x, dbToY(dL)});
-      mSpecPtsR.push_back({x, dbToY(dR)});
-
       const float dM = (mMergeAlgo == 0) ? MergeDb(dL, dR, 0) : dSum;
-      mSpecPtsM.push_back({x, dbToY(dM)});
-      mHoldPts.push_back({x, dbToY(HoldValAt(b))});
+      const float yL = dbToY(dL), yR = dbToY(dR), yM = dbToY(dM), yH = dbToY(HoldValAt(b));
+
+      // 带状首点落在 20Hz 轴内侧 (PBT L/M 档、RTA 等) 时, 先向左缘补一个同值识别点,
+      // 避免填充与曲线从首点直接斜连到左下角
+      if (!edgePadded && mMode != 0 && x > plot.L + 0.5f) {
+        edgePadded = true;
+        mSpecPtsL.push_back({plot.L, yL});
+        mSpecPtsR.push_back({plot.L, yR});
+        mSpecPtsM.push_back({plot.L, yM});
+        mHoldPts.push_back({plot.L, yH});
+      }
+
+      mSpecPtsL.push_back({x, yL});
+      mSpecPtsR.push_back({x, yR});
+      mSpecPtsM.push_back({x, yM});
+      mHoldPts.push_back({x, yH});
     }
 
     auto allBelow = [&](const std::vector<Pt> &pts) {

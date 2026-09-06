@@ -41,6 +41,9 @@ public:
   // 隐藏表头（label/数值），滑块完整占用控件矩形；内嵌小滑块用
   void SetHeaderVisible(bool v) { mHeaderVisible = v; SetDirty(false); }
 
+  // 轨道贴控件远端边 (垂直贴右缘 / 水平贴顶缘): 示波器内嵌滑块用, 轨道与画区边缘齐平, 圆形把手允许压到画区上
+  void SetTrackFar(bool v) { mTrackFar = v; SetDirty(false); }
+
   void SetValueFormatter(std::function<void(WDL_String &)> f) { mValueFormatter = std::move(f); }
   void SetHeaderLabel(const char *s) {
     mHeaderLabel.Set(s);
@@ -51,9 +54,15 @@ public:
     if (!mHeaderVisible) {
       // 无表头：滑块完整占用控件矩形
       mWidgetBounds = mRECT;
-      mTrackBounds = (mDirection == EDirection::Horizontal)
-                         ? mRECT.GetPadded(-mHandleSize).GetMidVPadded(mTrackSize)
-                         : mRECT.GetPadded(-mHandleSize).GetMidHPadded(mTrackSize);
+      if (mDirection == EDirection::Horizontal) {
+        const IRECT travel = mRECT.GetPadded(-mHandleSize); // 把手行程: 左右各留把手半径
+        mTrackBounds = mTrackFar ? IRECT(travel.L, mRECT.T, travel.R, mRECT.T + mTrackSize)
+                                 : travel.GetMidVPadded(mTrackSize);
+      } else {
+        const IRECT travel = mRECT.GetPadded(-mHandleSize); // 把手行程: 上下各留把手半径
+        mTrackBounds = mTrackFar ? IRECT(mRECT.R - mTrackSize, travel.T, mRECT.R, travel.B)
+                                 : travel.GetMidHPadded(mTrackSize);
+      }
       SetTargetRECT(mRECT);
       mValueBounds = IRECT();
       SetDirty(false);
@@ -168,6 +177,7 @@ protected:
   const char *mHeaderFont = kFontSemiBold;
   std::function<void(WDL_String &)> mValueFormatter;
   bool mHeaderVisible = true;
+  bool mTrackFar = false;
 };
 
 END_IGRAPHICS_NAMESPACE

@@ -155,6 +155,7 @@ private:
   int mFreezeWindowFFT = -1;
   int mFreezeWindowVQT = -1;
   int mFreezeLf = -1;
+  int mFreezeGamma = -1;
   int mFreezeRtaOct = -1;
 
   // 冻结回放分 tick 泵送，避免长 UI 卡顿

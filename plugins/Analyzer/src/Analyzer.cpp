@@ -233,10 +233,10 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     constexpr float kCol2X = kCol1X + kBtnW + kBtnGap;
     constexpr float kPanelR = kCol2X + kBtnW;
 
-    // 顶行按钮
+    // 顶行按钮（四周间距统一 6px：下距频谱画区 6，与按钮横向间距一致）
     constexpr float kTopBtnW = 62.f;
     constexpr float kTopBtnH = 26.f;
-    constexpr float kTopBtnY = 22.f;
+    constexpr float kTopBtnY = 26.f;
     constexpr float kTopBtnGap = 6.f;
 
     // 声道模式（PWR / L/R / SUM）
@@ -346,15 +346,15 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
 
     // 下半区布局：频谱下新增一排示波器按钮（同频谱顶行风格），
     // 下方左侧立体声像（Stereo Field），右侧时域示波器（Oscilloscope）
-    constexpr float kBotBtnY = 336.f;  // 频谱下沿 328 + 8
+    constexpr float kBotBtnY = 334.f;  // 频谱下沿 328 + 6（四周间距统一 6px）
     constexpr float kBotBtnH = 26.f;
     constexpr float kBotBtnGap = 6.f;
-    constexpr float kBottomTop = kBotBtnY + kBotBtnH + 10.f; // 372
-    constexpr float kBottomB = kBottomTop + 268.f;           // 640：面板整体下移，原高度不变
+    constexpr float kBottomTop = kBotBtnY + kBotBtnH + 6.f; // 366：按钮下距示波器画区 6
+    constexpr float kBottomB = 640.f;                        // 面板底缘不变，卡片随上移略变高
     constexpr float kBottomMidX = 398.f;
 
-    // 示波器按钮移至示波器区域左上方（声相图上方暂留空）
-    float scopeBtnX = kBottomMidX + 2.f;
+    // 示波器按钮位于示波器区域左上方，左缘与示波器画区（滑块右侧）左缘对齐
+    float scopeBtnX = kBottomMidX + 2.f + OscilloscopeControl::kSliderW;
     auto scopeBtnRect = [&](float w) {
       const IRECT r(scopeBtnX, kBotBtnY, scopeBtnX + w, kBotBtnY + kBotBtnH);
       scopeBtnX += w + kBotBtnGap;
@@ -367,6 +367,7 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
       if (mOscilloscopeCtrl)
         mOscilloscopeCtrl->SetTrigSource(v);
     });
+    mScopeTrigBtn->SetFreeIndex(1); // 与示波器默认 SYNC 模式一致
     pGraphics->AttachControl(mScopeTrigBtn);
     bindTip(mScopeTrigBtn, orm::kTxtTipScopeTrig);
 
@@ -385,7 +386,8 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     pGraphics->AttachControl(mScopeChanBtn);
     bindTip(mScopeChanBtn, orm::kTxtTipScopeChan);
 
-    mScopeCtrl = new StereoFieldControl(IRECT(20.f, kBottomTop, kBottomMidX - 4.f, kBottomB));
+    // 声像图顶缘与示波器按钮排顶对齐 (kBotBtnY), 左缘与频谱区左缘 (20) 对齐
+    mScopeCtrl = new StereoFieldControl(IRECT(20.f, kBotBtnY, kBottomMidX - 4.f, kBottomB));
     pGraphics->AttachControl(mScopeCtrl, kCtrlTagScope);
 
     // 右缘 780（原 784）：与右栏按钮留出间隙，不再紧贴
@@ -400,6 +402,7 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
                                      },
                                      "", style, EDirection::Vertical);
     mScopeZoomSlider->SetHeaderVisible(false);
+    mScopeZoomSlider->SetTrackFar(true); // 轨道贴条右缘 = 画区左缘, 把手可压到画区上
     mScopeZoomSlider->SetValue(std::log2((double)OscilloscopeControl::kDefaultZoom) / 3.0);
     pGraphics->AttachControl(mScopeZoomSlider);
     bindTip(mScopeZoomSlider, orm::kTxtTipScopeZoom);
@@ -1040,6 +1043,7 @@ void ORMAnalyzer::OnIdle() {
     mFreezeWindowFFT = CurrentFFTWindow();
     mFreezeWindowVQT = CurrentVQTWindow();
     mFreezeLf = (int)std::lround(GetParam(kLfRes)->Value());
+    mFreezeGamma = CurrentVQTGamma();
     mFreezeRtaOct = CurrentRtaOctave();
   };
 
@@ -1158,11 +1162,13 @@ void ORMAnalyzer::OnIdle() {
       const int winFFT = CurrentFFTWindow();
       const int winVQT = CurrentVQTWindow();
       const int lfIdx = (int)std::lround(GetParam(kLfRes)->Value());
+      const int gammaIdx = CurrentVQTGamma();
       const int rtaOctIdx = CurrentRtaOctave();
+      // 各模式按实际生效的档位参数比对 (VQT 档位按钮是 GAMMA; kLfRes 为 PBT 专用)
       const bool cfgChanged =
           (mode == kModeFFT && (resIdx != mFreezeRes || winFFT != mFreezeWindowFFT)) ||
           (mode == kModeVQT &&
-           (lfIdx != mFreezeLf || winVQT != mFreezeWindowVQT)) ||
+           (gammaIdx != mFreezeGamma || winVQT != mFreezeWindowVQT)) ||
           (mode == kModePBT && lfIdx != mFreezeLf) ||
           (mode == kModeRTA && rtaOctIdx != mFreezeRtaOct);
       if (cfgChanged) {
@@ -1172,6 +1178,7 @@ void ORMAnalyzer::OnIdle() {
       mFreezeWindowFFT = winFFT;
       mFreezeWindowVQT = winVQT;
       mFreezeLf = lfIdx;
+      mFreezeGamma = gammaIdx;
       mFreezeRtaOct = rtaOctIdx;
     }
     PumpFreezeReplay();
@@ -1211,6 +1218,12 @@ void ORMAnalyzer::OnIdle() {
     if (std::fabs(mScopeTimeSlider->GetValue() - want) > 0.001)
       mScopeTimeSlider->SetValueFromDelegate(want, 0);
   }
+
+  // 内嵌滑块把手悬出条外、覆盖在画区上; 示波器每帧重绘背景会盖住把手, 滑块需同步重绘保持在顶层
+  if (mScopeZoomSlider)
+    mScopeZoomSlider->SetDirty(false);
+  if (mScopeTimeSlider)
+    mScopeTimeSlider->SetDirty(false);
 
   // 转发电平表数据
   {
@@ -1348,7 +1361,7 @@ void ORMAnalyzer::OnUIClose() {
   mSentChanMode = -1;
   mSentRtaOct = -1;
   mFreezeOn = false;
-  mFreezeRes = mFreezeWindowFFT = mFreezeWindowVQT = mFreezeLf = mFreezeRtaOct = -1;
+  mFreezeRes = mFreezeWindowFFT = mFreezeWindowVQT = mFreezeLf = mFreezeGamma = mFreezeRtaOct = -1;
   mReplayMode = -1;
 }
 
