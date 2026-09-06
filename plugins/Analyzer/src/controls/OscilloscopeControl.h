@@ -269,8 +269,16 @@ private:
   // 时间列 1-2-5 阶梯 (ms 滞后)
   static constexpr double kTimeCells[] = {0.1,  0.2,  0.5,   1.0,   2.0,   5.0,  10.0,
                                           20.0, 50.0, 100.0, 200.0, 500.0, 1000.0};
-  // 幅度阶梯: ±1.0 (0 dBFS) 起逐级减半 (-6 dB 步进)
-  static constexpr float kAmpLadder[] = {1.f, 0.5f, 0.25f, 0.125f, 0.0625f, 0.03125f, 0.015625f, 0.0078125f};
+  // 中间档: 每个主档 ×1.5 (50→75→100), 用于劈开过宽的色块档
+  static constexpr double kTimeCellsMid[] = {0.15, 0.3,  0.75, 1.5,   3.0,   7.5,   15.0,
+                                             30.0, 75.0, 150.0, 300.0, 750.0, 1500.0};
+  // 幅度阶梯: ±1.0 (0 dBFS) 起逐级减半 (-6 dB 步进), 升序存放 (与时间表一致)
+  static constexpr double kAmpLadder[] = {0.0078125, 0.015625, 0.03125, 0.0625, 0.125, 0.25, 0.5, 1.0};
+  // 中间档: 每档间隙的几何中点 (主档 ×√½, 即 +3 dB; -6→-9→-12), 升序
+  static constexpr double kAmpLadderMid[] = {0.00552427, 0.01104854, 0.02209709, 0.04419417,
+                                             0.08838835, 0.1767767,  0.35355339, 0.70710678};
+  static constexpr int kNumTimeCells = (int)(sizeof(kTimeCells) / sizeof(kTimeCells[0]));
+  static constexpr int kNumAmpSteps = (int)(sizeof(kAmpLadder) / sizeof(kAmpLadder[0]));
 
   int mTrigSource = kTrigRoll;
   int mChanMask = kChanBitM; // 默认显示 M
@@ -335,10 +343,14 @@ private:
     return std::clamp(raw, -1.0f, 1.0f);
   }
 
-  // 色块背景: 横 4 档 × 纵 3 档平色块。取值域对齐声像图色块的实际合成区间
+  // 色块背景: 横 5 块 × 纵每半边 5 带平色块。取值域对齐声像图色块的实际合成区间
   // (约 184-237: 其角向三档 230/215/195 与径向渐变 245→172 按 0.5·(角+径) 合成,
   //  极端端点从不成对出现) —— 直接沿用端点值会合成出 245 的格子, 比声像图
   //  浅得更浅、深得更深。
+  // 分界取加密阶梯 (每个主档间隙补一颗中间档: 时间 ×1.5 / 幅度 +3dB) 中量程内的
+  // 最高 4 颗 —— 原 1-2-5 阶梯在窗长/量程贴近上一档主刻度时会拼出 50-60% 的整块
+  // (如 200→500ms、zoom=1 时纵向两带各半); 加密后任一档不超过画面约 40%。
+  // 中间档只作色块分界, 数字标签仅最外一颗 (见 DrawAxis)。
   // 横向越靠右缘 (当前时刻) 越亮; 纵向越靠中轴越亮 (同声像图角向的方向),
   // 给中轴处的深色波形让出对比
   void DrawPlotBackground(IGraphics &g, const IRECT &plot) {
@@ -348,38 +360,39 @@ private:
     const float visMax = (plot.H() * 0.5f) / (halfH * zoom);
     const double winMs = mWindowSec * 1000.0;
 
-    // 纵向 3 档: 亮/中分界锚在最高一档阶梯线上, 与横向逻辑一致 ——
-    // 刻度线滑到画缘完全消失后, 分界才落到下一档, 不提前折叠
-    constexpr float kVCol[3] = {180.f, 205.f, 230.f}; // 外→内: 中心最亮, 衬托深色波形
-    float t1 = 0.0078125f;
-    for (float t : kAmpLadder) {
-      if (t < visMax * (1.f - 1e-4f)) {
-        t1 = t;
-        break;
-      }
-    }
-    const float zoneAmp[4] = {visMax, t1, 0.5f * t1, 0.f};
+    // 纵向带界: 加密幅度阶梯里低于量程顶的最高 4 颗 + 中轴
+    constexpr float kVCol[5] = {176.f, 190.f, 204.f, 218.f, 232.f}; // 外→内: 中心最亮, 衬托深色波形
+    double ampB[4];
+    bool ampMaj[4];
+    LargestLadder(visMax, kAmpLadder, kNumAmpSteps, kAmpLadderMid, kNumAmpSteps, 4, ampB, ampMaj);
+    float bnds[6];
+    int nB = 0;
+    bnds[nB++] = visMax;
+    for (int i = 0; i < 4 && ampB[i] > 0.0; ++i)
+      bnds[nB++] = (float)ampB[i];
+    bnds[nB++] = 0.f;
 
-    // 横向列界: 窗缘 + 最大三档时间刻度 (右→左; 刻度降序返回, 须自最小档排起)
-    double ticks[3];
-    LargestTimeTicks(winMs, 3, ticks);
-    float xs[5];
+    // 横向列界: 窗缘 + 加密时间阶梯里窗内最大 4 颗 (右→左; 刻度降序返回, 须自最小档排起)
+    double tickB[4];
+    bool tickMaj[4];
+    LargestLadder(winMs, kTimeCells, kNumTimeCells, kTimeCellsMid, kNumTimeCells, 4, tickB, tickMaj);
+    float xs[6];
     int nCols = 0;
     xs[nCols++] = plot.R;
-    for (int i = 2; i >= 0; --i) {
-      if (ticks[i] < 0)
+    for (int i = 3; i >= 0; --i) {
+      if (tickB[i] < 0)
         continue;
-      const float x = plot.R - (float)(ticks[i] / winMs) * plot.W();
+      const float x = plot.R - (float)(tickB[i] / winMs) * plot.W();
       if (x - plot.L < 1.5f)
         continue;
       xs[nCols++] = x;
     }
     xs[nCols++] = plot.L;
-    constexpr float kHCol[4] = {238.f, 224.f, 210.f, 196.f}; // 右→左 (越新越亮)
+    constexpr float kHCol[5] = {240.f, 228.f, 216.f, 204.f, 192.f}; // 右→左 (越新越亮)
 
-    for (int r = 0; r < 3; ++r) {
-      const float yT0 = cy - zoneAmp[r] * zoom * halfH, yT1 = cy - zoneAmp[r + 1] * zoom * halfH;
-      const float yB0 = cy + zoneAmp[r + 1] * zoom * halfH, yB1 = cy + zoneAmp[r] * zoom * halfH;
+    for (int r = 0; r + 1 < nB; ++r) {
+      const float yT0 = cy - bnds[r] * zoom * halfH, yT1 = cy - bnds[r + 1] * zoom * halfH;
+      const float yB0 = cy + bnds[r + 1] * zoom * halfH, yB1 = cy + bnds[r] * zoom * halfH;
       for (int c = 0; c + 1 < nCols; ++c) {
         const IColor cell = WarmGray((int)std::lround(0.5f * (kHCol[c] + kVCol[r])));
         g.FillRect(cell, IRECT(xs[c + 1], yT0, xs[c], yT1));
@@ -388,20 +401,32 @@ private:
     }
   }
 
-  // 窗内最大 n 档时间刻度 (降序); 不足 n 档时末位以 -1 填充
-  void LargestTimeTicks(double winMs, int n, double *out) const {
-    constexpr int nCells = (int)(sizeof(kTimeCells) / sizeof(kTimeCells[0]));
-    int found = 0;
-    for (int i = nCells - 1; i >= 0 && found < n; --i) {
-      if (kTimeCells[i] >= winMs * (1.0 - 1e-4))
-        continue;
-      out[found++] = kTimeCells[i];
+  // 合并主档/中间档两张升序阶梯表, 取量程内最大 n 档 (降序); 不足 n 档时末位以 -1 填充。
+  // 两张表都必须升序 (首元素最小) —— 时间/幅度四表已统一为升序存放。
+  // major 标记主档 (1-2-5 / 逐级减半); 中间档只作色块分界, 数字标签仅最外一颗
+  static void LargestLadder(double scale, const double *major, int nMajor, const double *mid, int nMid,
+                            int n, double *outV, bool *outMaj) {
+    int iM = nMajor - 1, iI = nMid - 1, found = 0;
+    while (found < n && (iM >= 0 || iI >= 0)) {
+      const bool takeMajor = iM >= 0 && (iI < 0 || major[iM] > mid[iI]);
+      const double v = takeMajor ? major[iM] : mid[iI];
+      if (takeMajor)
+        --iM;
+      else
+        --iI;
+      if (v < scale * (1.0 - 1e-4)) {
+        outV[found] = v;
+        outMaj[found] = takeMajor;
+        ++found;
+      }
     }
-    for (int i = found; i < n; ++i)
-      out[i] = -1.0;
+    for (int i = found; i < n; ++i) {
+      outV[i] = -1.0;
+      outMaj[i] = false;
+    }
   }
 
-  // 语义线 (中轴 / 0 dBFS 警戒 / 右缘当前时刻) + 贴边刻度: 幅度右上, 时间顶缘 (同频谱)
+  // 中轴语义线 + 贴边刻度: 幅度右缘, 时间顶缘 (同频谱)
   void DrawAxis(IGraphics &g, const IRECT &plot, const IRECT &hovTime, const IRECT &hovAmp,
                 const IRECT &detR) {
     const float zoom = GetCurrentZoom();
@@ -412,23 +437,25 @@ private:
     // 零电平中轴线
     g.DrawLine(COL_500(), plot.L, plot.MH(), plot.R, plot.MH(), nullptr, 1.f);
 
-    // 幅度标签: 上半幅阶梯值 (0/-6/-12 dBFS), 右缘线上方; 与下一档间距 ≥18px 才标;
+    // 幅度标签: 上半幅主档阶梯值 (0/-6/-12 dBFS), 右缘线上方; 与下一档间距 ≥18px 才标;
     // 避让按实测文本矩形 —— 固定 52px 的框远宽于实际文字, 按框判交会让时间
-    // 标签在真正重叠前就提前消失; 收集实测矩形供时间标签避让
+    // 标签在真正重叠前就提前消失; 收集实测矩形供时间标签避让。
+    // 中间档仅在它是量程内最外一颗分界时补标 (量程落在 -6~-9 之间的 "-9" 等)
     const IText ampT(14, COL_700(), kFontRegular, EAlign::Far, EVAlign::Bottom);
     IRECT ampRs[6];
     int nAmpR = 0;
-    for (float t : kAmpLadder) {
+    for (int i = kNumAmpSteps - 1; i >= 0; --i) {
+      const double t = kAmpLadder[i];
       if (t >= visMax * (1.f - 1e-4f))
         continue;
-      if ((t - 0.5f * t) * zoom * halfH < 18.f)
+      if ((t - 0.5 * t) * zoom * halfH < 18.f)
         break;
-      const float y = LevelToY(plot, t);
+      const float y = LevelToY(plot, (float)t);
       const IRECT labelR = (y - kLabelH - 1.f >= plot.T)
                                ? IRECT(plot.R - 52.f, y - kLabelH - 1.f, plot.R - kTickRight, y - 1.f)
                                : IRECT(plot.R - 52.f, y + 1.f, plot.R - kTickRight, y + 1.f + kLabelH);
       char buf[8];
-      std::snprintf(buf, sizeof(buf), "%d", (int)std::lround(20.f * std::log10(t)));
+      std::snprintf(buf, sizeof(buf), "%d", (int)std::lround(20.0 * std::log10(t)));
       IRECT fitR = labelR;
       g.MeasureText(ampT, buf, fitR);
       if ((!hovAmp.Empty() && fitR.Intersects(hovAmp)) ||
@@ -438,19 +465,56 @@ private:
       ampRs[nAmpR++] = fitR;
     }
 
-    // 时间标签: 顶缘线右侧, 窗内最大两档; 避让 hover 读数、SYNC 检测读数与幅度标签
+    double ampB[4];
+    bool ampMaj[4];
+    LargestLadder(visMax, kAmpLadder, kNumAmpSteps, kAmpLadderMid, kNumAmpSteps, 4, ampB, ampMaj);
+    if (!ampMaj[0] && ampB[0] > 0.0) {
+      double m1 = 0.0;
+      for (int i = kNumAmpSteps - 1; i >= 0; --i) {
+        if (kAmpLadder[i] < visMax * (1.f - 1e-4f)) {
+          m1 = kAmpLadder[i];
+          break;
+        }
+      }
+      if ((ampB[0] - m1) * zoom * halfH >= 18.f) {
+        const float y = LevelToY(plot, (float)ampB[0]);
+        const IRECT labelR = (y - kLabelH - 1.f >= plot.T)
+                                 ? IRECT(plot.R - 52.f, y - kLabelH - 1.f, plot.R - kTickRight, y - 1.f)
+                                 : IRECT(plot.R - 52.f, y + 1.f, plot.R - kTickRight, y + 1.f + kLabelH);
+        char buf[8];
+        std::snprintf(buf, sizeof(buf), "%d", (int)std::lround(20.0 * std::log10(ampB[0])));
+        IRECT fitR = labelR;
+        g.MeasureText(ampT, buf, fitR);
+        bool blocked = (!hovAmp.Empty() && fitR.Intersects(hovAmp)) ||
+                       (!hovTime.Empty() && fitR.Intersects(hovTime));
+        for (int ai = 0; ai < nAmpR && !blocked; ++ai)
+          blocked = fitR.Intersects(ampRs[ai]);
+        if (!blocked && nAmpR < 6) {
+          g.DrawText(ampT, buf, labelR);
+          ampRs[nAmpR++] = fitR;
+        }
+      }
+    }
+
+    // 时间标签: 顶缘线右侧, 加密阶梯窗内前两颗 —— 主档必标, 中间档仅当最外一颗时标
+    // (窗长在 75~100ms 之间时标 "-75ms"; 超过 100ms 后回落为 "-100ms"/"-50ms");
+    // 避让 hover 读数、SYNC 检测读数与幅度标签
     const IText timeT(14, COL_700(), kFontRegular, EAlign::Near, EVAlign::Top);
-    double ticks[2];
-    LargestTimeTicks(winMs, 2, ticks);
-    for (double c : ticks) {
-      if (c < 0)
+    double tickB[4];
+    bool tickMaj[4];
+    LargestLadder(winMs, kTimeCells, kNumTimeCells, kTimeCellsMid, kNumTimeCells, 4, tickB, tickMaj);
+    int nTimeDrawn = 0;
+    for (int i = 0; i < 4 && nTimeDrawn < 2; ++i) {
+      if (tickB[i] < 0)
+        break;
+      if (!tickMaj[i] && i > 0)
         continue;
-      const float x = plot.R - (float)(c / winMs) * plot.W();
+      const float x = plot.R - (float)(tickB[i] / winMs) * plot.W();
       char buf[12];
-      if (c < 1000.0)
-        std::snprintf(buf, sizeof(buf), "-%.0fms", c);
+      if (tickB[i] < 1000.0)
+        std::snprintf(buf, sizeof(buf), "-%gms", tickB[i]);
       else
-        std::snprintf(buf, sizeof(buf), "-%.1fs", c * 0.001);
+        std::snprintf(buf, sizeof(buf), "-%.1fs", tickB[i] * 0.001);
       const IRECT labelR(x + 5.f, plot.T + 2.f, plot.R, plot.T + 2.f + kLabelH);
       IRECT fit = labelR;
       g.MeasureText(timeT, buf, fit);
@@ -461,6 +525,7 @@ private:
       if (blocked)
         continue;
       g.DrawText(timeT, buf, labelR);
+      ++nTimeDrawn;
     }
   }
 
