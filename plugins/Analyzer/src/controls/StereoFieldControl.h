@@ -82,7 +82,7 @@ public:
     DrawGridLayer(g, mRECT);
     DrawTicks(g, mRECT, skipRect);
     DrawVectors(g, mRECT);
-    DrawGauges(g, mRECT);
+    DrawBalanceBar(g, mRECT);
     if (hov)
       DrawHover(g, mRECT, labelBox);
   }
@@ -102,11 +102,11 @@ private:
   static constexpr float kImgWinFrames = 8.f;
   static constexpr double kFftCal = 0.375 * (double)kFftN * (double)kFftN; // 满幅正弦 = 0 dB
 
-  static constexpr float kBaseGap = 76.f;
+  static constexpr float kBaseGap = 60.f;    // 基线以下条带高度
   static constexpr float kRimLabelH = 19.f;
-  static constexpr float kGaugeRowH = 48.f;
-  static constexpr float kGaugeW = 118.f;
-  static constexpr float kGaugeGap = 4.f;
+  static constexpr float kBarGap = 5.f;      // 复合条与基线的间距
+  static constexpr float kBarH = 8.f;        // 复合条轨道厚度
+  static constexpr float kBalRangeDb = 24.f; // 平衡量程 ±24 dB
   static constexpr float kCxN = 0.28f;
 
   // 16 个对数频带的分 bin 表 (FFT 1024 @48k, ~0.56 倍频程/带)
@@ -158,7 +158,7 @@ private:
       rcB[b] = rcInB[b] + rcAntiB[b];
     }
 
-    // 相关性/宽度/平衡: kCorrWin hop 滑窗 + 150ms 显示平滑
+    // 相关性/平衡: kCorrWin hop 滑窗 + 150ms 显示平滑
     double lr = 0.0, l2 = 0.0, r2 = 0.0;
     for (int i = 0; i < kFftN; ++i) {
       const double l = inL[i], r = inR[i];
@@ -176,13 +176,9 @@ private:
     if (winE > 1e-10) {
       const float corr =
           (float)std::clamp(mSumLR / std::sqrt(std::max(mSumL2 * mSumR2, 1e-24)), -1.0, 1.0);
-      const double s2 = std::max(0.5 * (winE - 2.0 * mSumLR), 1e-12);
-      const double m2 = std::max(0.5 * (winE + 2.0 * mSumLR), 1e-12);
-      const float widthDb = std::min(orm::FastPwrToDb((float)(s2 / m2), -120.f), 24.f);
       const float balDb = orm::FastPwrToDb((float)(mSumR2 / std::max(mSumL2, 1e-12)), -120.f);
       const float sm = (float)(1.0 - std::exp(-hopSec / 0.15));
       mCorrDisp += sm * (corr - mCorrDisp);
-      mWidthDisp += sm * (widthDb - mWidthDisp);
       mBalDisp += sm * (balDb - mBalDisp);
       mCorrValid = true;
     } else {
@@ -261,7 +257,7 @@ private:
     mCorrHead = 0;
     mSumLR = mSumL2 = mSumR2 = 0.0;
     mCorrValid = false;
-    mCorrDisp = mWidthDisp = mBalDisp = 0.f;
+    mCorrDisp = mBalDisp = 0.f;
     SetDirty(false);
   }
 
@@ -445,94 +441,82 @@ private:
     g.PathFill(fill);
   }
 
-  // 相关性 / 宽度 / 平衡
-  void DrawGauges(IGraphics &g, const IRECT &cv) {
-    const float y0 = cv.B - kGaugeRowH;
-    const float trackT = y0 + 22.f, trackB = trackT + 6.f;
-    const IText valT(16, COL_900(), kFontSemiBold, EAlign::Near, EVAlign::Middle);
-    const IText dimT(16, COL_500(), kFontSemiBold, EAlign::Near, EVAlign::Middle);
-    const IText tickT(14, COL_700(), kFontRegular, EAlign::Near, EVAlign::Top);
+  // 相关性状态色
+  static IColor CorrColor(float c) {
+    return (c >= 0.3f)   ? SemColor(MeterGreen())
+           : (c >= 0.f)  ? SemColor(MeterYellow())
+                         : SemColor(MeterRed());
+  }
+
+  // 复合条: 相关性单声道窗口 + ±24dB 平衡指针, 紧贴基线, 宽度 = 半圆直径
+  void DrawBalanceBar(IGraphics &g, const IRECT &cv) {
+    float cx, cy, rMax;
+    FanGeom(cv, cx, cy, rMax);
+    const float half = std::min(rMax, std::min(cx - cv.L - 2.f, cv.R - cx - 2.f));
+    const float x0 = cx - half, x1 = cx + half;
+    const float trackT = cy + kBarGap, trackB = trackT + kBarH;
+    const float tickT = trackB + 4.f, tickB = tickT + 16.f;
+    const float roT = tickB + 2.f, roB = cv.B - 2.f;
     IColor cL, cR, cM;
     GetChannelColors(cL, cR, cM);
-    char buf[24];
 
-    const float gaugeTotalW = 3.f * kGaugeW + 2.f * kGaugeGap;
-    const float gaugeStartX = (cv.W() <= 500.f) ? cv.L + std::max(0.f, (cv.W() - gaugeTotalW) * 0.5f) : cv.L;
+    // 轨道 + ±6dB 小刻度
+    g.FillRect(COL_300(), IRECT(x0, trackT, x1, trackB));
+    for (int d = -18; d <= 18; d += 6) {
+      if (d == 0)
+        continue;
+      const float tx = cx + (d / kBalRangeDb) * half;
+      g.FillRect(COL_500(), IRECT(tx - 0.5f, trackB + 1.f, tx + 0.5f, trackB + 4.f));
+    }
 
-    for (int gi = 0; gi < 3; ++gi) {
-      const float x0 = gaugeStartX + gi * (kGaugeW + kGaugeGap);
-      const float x1 = x0 + kGaugeW;
-      const IRECT cell(x0, y0, x1, cv.B);
-      const IRECT track(x0, trackT, x1, trackB);
-      g.FillRect(COL_300(), track);
+    if (mCorrValid) {
+      const float c = std::clamp(mCorrDisp, -1.f, 1.f);
+      const IColor cc = CorrColor(c);
 
-      if (gi == 0) {
-        // 相关性
-        if (mCorrValid)
-          std::snprintf(buf, sizeof(buf), "%+.2f", mCorrDisp);
-        else
-          std::snprintf(buf, sizeof(buf), "%s", "—");
-        g.DrawText(mCorrValid ? valT : dimT, buf, cell);
-        if (mCorrValid) {
-          const IColor cc = (mCorrDisp >= 0.3f)   ? SemColor(MeterGreen())
-                            : (mCorrDisp >= 0.f)  ? SemColor(MeterYellow())
-                                                  : SemColor(MeterRed());
-          const float mid = x0 + kGaugeW * 0.5f;
-          const float vx = x0 + (std::clamp(mCorrDisp, -1.f, 1.f) + 1.f) * 0.5f * kGaugeW;
-          g.FillRect(cc, IRECT(std::min(mid, vx), trackT, std::max(mid, vx), trackB));
-          g.FillRect(cc, IRECT(vx - 1.f, trackT, vx + 1.f, trackB));
-        }
-        const IText lT(14, COL_700(), kFontRegular, EAlign::Near, EVAlign::Top);
-        const IText cT(14, COL_700(), kFontRegular, EAlign::Center, EVAlign::Top);
-        const IText rT(14, COL_700(), kFontRegular, EAlign::Far, EVAlign::Top);
-        g.DrawText(lT, "-1", IRECT(x0, y0 + 30.f, x0 + 30.f, cv.B - 2.f));
-        g.DrawText(cT, "0", IRECT(x0 + kGaugeW * 0.5f - 16.f, y0 + 30.f, x0 + kGaugeW * 0.5f + 16.f, cv.B - 2.f));
-        g.DrawText(rT, "+1", IRECT(x1 - 30.f, y0 + 30.f, x1, cv.B - 2.f));
-      } else if (gi == 1) {
-        // 宽度
-        if (mCorrValid) {
-          if (mWidthDisp <= -35.f)
-            std::snprintf(buf, sizeof(buf), "%s", "MONO");
-          else
-            std::snprintf(buf, sizeof(buf), "%+.1f dB", mWidthDisp);
-        } else
-          std::snprintf(buf, sizeof(buf), "%s", "—");
-        g.DrawText(mCorrValid ? valT : dimT, buf, cell);
-        if (mCorrValid) {
-          const float frac = std::clamp(mWidthDisp, -24.f, 0.f) / -24.f;
-          const float vx = x1 - frac * kGaugeW;
-          g.FillRect(COL_900(), IRECT(vx - 1.f, trackT, vx + 1.f, trackB));
-        }
-        g.DrawText(tickT, "0", IRECT(x1 - 30.f, y0 + 30.f, x1, cv.B - 2.f));
-        g.DrawText(IText(14, COL_700(), kFontRegular, EAlign::Center, EVAlign::Top), "-12",
-                   IRECT(x0 + kGaugeW * 0.5f - 20.f, y0 + 30.f, x0 + kGaugeW * 0.5f + 20.f, cv.B - 2.f));
-        g.DrawText(IText(14, COL_700(), kFontRegular, EAlign::Near, EVAlign::Top), "-24",
-                   IRECT(x0, y0 + 30.f, x0 + 34.f, cv.B - 2.f));
-      } else {
-        // 平衡
-        if (mCorrValid) {
-          if (std::fabs(mBalDisp) < 0.1f)
-            std::snprintf(buf, sizeof(buf), "%s", "C");
-          else
-            std::snprintf(buf, sizeof(buf), "%s %.1f dB", (mBalDisp > 0.f) ? "R" : "L",
-                          std::fabs(mBalDisp));
-        } else
-          std::snprintf(buf, sizeof(buf), "%s", "—");
-        g.DrawText(mCorrValid ? valT : dimT, buf, cell);
-        if (mCorrValid) {
-          const float mid = x0 + kGaugeW * 0.5f;
-          const float vx = mid + std::clamp(mBalDisp, -12.f, 12.f) / 12.f * (kGaugeW * 0.5f);
-          const IColor nc = (std::fabs(mBalDisp) < 0.1f) ? COL_900() : (mBalDisp > 0.f ? cR : cL);
-          g.FillRect(nc, IRECT(std::min(mid, vx), trackT, std::max(mid, vx), trackB));
-          g.FillRect(nc, IRECT(vx - 1.f, trackT, vx + 1.f, trackB));
-        }
-        g.DrawText(IText(14, IColor(255, cL.R, cL.G, cL.B), kFontRegular, EAlign::Near, EVAlign::Top), "L",
-                   IRECT(x0, y0 + 30.f, x0 + 20.f, cv.B - 2.f));
-        g.DrawText(IText(14, COL_700(), kFontRegular, EAlign::Center, EVAlign::Top), "C",
-                   IRECT(x0 + kGaugeW * 0.5f - 12.f, y0 + 30.f, x0 + kGaugeW * 0.5f + 12.f, cv.B - 2.f));
-        g.DrawText(IText(14, IColor(255, cR.R, cR.G, cR.B), kFontRegular, EAlign::Far, EVAlign::Top), "R",
-                   IRECT(x1 - 20.f, y0 + 30.f, x1, cv.B - 2.f));
+      // 单声道窗口: 半宽 = |corr|·半条宽, 边缘为一对加宽刻度, 负相关转红
+      const float halfW = 0.5f * std::fabs(c) * (x1 - x0);
+      g.FillRect(IColor(150, cc.R, cc.G, cc.B), IRECT(cx - halfW, trackT, cx + halfW, trackB));
+      g.FillRect(cc, IRECT(cx - halfW - 1.f, trackT - 3.f, cx - halfW + 1.f, trackB + 3.f));
+      g.FillRect(cc, IRECT(cx + halfW - 1.f, trackT - 3.f, cx + halfW + 1.f, trackB + 3.f));
+
+      // 平衡指针: 通道色填充 + 深色针头
+      const float bal = std::clamp(mBalDisp, -kBalRangeDb, kBalRangeDb);
+      const float nx = cx + (bal / kBalRangeDb) * half;
+      if (std::fabs(bal) > 0.05f) {
+        const IColor nc = (mBalDisp > 0.f) ? cR : cL;
+        g.FillRect(IColor(120, nc.R, nc.G, nc.B),
+                   IRECT(std::min(cx, nx), trackT, std::max(cx, nx), trackB));
       }
+      g.FillRect(COL_900(), IRECT(nx - 1.f, trackT - 4.f, nx + 1.f, trackB + 4.f));
+    }
+
+    // 刻度标签: 两端 L/R (通道色), 中心 0
+    const IText lT(14, IColor(255, cL.R, cL.G, cL.B), kFontRegular, EAlign::Near, EVAlign::Top);
+    const IText rT(14, IColor(255, cR.R, cR.G, cR.B), kFontRegular, EAlign::Far, EVAlign::Top);
+    const IText cT(14, COL_700(), kFontRegular, EAlign::Center, EVAlign::Top);
+    g.DrawText(lT, "L", IRECT(x0, tickT, x0 + 20.f, tickB));
+    g.DrawText(cT, "0", IRECT(cx - 12.f, tickT, cx + 12.f, tickB));
+    g.DrawText(rT, "R", IRECT(x1 - 20.f, tickT, x1, tickB));
+
+    // 两角读数: 左 CORR (状态色), 右 BAL
+    char buf[24];
+    if (mCorrValid) {
+      std::snprintf(buf, sizeof(buf), "CORR  %+.2f", mCorrDisp);
+      g.DrawText(IText(16, CorrColor(std::clamp(mCorrDisp, -1.f, 1.f)), kFontSemiBold, EAlign::Near,
+                       EVAlign::Middle),
+                 buf, IRECT(x0, roT, x0 + 110.f, roB));
+      if (std::fabs(mBalDisp) < 0.1f)
+        std::snprintf(buf, sizeof(buf), "BAL  C");
+      else
+        std::snprintf(buf, sizeof(buf), "BAL  %s %.1f dB", (mBalDisp > 0.f) ? "R" : "L",
+                      std::fabs(mBalDisp));
+      g.DrawText(IText(16, COL_900(), kFontSemiBold, EAlign::Far, EVAlign::Middle), buf,
+                 IRECT(x1 - 130.f, roT, x1, roB));
+    } else {
+      const IText dimT(16, COL_500(), kFontSemiBold, EAlign::Near, EVAlign::Middle);
+      const IText dimTF(16, COL_500(), kFontSemiBold, EAlign::Far, EVAlign::Middle);
+      g.DrawText(dimT, "CORR  —", IRECT(x0, roT, x0 + 110.f, roB));
+      g.DrawText(dimTF, "BAL  —", IRECT(x1 - 130.f, roT, x1, roB));
     }
   }
 
@@ -643,7 +627,7 @@ private:
   int mCorrHead = 0;
   double mSumLR = 0.0, mSumL2 = 0.0, mSumR2 = 0.0;
   bool mCorrValid = false;
-  float mCorrDisp = 0.f, mWidthDisp = 0.f, mBalDisp = 0.f;
+  float mCorrDisp = 0.f, mBalDisp = 0.f;
 
   double mSampleRate = 48000.0;
   float mReleaseSec = 0.2f;
