@@ -20,8 +20,8 @@ class OscilloscopeControl : public IControl {
 public:
   enum ETriggerSource {
     kTrigRoll = 0,      // ROLL 实时连续窗口：无触发，右边缘为最新采样点
-    kTrigAutocorr,      // Autocorrelation 自相关周期锁定
-    kTrigFrequency,     // FREQ 自由扫描：笔随样本前进，写满时间窗回卷覆盖旧迹线（老式示波器）
+    kTrigSync,          // SYNC 同步锁相：自相关基频周期锁定
+    kTrigSweep,         // SWEEP 自由扫描：笔随样本前进，写满时间窗回卷覆盖旧迹线（老式示波器）
     kNumTrigSources
   };
 
@@ -31,6 +31,10 @@ public:
     kChanBitR = 2,
     kChanBitM = 4,
   };
+
+  // 默认显示值：时间窗 100 ms (0.100s)，幅度 2x 缩放（顶部刻度 +0.5）
+  static constexpr double kDefaultWindowSec = 0.100;
+  static constexpr float kDefaultZoom = 2.0f;
 
   explicit OscilloscopeControl(const IRECT &bounds) : IControl(bounds) {
     mDispL.reserve(8192);
@@ -112,8 +116,8 @@ public:
       triggerPos = headPos;
       mTrigStateActive = true;
 
-    } else if (mTrigSource == kTrigAutocorr) {
-      // 2. AUTOCORRELATION 模式：
+    } else if (mTrigSource == kTrigSync) {
+      // 2. SYNC 模式（自相关基波周期同步锁相）：
       ComputeAutocorr(pRing[trigChan], ringLen, headPos);
 
       if (mDetectedLag > 8) {
@@ -134,7 +138,7 @@ public:
       }
 
     } else {
-      // 3. FREQ 模式：自由扫描（sMexoscope 式）
+      // 3. SWEEP 模式：自由扫描（sMexoscope 式）
       // 笔随音频样本连续前进，逐样本写入显示缓冲；写满一个时间窗后回卷左缘，
       // 继续覆盖旧迹线（右侧未覆盖部分保持可见），扫描一轮时间 = 窗口时长本身。
       // 时间窗变化时清空缓冲、笔归零，重新扫满一屏。
@@ -203,8 +207,8 @@ public:
   void OnMouseDblClick(float x, float y, const IMouseMod &mod) override {
     const IRECT plot = GetPlotRect();
     if (plot.Contains(x, y)) {
-      // 官方交互：”Double-click to reset zoom”
-      mZoomFactor = 1.f;  // 复位缩放 1x（Analyzer OnIdle 会把滑块同步回来）
+      // 双击复位至默认缩放 2x (+0.5)
+      mZoomFactor = kDefaultZoom;
       SetDirty(false);
     }
   }
@@ -235,7 +239,7 @@ public:
     DrawGrid(g, plot);
 
     DrawWaveforms(g, plot);
-    DrawStatusBadges(g, plot);
+    DrawStatusReadout(g, plot);
 
     if (mHoverActive && plot.Contains(mHoverX, mHoverY)) {
       DrawCursorInspector(g, plot);
@@ -253,8 +257,8 @@ private:
 
   int mTrigSource = kTrigRoll;
   int mChanMask = kChanBitM; // 默认显示 M
-  double mWindowSec = 0.010;
-  float mZoomFactor = 1.f;
+  double mWindowSec = kDefaultWindowSec;
+  float mZoomFactor = kDefaultZoom;
   int mSweepPos = 0; // FREQ 扫描笔位置（显示缓冲槽位）
 
   double mSampleRate = 48000.0;
@@ -463,42 +467,19 @@ private:
       DrawWaveformLine(g, plot, mDispM, IColor(alpha, cM.R, cM.G, cM.B));
   }
 
-  void DrawStatusBadges(IGraphics &g, const IRECT &plot) {
-    const float tY = plot.T + 4.f;
+  void DrawStatusReadout(IGraphics &g, const IRECT &plot) {
+    if (mTrigSource != kTrigSync)
+      return;
 
-    // 左上角状态徽标
-    IColor stateCol;
-    const char *stateStr = "";
-    if (mTrigSource == kTrigRoll) {
-      stateCol = SemColor(MeterGreen());
-      stateStr = "ROLL";
-    } else if (mTrigSource == kTrigAutocorr) {
-      stateCol = (mDetectedLag > 0) ? SemColor(MeterGreen()) : COL_500();
-      stateStr = (mDetectedLag > 0) ? "LOCKED" : "NOISE";
-    } else {
-      stateCol = SemColor(MeterYellow());
-      stateStr = "FREQ";
-    }
-
-    const IRECT stateBadge(plot.L + 4.f, tY, plot.L + 46.f, tY + 14.f);
-    g.FillRect(stateCol, stateBadge);
-    const IText sT(10, ThemeMode() ? IColor(255, 20, 20, 20) : IColor(255, 255, 255, 255),
-                   kFontBold, EAlign::Center, EVAlign::Middle);
-    g.DrawText(sT, stateStr, stateBadge);
-
-    // 模式专有读数（徽标右侧；ROLL 与 FREQ 自由扫描无读数）
     char infoBuf[48] = "";
-    if (mTrigSource == kTrigAutocorr) {
-      if (mDetectedFreq > 0.f)
-        std::snprintf(infoBuf, sizeof(infoBuf), "Det: %.1f Hz (%.2f ms)", mDetectedFreq, mDetectedPeriodMs);
-      else
-        std::snprintf(infoBuf, sizeof(infoBuf), "%s", "Det: —");
-    }
+    if (mDetectedFreq > 0.f)
+      std::snprintf(infoBuf, sizeof(infoBuf), "Det: %.1f Hz (%.2f ms)", mDetectedFreq, mDetectedPeriodMs);
+    else
+      std::snprintf(infoBuf, sizeof(infoBuf), "%s", "Det: —");
 
-    if (infoBuf[0]) {
-      const IText infoT(11, COL_700(), kFontRegular, EAlign::Near, EVAlign::Middle);
-      g.DrawText(infoT, infoBuf, IRECT(plot.L + 52.f, tY, plot.L + 190.f, tY + 14.f));
-    }
+    // 右下角读数（与底部时间刻度基线完全对齐）
+    const IText infoT(10, COL_700(), kFontRegular, EAlign::Far, EVAlign::Bottom);
+    g.DrawText(infoT, infoBuf, IRECT(plot.R - 190.f, plot.B - 15.f, plot.R - 6.f, plot.B - 2.f));
   }
 
   void DrawCursorInspector(IGraphics &g, const IRECT &plot) {
@@ -512,7 +493,7 @@ private:
 
     char insBuf[80];
     const float dtMs = dtSec * 1000.f;
-    if (mTrigSource == kTrigAutocorr && mDetectedFreq > 0.f) {
+    if (mTrigSource == kTrigSync && mDetectedFreq > 0.f) {
       char note[12] = "";
       FreqToNoteName(mDetectedFreq, note, sizeof(note));
       std::snprintf(insBuf, sizeof(insBuf), "t: %+.1f ms  V: %+.2f | Det: %.1f Hz (%s)",

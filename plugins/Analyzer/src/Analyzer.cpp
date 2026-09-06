@@ -353,15 +353,16 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     constexpr float kBottomB = kBottomTop + 268.f;           // 640：面板整体下移，原高度不变
     constexpr float kBottomMidX = 398.f;
 
-    float scopeBtnX = 20.f;
+    // 示波器按钮移至示波器区域左上方（声相图上方暂留空）
+    float scopeBtnX = kBottomMidX + 2.f;
     auto scopeBtnRect = [&](float w) {
       const IRECT r(scopeBtnX, kBotBtnY, scopeBtnX + w, kBotBtnY + kBotBtnH);
       scopeBtnX += w + kBotBtnGap;
       return r;
     };
 
-    // 示波器模式（ROLL / AUTOCORR / FREQ）
-    mScopeTrigBtn = new FlatCycleButton(scopeBtnRect(104.f), kNoParameter, {"ROLL", "AUTOCORR", "FREQ"}, btnStyle);
+    // 示波器模式（ROLL / SYNC / SWEEP）
+    mScopeTrigBtn = new FlatCycleButton(scopeBtnRect(88.f), kNoParameter, {"ROLL", "SYNC", "SWEEP"}, btnStyle);
     mScopeTrigBtn->SetCycleHandler([this](int v) {
       if (mOscilloscopeCtrl)
         mOscilloscopeCtrl->SetTrigSource(v);
@@ -399,6 +400,7 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
                                      },
                                      "", style, EDirection::Vertical);
     mScopeZoomSlider->SetHeaderVisible(false);
+    mScopeZoomSlider->SetValue(std::log2((double)OscilloscopeControl::kDefaultZoom) / 3.0);
     pGraphics->AttachControl(mScopeZoomSlider);
     bindTip(mScopeZoomSlider, orm::kTxtTipScopeZoom);
 
@@ -409,6 +411,7 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
                                      },
                                      "", style, EDirection::Horizontal);
     mScopeTimeSlider->SetHeaderVisible(false);
+    mScopeTimeSlider->SetValue(std::log(OscilloscopeControl::kDefaultWindowSec / 0.010) / std::log(200.0));
     pGraphics->AttachControl(mScopeTimeSlider);
     bindTip(mScopeTimeSlider, orm::kTxtTipScopeTime);
 
