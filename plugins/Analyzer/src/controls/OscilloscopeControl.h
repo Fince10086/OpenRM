@@ -55,6 +55,8 @@ public:
     mDetectedLag = -1;
     mTrigStateActive = false;
     mSweepPos = 0;
+    mFrozenAnchor = -1;
+    mExtractedWinSec = -1.0;
     SetDirty(false);
   }
 
@@ -93,9 +95,6 @@ public:
 
   // 插件 OnIdle() 每帧调用：根据当前模式执行触发并提取波形切片
   void UpdateAudio(const float *const *pRing, int ringLen, int headPos, double sampleRate, bool frozen) {
-    if (frozen && mFrozen)
-      return;
-    mFrozen = frozen;
     mSampleRate = std::max(1000.0, sampleRate);
 
     const double winSec = mWindowSec;
@@ -103,6 +102,17 @@ public:
 
     if (ringLen < nDisp + 128)
       return;
+
+    if (frozen && mFrozen) {
+      if (mFrozenAnchor >= 0 && winSec != mExtractedWinSec) {
+        ExtractWindow(pRing, ringLen, mFrozenAnchor, nDisp);
+        mSweepPos = 0; // SWEEP 解冻后扫描笔从左缘重写
+        mExtractedWinSec = winSec;
+        SetDirty(false);
+      }
+      return;
+    }
+    mFrozen = frozen;
 
     // 触发参考通道随显示声道掩码自动决定（L=0, R=1, Mid=2）
     const int trigChan = EffectiveTrigChan();
@@ -175,18 +185,32 @@ public:
           mSweepPos = 0;
       }
       mTrigStateActive = true;
+      if (frozen) { // 冻结瞬间: 锚定扫描笔最新落点 (环内最新样本)
+        mFrozenAnchor = (headPos - 1 + ringLen) & (ringLen - 1);
+        mExtractedWinSec = winSec;
+      }
       SetDirty(false);
       return;
     }
 
-    // 按照“右边缘为触发时刻”提取 nDisp 个前向历史采样点
+    // 冻结瞬间: 锚定本次触发位置, 冻结期间拖时间窗据此按新窗长重取迹线
+    if (frozen)
+      mFrozenAnchor = triggerPos;
+
+    ExtractWindow(pRing, ringLen, triggerPos, nDisp);
+    mExtractedWinSec = winSec;
+    SetDirty(false);
+  }
+
+  // 以 rightEdge 为右缘 (触发时刻), 从环形缓冲提取 nDisp 点前向历史到显示缓冲
+  void ExtractWindow(const float *const *pRing, int ringLen, int rightEdge, int nDisp) {
     mDispL.resize(nDisp);
     mDispR.resize(nDisp);
     mDispM.resize(nDisp);
     mDispS.resize(nDisp);
     mDispSum.resize(nDisp);
 
-    const int readStart = (triggerPos - nDisp + ringLen) & (ringLen - 1);
+    const int readStart = (rightEdge - nDisp + ringLen) & (ringLen - 1);
     for (int i = 0; i < nDisp; ++i) {
       const int p = (readStart + i) & (ringLen - 1);
       const float l = pRing[0][p];
@@ -197,8 +221,6 @@ public:
       mDispS[i] = (l - r) * 0.70710678f;
       mDispSum[i] = (l + r); // GRM 全声道求和线
     }
-
-    SetDirty(false);
   }
 
   void OnMouseDown(float x, float y, const IMouseMod &mod) override {
@@ -291,6 +313,10 @@ private:
   bool mTrigStateActive = false;
 
   int mLastHeadPos = -1;
+  // 冻结锚点: 冻结瞬间迹线右缘的环内位置; 冻结中拖时间窗据此按新窗长重取迹线
+  int mFrozenAnchor = -1;
+  // 迹线当前对应的窗长 (秒); 冻结中用于检测时间窗是否被拖动
+  double mExtractedWinSec = -1.0;
 
   // 自相关算法检测结果
   float mDetectedFreq = 0.f;
