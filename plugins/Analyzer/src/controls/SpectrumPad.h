@@ -331,14 +331,16 @@ private:
 
     const float zoneLr = LrZoneR(plot);
     const float zoneVu = VuZoneR(plot);
+    const float zoneLra = plot.R + kMeterStripW - kLraZoneW;
     const bool ledArea = (mMeterMode == 1) && (mHoverX > plot.R) &&
                          (mHoverX <= zoneLr) && (mHoverY < YOf(plot, 0.f) - 3.f);
     const bool inStrip = mHoverActive && !ledArea && mHoverX >= plot.L && mHoverX <= mRECT.R &&
                          mHoverY >= plot.T && mHoverY <= plot.B;
     const bool inSpectrum = inStrip && mHoverX <= plot.R;
     const bool inZone0 = inStrip && mHoverX <= zoneLr;
-    const bool inZone1 = inStrip && mHoverX > LrZoneR(plot) + kVuScaleW && mHoverX <= zoneVu;
-    const bool inZone2 = inStrip && mHoverX > VuZoneR(plot) + kLufsScaleW;
+    // 刻度文字列 (VU/LUFS) 与 LRA 括弧列不参与 hover, 悬停线只覆盖各自的量条
+    const bool inZone1 = inStrip && mHoverX > zoneLr + kVuScaleW && mHoverX <= zoneVu;
+    const bool inZone2 = inStrip && mHoverX > zoneVu + kLufsScaleW && mHoverX <= zoneLra;
     IRECT hzSkip, dbSkip, vuSkip, lufsSkip;
     char hzBuf[16] = "", dbBuf[16] = "";
     char vuBuf[16] = "", lufsBuf[16] = "";
@@ -367,12 +369,14 @@ private:
       } else if (inZone1) {
         const float vu = kVuBottomVU + (plot.B - yLine) / plot.H() * (kVuTopDb - kVuBottomVU);
         std::snprintf(vuBuf, sizeof(vuBuf), "%+.1f", vu);
-        vuText = IText(14, COL_700(), kFontRegular, EAlign::Far, EVAlign::Bottom);
+        vuText = IText(14, COL_700(), kFontRegular, EAlign::Far, EVAlign::Middle);
         const float scaleVu = LrZoneR(plot);
-        if (yLine - kLabelH - 1.f >= plot.T)
-          vuBox = IRECT(scaleVu, yLine - kLabelH - 1.f, scaleVu + kVuScaleW - kTickRight, yLine - 1.f);
-        else
-          vuBox = IRECT(scaleVu, yLine + 1.f, scaleVu + kVuScaleW - kTickRight, yLine + 1.f + kLabelH);
+        float vuT = yLine - kLabelH * 0.5f; // 读数优先上下居中于悬停线, 贴缘时收敛进画区
+        if (vuT + kLabelH > plot.B)
+          vuT = plot.B - kLabelH;
+        if (vuT < plot.T)
+          vuT = plot.T;
+        vuBox = IRECT(scaleVu, vuT, scaleVu + kVuScaleW - kTickRight, vuT + kLabelH);
         g.MeasureText(vuText, vuBuf, vuBox);
         vuChip = vuBox.GetPadded(2.f);
         vuSkip = vuChip;
@@ -381,38 +385,16 @@ private:
         LoudWindow(topL, botL);
         const float lufs = botL + (plot.B - yLine) / plot.H() * (topL - botL);
         std::snprintf(lufsBuf, sizeof(lufsBuf), "%+.1f", lufs);
-        lufsText = IText(14, COL_700(), kFontRegular, EAlign::Far, EVAlign::Bottom);
+        lufsText = IText(14, COL_700(), kFontRegular, EAlign::Far, EVAlign::Middle);
         const float scaleLufs = VuZoneR(plot);
-        if (yLine - kLabelH - 1.f >= plot.T)
-          lufsBox = IRECT(scaleLufs, yLine - kLabelH - 1.f, scaleLufs + kLufsScaleW - kTickRight,
-                          yLine - 1.f);
-        else
-          lufsBox = IRECT(scaleLufs, yLine + 1.f, scaleLufs + kLufsScaleW - kTickRight,
-                          yLine + 1.f + kLabelH);
+        float lufsT = yLine - kLabelH * 0.5f; // 同 VU: 居中于悬停线, 贴缘时收敛进画区;
+        if (lufsT + kLabelH > plot.B)         // 与刻度按钮重叠时直接盖在其上, 不做避让
+          lufsT = plot.B - kLabelH;
+        if (lufsT < plot.T)
+          lufsT = plot.T;
+        lufsBox = IRECT(scaleLufs, lufsT, scaleLufs + kLufsScaleW - kTickRight, lufsT + kLabelH);
         g.MeasureText(lufsText, lufsBuf, lufsBox);
         lufsChip = lufsBox.GetPadded(2.f);
-        // LUFS 读数与刻度按钮重叠时纵向平移让开
-        {
-          const float gap = 3.f;
-          const IRECT btnObstacles[3] = {LoudScaleTickBtnRect(plot),
-                                         (mTarget > -100.f) ? LoudPresetTickBtnRect(plot)
-                                                            : IRECT(),
-                                         LufsTickRect(plot, botL)};
-          for (const IRECT &btn : btnObstacles) {
-            if (btn.Empty() || !lufsChip.Intersects(btn))
-              continue;
-            float dy = (btn.T - gap) - lufsChip.B;
-            if (lufsChip.T + dy < plot.T) {
-              dy = (btn.B + gap) - lufsChip.T;
-              if (lufsChip.B + dy > plot.B)
-                continue;
-            }
-            lufsBox.T += dy;
-            lufsBox.B += dy;
-            lufsChip.T += dy;
-            lufsChip.B += dy;
-          }
-        }
         lufsSkip = lufsChip;
       }
 
@@ -465,10 +447,10 @@ private:
       g.DrawLine(COL_700(), plot.L, yLine, zoneLr, yLine, nullptr, 1.f);
       g.DrawText(dbText, dbBuf, dbSkip);
     } else if (inZone1) {
-      g.DrawLine(COL_700(), zoneLr, yLine, zoneVu, yLine, nullptr, 1.f);
+      g.DrawLine(COL_700(), zoneLr + kVuScaleW, yLine, zoneVu, yLine, nullptr, 1.f);
       g.DrawText(vuText, vuBuf, vuBox);
     } else if (inZone2) {
-      g.DrawLine(COL_700(), zoneVu, yLine, mRECT.R, yLine, nullptr, 1.f);
+      g.DrawLine(COL_700(), zoneVu + kLufsScaleW, yLine, zoneLra, yLine, nullptr, 1.f);
       g.DrawText(lufsText, lufsBuf, lufsBox);
     }
   }
@@ -978,28 +960,29 @@ private:
     int nStops = 0;
     const IColor col = LoudStopColor(LoudStopTable(nStops)[nStops - 1]);
 
+    // 右括号: 脊线贴列右缘, 两端横帽向左伸出
     constexpr float kSpineW = 1.5f, kCapH = 1.5f, kCapLen = 6.f;
-    g.FillRect(col, IRECT(zoneL, yTop, zoneL + kSpineW, yBot));
-    g.FillRect(col, IRECT(zoneL, yTop - kCapH * 0.5f, zoneL + kCapLen, yTop + kCapH * 0.5f));
-    g.FillRect(col, IRECT(zoneL, yBot - kCapH * 0.5f, zoneL + kCapLen, yBot + kCapH * 0.5f));
+    g.FillRect(col, IRECT(zoneR - kSpineW, yTop, zoneR, yBot));
+    g.FillRect(col, IRECT(zoneR - kCapLen, yTop - kCapH * 0.5f, zoneR, yTop + kCapH * 0.5f));
+    g.FillRect(col, IRECT(zoneR - kCapLen, yBot - kCapH * 0.5f, zoneR, yBot + kCapH * 0.5f));
 
-    char valBuf[16];
-    std::snprintf(valBuf, sizeof(valBuf), "%.1f", mRange);
-    const float midY = (yTop + yBot) * 0.5f;
+    // 读数竖排 (逆时针 90°, 字头朝左、自下而上读), 右缘贴住括弧脊线, 沿跨度居中;
+    // 长度超出括弧跨度时按跨度缩小字号
     const float span = yBot - yTop;
-    const float labelSize = std::clamp(span * 0.28f, 9.f, 12.f);
-    const float valSize = std::clamp(span * 0.42f, 11.f, 16.f);
-    const float gap = 1.f;
-    const float labelH = labelSize + 2.f;
-    const float valH = valSize + 2.f;
-    const float totalH = labelH + gap + valH;
-    const float topLimit = std::max(yTop + 1.f, yBot - totalH - 1.f);
-    const float blockT = std::min(std::max(midY - totalH * 0.5f, yTop + 1.f), topLimit);
-    const IText labelT(labelSize, col, kFontRegular, EAlign::Far, EVAlign::Middle);
-    g.DrawText(labelT, "LRA", IRECT(zoneL + kCapLen + 1.f, blockT, zoneR - 1.f, blockT + labelH));
-    const IText valT(valSize, col, kFontSemiBold, EAlign::Far, EVAlign::Middle);
-    g.DrawText(valT, valBuf, IRECT(zoneL + kCapLen + 1.f, blockT + labelH + gap, zoneR - 1.f,
-                                   blockT + labelH + gap + valH));
+    const float midY = (yTop + yBot) * 0.5f;
+    char valBuf[16];
+    std::snprintf(valBuf, sizeof(valBuf), "LRA %.1f", mRange);
+    float txtSize = 14.f;
+    IText txtT = IText(txtSize, col, kFontSemiBold, EAlign::Center, EVAlign::Middle).WithAngle(90.f);
+    IRECT mr(zoneL, yTop, zoneR, yBot);
+    g.MeasureText(txtT, valBuf, mr);
+    if (mr.H() > span - 2.f) {
+      txtSize = std::clamp(txtSize * (span - 2.f) / mr.H(), 9.f, 14.f);
+      txtT = IText(txtSize, col, kFontSemiBold, EAlign::Center, EVAlign::Middle).WithAngle(90.f);
+      g.MeasureText(txtT, valBuf, mr);
+    }
+    const float boxR = zoneR - kSpineW - 2.f;
+    g.DrawText(txtT, valBuf, IRECT(boxR - mr.W(), midY - mr.H() * 0.5f, boxR, midY + mr.H() * 0.5f));
   }
 
   void DrawMeterBar(IGraphics &g, const IRECT &plot, const IRECT &bar, const IColor &chan, int ch) {
