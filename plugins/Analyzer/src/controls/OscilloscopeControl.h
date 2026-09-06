@@ -236,14 +236,23 @@ public:
 
     const IRECT plot = GetPlotRect();
     DrawPlotBackground(g, plot);
-    DrawGrid(g, plot);
+
+    // hover 标签占位先行计算, 供静态刻度避让 (同频谱 skipRect 机制)
+    const bool hov = mHoverActive && plot.Contains(mHoverX, mHoverY);
+    const IRECT detR = (mTrigSource == kTrigSync) ? DetRect(plot) : IRECT();
+    IRECT hovTime, hovAmp;
+    if (hov) {
+      ComputeHover(g, plot, detR);
+      hovTime = mHovTimeR.Union(mHovFreqR);
+      hovAmp = mHovAmpR;
+    }
 
     DrawWaveforms(g, plot);
+    DrawAxis(g, plot, hovTime, hovAmp, detR);
     DrawStatusReadout(g, plot);
 
-    if (mHoverActive && plot.Contains(mHoverX, mHoverY)) {
-      DrawCursorInspector(g, plot);
-    }
+    if (hov)
+      DrawHover(g, plot);
   }
 
 private:
@@ -254,6 +263,24 @@ private:
   // 画区为内嵌滑块让出的边距
   static constexpr float kSliderW = 20.f;
   static constexpr float kSliderH = 20.f;
+  // 贴边标签几何 (与频谱图刻度排版一致)
+  static constexpr float kTickRight = 3.f;
+  static constexpr float kLabelH = 16.f;
+  // 时间列 1-2-5 阶梯 (ms 滞后) 与十档分组明度: 越接近右缘 (当前) 越亮
+  static constexpr double kTimeCells[] = {0.1,  0.2,  0.5,   1.0,   2.0,   5.0,  10.0,
+                                          20.0, 50.0, 100.0, 200.0, 500.0, 1000.0};
+  struct TimeBand {
+    double hi, lo; // 滞后区间 (ms): hi 较旧, lo 较新
+    float vHi, vLo;
+  };
+  static constexpr TimeBand kTimeBands[] = {
+      {2000.0, 1000.0, 199.f, 205.f},
+      {1000.0, 100.0, 205.f, 216.f},
+      {100.0, 10.0, 216.f, 227.f},
+      {10.0, 0.1, 227.f, 238.f},
+  };
+  // 幅度阶梯: ±1.0 (0 dBFS) 起逐级减半 (-6 dB 步进)
+  static constexpr float kAmpLadder[] = {1.f, 0.5f, 0.25f, 0.125f, 0.0625f, 0.03125f, 0.015625f, 0.0078125f};
 
   int mTrigSource = kTrigRoll;
   int mChanMask = kChanBitM; // 默认显示 M
@@ -280,6 +307,12 @@ private:
   bool mHoverActive = false;
   float mHoverX = 0.f;
   float mHoverY = 0.f;
+
+  // hover 贴边读数 (顶缘时间/频率 + 右缘幅度)
+  char mHovTimeBuf[16] = "";
+  char mHovFreqBuf[24] = "";
+  char mHovAmpBuf[8] = "";
+  IRECT mHovTimeR, mHovFreqR, mHovAmpR;
 
   std::vector<float> mDispL;
   std::vector<float> mDispR;
@@ -312,74 +345,150 @@ private:
     return std::clamp(raw, -1.0f, 1.0f);
   }
 
+  // 色块背景: 时间 1-2-5 列 × 幅度半级行, 灰度沿两轴插值 (频谱地毯的同款节奏:
+  // 纵向 245→172 关于中轴镜像, 横向 199→238 越接近右缘当前时刻越亮)
   void DrawPlotBackground(IGraphics &g, const IRECT &plot) {
-    g.FillRect(COL_100(), plot);
-    g.DrawRect(COL_300(), plot);
-  }
-
-  void DrawGrid(IGraphics &g, const IRECT &plot) {
-    const float cy = plot.MH();
     const float zoom = GetCurrentZoom();
-    const IColor gridCol = WarmGray(ThemeMode() ? 40 : 220);
-    const IColor subGridCol = WarmGray(ThemeMode() ? 25 : 235);
-    const IColor limitCol = IColor(120, 226, 60, 52); // ±1.0 满幅度警戒线
+    const float halfH = plot.H() * 0.48f;
+    const float cy = plot.MH();
+    const float visMax = (plot.H() * 0.5f) / (halfH * zoom);
 
-    // 零电平中轴线
-    g.DrawLine(gridCol, plot.L, cy, plot.R, cy, nullptr, 1.f);
-
-    // 幅度刻度：1.0 起逐级减半的阶梯，取 ≤ 可见最大幅度(1/zoom)的两档，
-    // 同屏最多两档；1.0 档即 0dBFS 满幅度线（绿色警戒）；文字贴刻度线下缘
-    const float visMax = 1.f / zoom;
-    static constexpr float kTicks[] = {1.f, 0.5f, 0.25f, 0.125f, 0.0625f, 0.03125f};
-    constexpr int nTicks = (int)(sizeof(kTicks) / sizeof(kTicks[0]));
-    int primary = 0;
-    while (primary < nTicks - 1 && kTicks[primary] > visMax * 1.0001f)
-      ++primary;
-    const IText tickT(10, COL_500(), kFontRegular, EAlign::Near, EVAlign::Top);
-    for (int li = primary; li < std::min(primary + 2, nTicks); ++li) {
-      const float t = kTicks[li];
-      for (int side = 0; side < 2; ++side) {
-        const float lvl = side ? -t : t;
-        const float y = LevelToY(plot, lvl);
-        if (y < plot.T - 1.f || y > plot.B + 1.f)
-          continue;
-        g.DrawLine(t == 1.f ? limitCol : subGridCol, plot.L, y, plot.R, y, nullptr, 1.f);
-        char buf[12];
-        if (std::fmod(t * 10.f, 1.f) == 0.f)
-          std::snprintf(buf, sizeof(buf), "%+.1f", lvl);
-        else
-          std::snprintf(buf, sizeof(buf), "%+.3g", lvl);
-        g.DrawText(tickT, buf, IRECT(plot.L + 3.f, y + 1.f, plot.L + 44.f, y + 14.f));
-      }
+    // 幅度行界: 阶梯值依次落界, 行高不足 9px 时余量并入中轴行
+    float rows[10];
+    int nRows = 0;
+    rows[nRows++] = visMax;
+    for (float t : kAmpLadder) {
+      if (t >= visMax * (1.f - 1e-4f))
+        continue;
+      if ((rows[nRows - 1] - t) * zoom * halfH < 9.f)
+        break;
+      rows[nRows++] = t;
     }
 
-    // 时间刻度：10/20/50/100/200/500/1s/2s 阶梯（1-2-5 序列），同屏最多两档：
-    // 取严格小于时间窗的两档（右缘为触发时刻 t=0，向左时间增大）；文字贴画区底缘
+    // 时间列界: 1-2-5 阶梯, 窄于 1.5px 的列并入邻列
     const double winMs = mWindowSec * 1000.0;
-    static constexpr double kTimeTicks[] = {10.0, 20.0, 50.0, 100.0, 200.0, 500.0, 1000.0, 2000.0};
-    constexpr int nTimeTicks = (int)(sizeof(kTimeTicks) / sizeof(kTimeTicks[0]));
-    int tp = nTimeTicks - 1;
-    while (tp >= 0 && kTimeTicks[tp] >= winMs - 0.01)
-      --tp;
-    const IText timeT(10, COL_500(), kFontRegular, EAlign::Center, EVAlign::Bottom);
-    for (int li = tp; li >= 0 && li > tp - 2; --li) {
-      const double tMs = kTimeTicks[li];
-      const float x = plot.R - (float)(tMs / winMs) * plot.W();
-      if (x < plot.L + 1.f || x > plot.R - 1.f)
+    float xs[16];
+    double lags[16];
+    int nBnd = 0;
+    xs[nBnd] = plot.R;
+    lags[nBnd] = 0.0;
+    ++nBnd;
+    for (double c : kTimeCells) {
+      if (c >= winMs * (1.0 - 1e-4))
+        break;
+      const float x = plot.R - (float)(c / winMs) * plot.W();
+      if (xs[nBnd - 1] - x < 1.5f)
         continue;
-      g.DrawLine(subGridCol, x, plot.T, x, plot.B, nullptr, 1.f);
-      char buf[12];
-      if (tMs < 1000.0)
-        std::snprintf(buf, sizeof(buf), "-%.0fms", tMs);
-      else
-        std::snprintf(buf, sizeof(buf), "-%.1fs", tMs / 1000.0);
-      const float cx = std::clamp(x, plot.L + 26.f, plot.R - 26.f);
-      g.DrawText(timeT, buf, IRECT(cx - 26.f, plot.B - 15.f, cx + 26.f, plot.B - 2.f));
+      xs[nBnd] = x;
+      lags[nBnd] = c;
+      ++nBnd;
+    }
+    xs[nBnd] = plot.L;
+    lags[nBnd] = winMs;
+    ++nBnd;
+
+    float colV[16];
+    for (int c = 0; c + 1 < nBnd; ++c)
+      colV[c] = TimeBandV(std::max(lags[c], 0.05));
+
+    for (int r = 0; r < nRows; ++r) {
+      const float aHi = rows[r], aLo = (r + 1 < nRows) ? rows[r + 1] : 0.f;
+      const float f = std::clamp(0.5f * (aHi + aLo) / visMax, 0.f, 1.f);
+      const float vDb = 172.f + 73.f * f;
+      const float yT0 = cy - aHi * zoom * halfH, yT1 = cy - aLo * zoom * halfH;
+      const float yB0 = cy + aLo * zoom * halfH, yB1 = cy + aHi * zoom * halfH;
+      for (int c = 0; c + 1 < nBnd; ++c) {
+        const IColor cell = WarmGray((int)std::lround(0.5f * (colV[c] + vDb)));
+        g.FillRect(cell, IRECT(xs[c + 1], yT0, xs[c], yT1));
+        g.FillRect(cell, IRECT(xs[c + 1], yB0, xs[c], yB1));
+      }
+    }
+  }
+
+  // 列明度: 十档分组基准 + 带内对数插值, 各档边界连续无跳变, 越旧越暗
+  static float TimeBandV(double lagMs) {
+    if (lagMs < 0.1)
+      return 238.f;
+    for (const auto &b : kTimeBands) {
+      if (lagMs < b.lo || lagMs > b.hi)
+        continue;
+      const double pos = (std::log(b.hi) - std::log(lagMs)) / (std::log(b.hi) - std::log(b.lo));
+      return b.vHi + (b.vLo - b.vHi) * (float)pos;
+    }
+    return 238.f;
+  }
+
+  // 语义线 (中轴 / 0 dBFS 警戒 / 右缘当前时刻) + 贴边刻度: 幅度右上, 时间顶缘 (同频谱)
+  void DrawAxis(IGraphics &g, const IRECT &plot, const IRECT &hovTime, const IRECT &hovAmp,
+                const IRECT &detR) {
+    const float zoom = GetCurrentZoom();
+    const float halfH = plot.H() * 0.48f;
+    const float visMax = (plot.H() * 0.5f) / (halfH * zoom);
+    const double winMs = mWindowSec * 1000.0;
+
+    // 零电平中轴线
+    g.DrawLine(COL_500(), plot.L, plot.MH(), plot.R, plot.MH(), nullptr, 1.f);
+
+    // 0 dBFS (±1.0) 满幅警戒线
+    if (visMax >= 1.f) {
+      const IColor limitCol = IColor(120, 226, 60, 52);
+      g.DrawLine(limitCol, plot.L, LevelToY(plot, 1.f), plot.R, LevelToY(plot, 1.f), nullptr, 1.f);
+      g.DrawLine(limitCol, plot.L, LevelToY(plot, -1.f), plot.R, LevelToY(plot, -1.f), nullptr, 1.f);
     }
 
     // 右侧当前时刻边界线 (GRM 规范：最右侧是当前最新采样点或触发时刻)
-    const IColor eventCol = (mTrigSource == kTrigRoll) ? SemColor(MeterGreen()) : gridCol;
-    g.DrawLine(eventCol, plot.R, plot.T, plot.R, plot.B, nullptr, 1.5f);
+    const IColor liveCol = (mTrigSource == kTrigRoll) ? SemColor(MeterGreen()) : COL_500();
+    g.DrawLine(liveCol, plot.R, plot.T, plot.R, plot.B, nullptr, 1.5f);
+
+    // 幅度标签: 上半幅阶梯值 (0/-6/-12 dBFS), 右缘线上方; 与下一档间距 ≥18px 才标;
+    // 避让 hover 读数, 并收集矩形供时间标签避让 (右上角两排标签不可相撞)
+    const IText ampT(14, COL_700(), kFontRegular, EAlign::Far, EVAlign::Bottom);
+    IRECT ampRs[6];
+    int nAmpR = 0;
+    for (float t : kAmpLadder) {
+      if (t >= visMax * (1.f - 1e-4f))
+        continue;
+      if ((t - 0.5f * t) * zoom * halfH < 18.f)
+        break;
+      const float y = LevelToY(plot, t);
+      const IRECT labelR = (y - kLabelH - 1.f >= plot.T)
+                               ? IRECT(plot.R - 52.f, y - kLabelH - 1.f, plot.R - kTickRight, y - 1.f)
+                               : IRECT(plot.R - 52.f, y + 1.f, plot.R - kTickRight, y + 1.f + kLabelH);
+      if ((!hovAmp.Empty() && labelR.Intersects(hovAmp)) ||
+          (!hovTime.Empty() && labelR.Intersects(hovTime)) || nAmpR >= 6)
+        continue;
+      char buf[8];
+      std::snprintf(buf, sizeof(buf), "%d", (int)std::lround(20.f * std::log10(t)));
+      g.DrawText(ampT, buf, labelR);
+      ampRs[nAmpR++] = labelR;
+    }
+
+    // 时间标签: 顶缘线右侧, 窗内最大两档; 避让 hover 读数、SYNC 检测读数与幅度标签
+    const IText timeT(14, COL_700(), kFontRegular, EAlign::Near, EVAlign::Top);
+    constexpr int nCells = (int)(sizeof(kTimeCells) / sizeof(kTimeCells[0]));
+    int shown = 0;
+    for (int i = nCells - 1; i >= 0 && shown < 2; --i) {
+      const double c = kTimeCells[i];
+      if (c >= winMs * (1.0 - 1e-4))
+        continue;
+      const float x = plot.R - (float)(c / winMs) * plot.W();
+      char buf[12];
+      if (c < 1000.0)
+        std::snprintf(buf, sizeof(buf), "-%.0fms", c);
+      else
+        std::snprintf(buf, sizeof(buf), "-%.1fs", c * 0.001);
+      const IRECT labelR(x + 5.f, plot.T + 2.f, plot.R, plot.T + 2.f + kLabelH);
+      IRECT fit = labelR;
+      g.MeasureText(timeT, buf, fit);
+      bool blocked = (!hovTime.Empty() && fit.Intersects(hovTime)) ||
+                     (!detR.Empty() && fit.Intersects(detR));
+      for (int ai = 0; ai < nAmpR && !blocked; ++ai)
+        blocked = fit.Intersects(ampRs[ai]);
+      if (blocked)
+        continue;
+      g.DrawText(timeT, buf, labelR);
+      ++shown;
+    }
   }
 
   void DrawWaveformLine(IGraphics &g, const IRECT &plot, const std::vector<float> &wave, const IColor &col) {
@@ -467,59 +576,89 @@ private:
       DrawWaveformLine(g, plot, mDispM, IColor(alpha, cM.R, cM.G, cM.B));
   }
 
+  // SYNC 基频检测读数: 顶缘右上, 贴边纯文本 (同频谱刻度排版)
+  IRECT DetRect(const IRECT &plot) const {
+    return IRECT(plot.R - 190.f, plot.T + 2.f, plot.R - kTickRight, plot.T + 2.f + kLabelH);
+  }
+
   void DrawStatusReadout(IGraphics &g, const IRECT &plot) {
     if (mTrigSource != kTrigSync)
       return;
 
-    char infoBuf[48] = "";
+    char infoBuf[48];
     if (mDetectedFreq > 0.f)
       std::snprintf(infoBuf, sizeof(infoBuf), "Det: %.1f Hz (%.2f ms)", mDetectedFreq, mDetectedPeriodMs);
     else
-      std::snprintf(infoBuf, sizeof(infoBuf), "%s", "Det: —");
-
-    // 右下角读数（与底部时间刻度基线完全对齐）
-    const IText infoT(10, COL_700(), kFontRegular, EAlign::Far, EVAlign::Bottom);
-    g.DrawText(infoT, infoBuf, IRECT(plot.R - 190.f, plot.B - 15.f, plot.R - 6.f, plot.B - 2.f));
+      std::snprintf(infoBuf, sizeof(infoBuf), "Det: —");
+    g.DrawText(IText(14, COL_700(), kFontRegular, EAlign::Far, EVAlign::Top), infoBuf, DetRect(plot));
   }
 
-  void DrawCursorInspector(IGraphics &g, const IRECT &plot) {
-    g.DrawLine(COL_500(), mHoverX, plot.T, mHoverX, plot.B, nullptr, 1.f);
-    g.DrawLine(COL_500(), plot.L, mHoverY, plot.R, mHoverY, nullptr, 1.f);
+  // hover 贴边读数占位: 时间(+等效频率音名)贴顶缘、幅度贴右缘, 与频谱 hover 同款
+  void ComputeHover(IGraphics &g, const IRECT &plot, const IRECT &detR) {
+    const double winMs = mWindowSec * 1000.0;
+    const float dtMs = (float)((mHoverX - plot.R) / plot.W() * winMs);
+    if (std::fabs(dtMs) >= 1000.f)
+      std::snprintf(mHovTimeBuf, sizeof(mHovTimeBuf), "%+.2f s", dtMs * 0.001f);
+    else
+      std::snprintf(mHovTimeBuf, sizeof(mHovTimeBuf), "%+.1f ms", dtMs);
 
-    const double winSec = mWindowSec;
-    // GRM 坐标：最右侧是 t = 0，向左为负时间 (-dt)
-    const float dtSec = (float)((mHoverX - plot.R) / plot.W() * winSec);
-    const float vVal = YToLevel(plot, mHoverY);
-
-    char insBuf[80];
-    const float dtMs = dtSec * 1000.f;
-    if (mTrigSource == kTrigSync && mDetectedFreq > 0.f) {
-      char note[12] = "";
-      FreqToNoteName(mDetectedFreq, note, sizeof(note));
-      std::snprintf(insBuf, sizeof(insBuf), "t: %+.1f ms  V: %+.2f | Det: %.1f Hz (%s)",
-                    dtMs, vVal, mDetectedFreq, note);
-    } else if (std::fabs(dtSec) > 1e-5f) {
-      const double fEquiv = 1.0 / std::fabs(dtSec);
-      char note[12] = "";
-      if (fEquiv >= 20.0 && fEquiv <= 20000.0) {
-        FreqToNoteName(fEquiv, note, sizeof(note));
-        std::snprintf(insBuf, sizeof(insBuf), "t: %+.1f ms  V: %+.2f | %.0f Hz (%s)", dtMs, vVal, fEquiv, note);
-      } else {
-        std::snprintf(insBuf, sizeof(insBuf), "t: %+.1f ms  V: %+.2f", dtMs, vVal);
+    mHovFreqBuf[0] = '\0';
+    if (std::fabs(dtMs) > 0.01f) {
+      const double fEq = 1000.0 / std::fabs((double)dtMs);
+      if (fEq >= 20.0 && fEq <= 20000.0) {
+        char note[12];
+        FreqToNoteName(fEq, note, sizeof(note));
+        std::snprintf(mHovFreqBuf, sizeof(mHovFreqBuf), "%.0f Hz (%s)", fEq, note);
       }
-    } else {
-      std::snprintf(insBuf, sizeof(insBuf), "t: 0.0 ms  V: %+.2f", vVal);
     }
+    std::snprintf(mHovAmpBuf, sizeof(mHovAmpBuf), "%+.2f", YToLevel(plot, mHoverY));
 
-    const IText t(11, COL_900(), kFontSemiBold, EAlign::Near, EVAlign::Middle);
-    const float chipW = 230.f;
-    const float chipX0 = std::clamp(mHoverX + 8.f, plot.L + 4.f, plot.R - chipW - 4.f);
-    const float chipY0 = std::clamp(mHoverY - 20.f, plot.T + 4.f, plot.B - 22.f);
-    const IRECT chip(chipX0, chipY0, chipX0 + chipW, chipY0 + 18.f);
+    // 顶缘: 时间标签在指针左, 等效频率在指针右, 放不下时依次换边
+    const IText t(14, COL_700(), kFontRegular, EAlign::Near, EVAlign::Top);
+    IRECT rT(mHoverX, plot.T + 2.f, mHoverX, plot.T + 2.f + kLabelH), rF = rT;
+    g.MeasureText(t, mHovTimeBuf, rT);
+    g.MeasureText(t, mHovFreqBuf, rF);
+    const float wT = rT.W(), wF = rF.W();
+    constexpr float kGap = 5.f;
+    const bool tFitsL = mHoverX - kGap - wT >= plot.L;
+    const bool fFitsR = wF > 0.f && mHoverX + kGap + wF <= plot.R;
+    if (tFitsL && fFitsR) {
+      rT = IRECT(mHoverX - kGap - wT, plot.T + 2.f, mHoverX - kGap, plot.T + 2.f + kLabelH);
+      rF = IRECT(mHoverX + kGap, plot.T + 2.f, mHoverX + kGap + wF, plot.T + 2.f + kLabelH);
+    } else if (!tFitsL) {
+      rT = IRECT(mHoverX + kGap, plot.T + 2.f, mHoverX + kGap + wT, plot.T + 2.f + kLabelH);
+      rF = IRECT(rT.R + 2.f, plot.T + 2.f, rT.R + 2.f + wF, plot.T + 2.f + kLabelH);
+    } else {
+      rT = IRECT(mHoverX - kGap - wT, plot.T + 2.f, mHoverX - kGap, plot.T + 2.f + kLabelH);
+      rF = IRECT(rT.L - 2.f - wF, plot.T + 2.f, rT.L - 2.f, plot.T + 2.f + kLabelH);
+    }
+    // SYNC 检测读数占位时整体下移让开
+    if (!detR.Empty() && (rT.Intersects(detR) || rF.Intersects(detR))) {
+      const float dy = detR.H() + 2.f;
+      rT.T += dy;
+      rT.B += dy;
+      rF.T += dy;
+      rF.B += dy;
+    }
+    mHovTimeR = rT;
+    mHovFreqR = rF;
 
-    g.FillRect(COL_100(), chip);
-    g.DrawRect(COL_500(), chip);
-    g.DrawText(t, insBuf, chip.GetPadded(-4.f));
+    // 右缘: 幅度读数贴线上方, 贴近顶缘或撞上 SYNC 读数时翻到线下
+    if (mHoverY - kLabelH - 1.f >= plot.T)
+      mHovAmpR = IRECT(plot.R - 52.f, mHoverY - kLabelH - 1.f, plot.R - kTickRight, mHoverY - 1.f);
+    else
+      mHovAmpR = IRECT(plot.R - 52.f, mHoverY + 1.f, plot.R - kTickRight, mHoverY + 1.f + kLabelH);
+    if (!detR.Empty() && mHovAmpR.Intersects(detR))
+      mHovAmpR = IRECT(plot.R - 52.f, mHoverY + 1.f, plot.R - kTickRight, mHoverY + 1.f + kLabelH);
+  }
+
+  void DrawHover(IGraphics &g, const IRECT &plot) {
+    g.DrawLine(COL_700(), mHoverX, plot.T, mHoverX, plot.B, nullptr, 1.f);
+    g.DrawLine(COL_700(), plot.L, mHoverY, plot.R, mHoverY, nullptr, 1.f);
+    g.DrawText(IText(14, COL_700(), kFontRegular, EAlign::Near, EVAlign::Top), mHovTimeBuf, mHovTimeR);
+    if (mHovFreqBuf[0])
+      g.DrawText(IText(14, COL_700(), kFontRegular, EAlign::Near, EVAlign::Top), mHovFreqBuf, mHovFreqR);
+    g.DrawText(IText(14, COL_700(), kFontRegular, EAlign::Far, EVAlign::Bottom), mHovAmpBuf, mHovAmpR);
   }
 
   // 利用基-2 FFT 计算自相关函数并提取最可信周期。
