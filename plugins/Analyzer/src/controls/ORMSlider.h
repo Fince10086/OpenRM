@@ -83,7 +83,7 @@ public:
   void OnMouseDown(float x, float y, const IMouseMod &mod) override {
     if (mod.R)
       return;
-    if (mod.L && !mod.A && ValueRect().Contains(x, y)) {
+    if (mHeaderVisible && mod.L && !mod.A && ValueRect().Contains(x, y)) {
       if (GetParam())
         PromptUserInput(ValueRect());
       return;

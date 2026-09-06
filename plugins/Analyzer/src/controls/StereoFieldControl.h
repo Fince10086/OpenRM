@@ -473,11 +473,11 @@ private:
       const float c = std::clamp(mCorrDisp, -1.f, 1.f);
       const IColor cc = CorrColor(c);
 
-      // 单声道窗口: 半宽 = |corr|·半条宽, 边缘为一对加宽刻度, 负相关转红
+      // 单声道窗口: 半宽 = |corr|·半条宽, 负相关转红; 中心 2px 基准刻度
+      // 常显 (corr≈0 窗口收缩后仍有可见标记)
       const float halfW = 0.5f * std::fabs(c) * (x1 - x0);
       g.FillRect(IColor(150, cc.R, cc.G, cc.B), IRECT(cx - halfW, trackT, cx + halfW, trackB));
-      g.FillRect(cc, IRECT(cx - halfW - 1.f, trackT - 3.f, cx - halfW + 1.f, trackB + 3.f));
-      g.FillRect(cc, IRECT(cx + halfW - 1.f, trackT - 3.f, cx + halfW + 1.f, trackB + 3.f));
+      g.FillRect(cc, IRECT(cx - 1.f, trackT - 3.f, cx + 1.f, trackB + 3.f));
 
       // 平衡指针: 通道色填充 + 深色针头
       const float bal = std::clamp(mBalDisp, -kBalRangeDb, kBalRangeDb);

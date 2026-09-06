@@ -266,19 +266,9 @@ private:
   // 贴边标签几何 (与频谱图刻度排版一致)
   static constexpr float kTickRight = 3.f;
   static constexpr float kLabelH = 16.f;
-  // 时间列 1-2-5 阶梯 (ms 滞后) 与十档分组明度: 越接近右缘 (当前) 越亮
+  // 时间列 1-2-5 阶梯 (ms 滞后)
   static constexpr double kTimeCells[] = {0.1,  0.2,  0.5,   1.0,   2.0,   5.0,  10.0,
                                           20.0, 50.0, 100.0, 200.0, 500.0, 1000.0};
-  struct TimeBand {
-    double hi, lo; // 滞后区间 (ms): hi 较旧, lo 较新
-    float vHi, vLo;
-  };
-  static constexpr TimeBand kTimeBands[] = {
-      {2000.0, 1000.0, 199.f, 205.f},
-      {1000.0, 100.0, 205.f, 216.f},
-      {100.0, 10.0, 216.f, 227.f},
-      {10.0, 0.1, 227.f, 238.f},
-  };
   // 幅度阶梯: ±1.0 (0 dBFS) 起逐级减半 (-6 dB 步进)
   static constexpr float kAmpLadder[] = {1.f, 0.5f, 0.25f, 0.125f, 0.0625f, 0.03125f, 0.015625f, 0.0078125f};
 
@@ -345,77 +335,70 @@ private:
     return std::clamp(raw, -1.0f, 1.0f);
   }
 
-  // 色块背景: 时间 1-2-5 列 × 幅度半级行, 灰度沿两轴插值 (频谱地毯的同款节奏:
-  // 纵向 245→172 关于中轴镜像, 横向 199→238 越接近右缘当前时刻越亮)
+  // 色块背景: 横 4 档 × 纵 3 档平色块。取值域对齐声像图色块的实际合成区间
+  // (约 184-237: 其角向三档 230/215/195 与径向渐变 245→172 按 0.5·(角+径) 合成,
+  //  极端端点从不成对出现) —— 直接沿用端点值会合成出 245 的格子, 比声像图
+  //  浅得更浅、深得更深。
+  // 横向越靠右缘 (当前时刻) 越亮; 纵向越靠中轴越亮 (同声像图角向的方向),
+  // 给中轴处的深色波形让出对比
   void DrawPlotBackground(IGraphics &g, const IRECT &plot) {
     const float zoom = GetCurrentZoom();
     const float halfH = plot.H() * 0.48f;
     const float cy = plot.MH();
     const float visMax = (plot.H() * 0.5f) / (halfH * zoom);
-
-    // 幅度行界: 阶梯值依次落界, 行高不足 9px 时余量并入中轴行
-    float rows[10];
-    int nRows = 0;
-    rows[nRows++] = visMax;
-    for (float t : kAmpLadder) {
-      if (t >= visMax * (1.f - 1e-4f))
-        continue;
-      if ((rows[nRows - 1] - t) * zoom * halfH < 9.f)
-        break;
-      rows[nRows++] = t;
-    }
-
-    // 时间列界: 1-2-5 阶梯, 窄于 1.5px 的列并入邻列
     const double winMs = mWindowSec * 1000.0;
-    float xs[16];
-    double lags[16];
-    int nBnd = 0;
-    xs[nBnd] = plot.R;
-    lags[nBnd] = 0.0;
-    ++nBnd;
-    for (double c : kTimeCells) {
-      if (c >= winMs * (1.0 - 1e-4))
+
+    // 纵向 3 档: 亮/中分界锚在最高一档阶梯线上, 与横向逻辑一致 ——
+    // 刻度线滑到画缘完全消失后, 分界才落到下一档, 不提前折叠
+    constexpr float kVCol[3] = {180.f, 205.f, 230.f}; // 外→内: 中心最亮, 衬托深色波形
+    float t1 = 0.0078125f;
+    for (float t : kAmpLadder) {
+      if (t < visMax * (1.f - 1e-4f)) {
+        t1 = t;
         break;
-      const float x = plot.R - (float)(c / winMs) * plot.W();
-      if (xs[nBnd - 1] - x < 1.5f)
-        continue;
-      xs[nBnd] = x;
-      lags[nBnd] = c;
-      ++nBnd;
+      }
     }
-    xs[nBnd] = plot.L;
-    lags[nBnd] = winMs;
-    ++nBnd;
+    const float zoneAmp[4] = {visMax, t1, 0.5f * t1, 0.f};
 
-    float colV[16];
-    for (int c = 0; c + 1 < nBnd; ++c)
-      colV[c] = TimeBandV(std::max(lags[c], 0.05));
+    // 横向列界: 窗缘 + 最大三档时间刻度 (右→左; 刻度降序返回, 须自最小档排起)
+    double ticks[3];
+    LargestTimeTicks(winMs, 3, ticks);
+    float xs[5];
+    int nCols = 0;
+    xs[nCols++] = plot.R;
+    for (int i = 2; i >= 0; --i) {
+      if (ticks[i] < 0)
+        continue;
+      const float x = plot.R - (float)(ticks[i] / winMs) * plot.W();
+      if (x - plot.L < 1.5f)
+        continue;
+      xs[nCols++] = x;
+    }
+    xs[nCols++] = plot.L;
+    constexpr float kHCol[4] = {238.f, 224.f, 210.f, 196.f}; // 右→左 (越新越亮)
 
-    for (int r = 0; r < nRows; ++r) {
-      const float aHi = rows[r], aLo = (r + 1 < nRows) ? rows[r + 1] : 0.f;
-      const float f = std::clamp(0.5f * (aHi + aLo) / visMax, 0.f, 1.f);
-      const float vDb = 172.f + 73.f * f;
-      const float yT0 = cy - aHi * zoom * halfH, yT1 = cy - aLo * zoom * halfH;
-      const float yB0 = cy + aLo * zoom * halfH, yB1 = cy + aHi * zoom * halfH;
-      for (int c = 0; c + 1 < nBnd; ++c) {
-        const IColor cell = WarmGray((int)std::lround(0.5f * (colV[c] + vDb)));
+    for (int r = 0; r < 3; ++r) {
+      const float yT0 = cy - zoneAmp[r] * zoom * halfH, yT1 = cy - zoneAmp[r + 1] * zoom * halfH;
+      const float yB0 = cy + zoneAmp[r + 1] * zoom * halfH, yB1 = cy + zoneAmp[r] * zoom * halfH;
+      for (int c = 0; c + 1 < nCols; ++c) {
+        const IColor cell = WarmGray((int)std::lround(0.5f * (kHCol[c] + kVCol[r])));
         g.FillRect(cell, IRECT(xs[c + 1], yT0, xs[c], yT1));
         g.FillRect(cell, IRECT(xs[c + 1], yB0, xs[c], yB1));
       }
     }
   }
 
-  // 列明度: 十档分组基准 + 带内对数插值, 各档边界连续无跳变, 越旧越暗
-  static float TimeBandV(double lagMs) {
-    if (lagMs < 0.1)
-      return 238.f;
-    for (const auto &b : kTimeBands) {
-      if (lagMs < b.lo || lagMs > b.hi)
+  // 窗内最大 n 档时间刻度 (降序); 不足 n 档时末位以 -1 填充
+  void LargestTimeTicks(double winMs, int n, double *out) const {
+    constexpr int nCells = (int)(sizeof(kTimeCells) / sizeof(kTimeCells[0]));
+    int found = 0;
+    for (int i = nCells - 1; i >= 0 && found < n; --i) {
+      if (kTimeCells[i] >= winMs * (1.0 - 1e-4))
         continue;
-      const double pos = (std::log(b.hi) - std::log(lagMs)) / (std::log(b.hi) - std::log(b.lo));
-      return b.vHi + (b.vLo - b.vHi) * (float)pos;
+      out[found++] = kTimeCells[i];
     }
-    return 238.f;
+    for (int i = found; i < n; ++i)
+      out[i] = -1.0;
   }
 
   // 语义线 (中轴 / 0 dBFS 警戒 / 右缘当前时刻) + 贴边刻度: 幅度右上, 时间顶缘 (同频谱)
@@ -429,19 +412,9 @@ private:
     // 零电平中轴线
     g.DrawLine(COL_500(), plot.L, plot.MH(), plot.R, plot.MH(), nullptr, 1.f);
 
-    // 0 dBFS (±1.0) 满幅警戒线
-    if (visMax >= 1.f) {
-      const IColor limitCol = IColor(120, 226, 60, 52);
-      g.DrawLine(limitCol, plot.L, LevelToY(plot, 1.f), plot.R, LevelToY(plot, 1.f), nullptr, 1.f);
-      g.DrawLine(limitCol, plot.L, LevelToY(plot, -1.f), plot.R, LevelToY(plot, -1.f), nullptr, 1.f);
-    }
-
-    // 右侧当前时刻边界线 (GRM 规范：最右侧是当前最新采样点或触发时刻)
-    const IColor liveCol = (mTrigSource == kTrigRoll) ? SemColor(MeterGreen()) : COL_500();
-    g.DrawLine(liveCol, plot.R, plot.T, plot.R, plot.B, nullptr, 1.5f);
-
     // 幅度标签: 上半幅阶梯值 (0/-6/-12 dBFS), 右缘线上方; 与下一档间距 ≥18px 才标;
-    // 避让 hover 读数, 并收集矩形供时间标签避让 (右上角两排标签不可相撞)
+    // 避让按实测文本矩形 —— 固定 52px 的框远宽于实际文字, 按框判交会让时间
+    // 标签在真正重叠前就提前消失; 收集实测矩形供时间标签避让
     const IText ampT(14, COL_700(), kFontRegular, EAlign::Far, EVAlign::Bottom);
     IRECT ampRs[6];
     int nAmpR = 0;
@@ -454,22 +427,23 @@ private:
       const IRECT labelR = (y - kLabelH - 1.f >= plot.T)
                                ? IRECT(plot.R - 52.f, y - kLabelH - 1.f, plot.R - kTickRight, y - 1.f)
                                : IRECT(plot.R - 52.f, y + 1.f, plot.R - kTickRight, y + 1.f + kLabelH);
-      if ((!hovAmp.Empty() && labelR.Intersects(hovAmp)) ||
-          (!hovTime.Empty() && labelR.Intersects(hovTime)) || nAmpR >= 6)
-        continue;
       char buf[8];
       std::snprintf(buf, sizeof(buf), "%d", (int)std::lround(20.f * std::log10(t)));
+      IRECT fitR = labelR;
+      g.MeasureText(ampT, buf, fitR);
+      if ((!hovAmp.Empty() && fitR.Intersects(hovAmp)) ||
+          (!hovTime.Empty() && fitR.Intersects(hovTime)) || nAmpR >= 6)
+        continue;
       g.DrawText(ampT, buf, labelR);
-      ampRs[nAmpR++] = labelR;
+      ampRs[nAmpR++] = fitR;
     }
 
     // 时间标签: 顶缘线右侧, 窗内最大两档; 避让 hover 读数、SYNC 检测读数与幅度标签
     const IText timeT(14, COL_700(), kFontRegular, EAlign::Near, EVAlign::Top);
-    constexpr int nCells = (int)(sizeof(kTimeCells) / sizeof(kTimeCells[0]));
-    int shown = 0;
-    for (int i = nCells - 1; i >= 0 && shown < 2; --i) {
-      const double c = kTimeCells[i];
-      if (c >= winMs * (1.0 - 1e-4))
+    double ticks[2];
+    LargestTimeTicks(winMs, 2, ticks);
+    for (double c : ticks) {
+      if (c < 0)
         continue;
       const float x = plot.R - (float)(c / winMs) * plot.W();
       char buf[12];
@@ -487,7 +461,6 @@ private:
       if (blocked)
         continue;
       g.DrawText(timeT, buf, labelR);
-      ++shown;
     }
   }
 
@@ -643,13 +616,15 @@ private:
     mHovTimeR = rT;
     mHovFreqR = rF;
 
-    // 右缘: 幅度读数贴线上方, 贴近顶缘或撞上 SYNC 读数时翻到线下
+    // 右缘: 幅度读数贴线上方, 贴近顶缘或撞上 SYNC 读数时翻到线下; 避让用实测矩形
     if (mHoverY - kLabelH - 1.f >= plot.T)
       mHovAmpR = IRECT(plot.R - 52.f, mHoverY - kLabelH - 1.f, plot.R - kTickRight, mHoverY - 1.f);
     else
       mHovAmpR = IRECT(plot.R - 52.f, mHoverY + 1.f, plot.R - kTickRight, mHoverY + 1.f + kLabelH);
     if (!detR.Empty() && mHovAmpR.Intersects(detR))
       mHovAmpR = IRECT(plot.R - 52.f, mHoverY + 1.f, plot.R - kTickRight, mHoverY + 1.f + kLabelH);
+    g.MeasureText(IText(14, COL_700(), kFontRegular, EAlign::Far, EVAlign::Bottom), mHovAmpBuf,
+                  mHovAmpR);
   }
 
   void DrawHover(IGraphics &g, const IRECT &plot) {
@@ -808,19 +783,6 @@ private:
     static const char *const kNoteNames[12] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
     const int nn = (int)std::lround(12.0 * std::log2(std::max(hz, 1.0) / 440.0)) + 69;
     std::snprintf(out, outSize, "%s%d", kNoteNames[(nn % 12 + 12) % 12], nn / 12 - 1);
-  }
-
-  static float MeterSatScale() {
-    const int sat = ThemeSatMax();
-    return (sat <= 30) ? (float)sat / 30.f : (1.f + (float)(sat - 30) / 55.f);
-  }
-
-  static IColor SemColor(IColor c) {
-    const float m = std::clamp(MeterSatScale(), 0.f, 1.f);
-    const float lum = 0.299f * c.R + 0.587f * c.G + 0.114f * c.B;
-    return IColor(c.A, (int)std::lround(c.R * m + lum * (1.f - m)),
-                        (int)std::lround(c.G * m + lum * (1.f - m)),
-                        (int)std::lround(c.B * m + lum * (1.f - m)));
   }
 };
 
