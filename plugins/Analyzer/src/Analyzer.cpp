@@ -360,8 +360,8 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
       return r;
     };
 
-    // 触发模式（EDGE / AUTOCORR / FREQ）
-    mScopeTrigBtn = new FlatCycleButton(scopeBtnRect(104.f), kNoParameter, {"EDGE", "AUTOCORR", "FREQ"}, btnStyle);
+    // 示波器模式（ROLL / AUTOCORR / FREQ）
+    mScopeTrigBtn = new FlatCycleButton(scopeBtnRect(104.f), kNoParameter, {"ROLL", "AUTOCORR", "FREQ"}, btnStyle);
     mScopeTrigBtn->SetCycleHandler([this](int v) {
       if (mOscilloscopeCtrl)
         mOscilloscopeCtrl->SetTrigSource(v);
@@ -383,16 +383,6 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     });
     pGraphics->AttachControl(mScopeChanBtn);
     bindTip(mScopeChanBtn, orm::kTxtTipScopeChan);
-
-    // 触发开关：关闭后为自由扫描（不等待触发事件），样式同 FREEZE/HOLD
-    mScopeTrgBtn = new FlatToggleControl(scopeBtnRect(44.f), kNoParameter, " ", toggleStyle, "TRG", "TRG");
-    mScopeTrgBtn->SetValue(1.0); // 默认开启触发
-    mScopeTrgBtn->SetActionFunction([this](IControl *p) {
-      if (mOscilloscopeCtrl)
-        mOscilloscopeCtrl->SetTrigOn(p->GetValue() > 0.5);
-    });
-    pGraphics->AttachControl(mScopeTrgBtn);
-    bindTip(mScopeTrgBtn, orm::kTxtTipScopeTrgOn);
 
     mScopeCtrl = new StereoFieldControl(IRECT(20.f, kBottomTop, kBottomMidX - 4.f, kBottomB));
     pGraphics->AttachControl(mScopeCtrl, kCtrlTagScope);
@@ -1337,7 +1327,6 @@ void ORMAnalyzer::OnUIClose() {
   mSlopeBtn = nullptr;
   mScopeTrigBtn = nullptr;
   mScopeChanBtn = nullptr;
-  mScopeTrgBtn = nullptr;
   mScopeZoomSlider = nullptr;
   mScopeTimeSlider = nullptr;
   mSettingsPanel = nullptr;

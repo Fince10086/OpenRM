@@ -91,7 +91,6 @@ enum EText {
   kTxtTipScopeChan,
   kTxtTipScopeTime,
   kTxtTipScopeZoom,
-  kTxtTipScopeTrgOn,
   kNumTexts
 };
 
@@ -174,11 +173,10 @@ inline const char *Tr(int id, int lang) {
           "FAST",
           "MAX",
           "Analyzer response speed (release time): LOG 4/2/1/0.5/0.2 s for MIN..MAX; LIN ≈ ×1.2 (4.8/2.4/1.2/0.6/0.25 s). Attack fixed 0.05 s. Click cycles slow → fast.",
-          "Oscilloscope trigger mode: EDGE (rising-edge threshold, drag the T handle in the plot) / AUTOCORR (period-locked) / FREQ (free-running sweep: the pen writes sample-by-sample, wraps after one time window and overwrites the old trace)",
+          "Oscilloscope mode: ROLL (continuous real-time window, rightmost edge is current moment) / AUTOCORR (period-locked) / FREQ (free-running sweep: the pen writes sample-by-sample, wraps after one time window and overwrites the old trace)",
           "Oscilloscope channel display: click to cycle M -> L -> R (button shows the current channel color). Trigger reference follows the displayed channel",
           "Oscilloscope time window: drag 10 ms - 2 s (logarithmic; sweep mode clears and rescans on change)",
-          "Oscilloscope amplitude zoom: drag 1x - 8x (logarithmic; double-click the plot to reset zoom and trigger level)",
-          "Oscilloscope trigger on/off: off = free-running sweep (the trace keeps sweeping and overwriting, no trigger wait)",
+          "Oscilloscope amplitude zoom: drag 1x - 8x (logarithmic; double-click the plot to reset zoom)",
       },
       {
           "释放",
@@ -257,11 +255,10 @@ inline const char *Tr(int id, int lang) {
           "快速",
           "最快",
           "频谱响应速度档位（释放时间）：LOG 下 MIN~MAX 为 4/2/1/0.5/0.2 秒；LIN 下约为 ×1.2（4.8/2.4/1.2/0.6/0.25 秒）。上升时间固定 0.05 秒。点击循环：慢 → 快。",
-          "示波器触发模式：EDGE（上升沿门限，可在波形区拖动 T 手柄）/ AUTOCORR（自相关周期锁定）/ FREQ（自由扫描：笔逐样本写入，扫满一个时间窗后回卷左缘覆盖旧迹线）",
+          "示波器模式：ROLL（实时连续窗口，右侧为当前最新采样点）/ AUTOCORR（自相关周期锁定）/ FREQ（自由扫描：笔逐样本写入，扫满一个时间窗后回卷左缘覆盖旧迹线）",
           "示波器声道显示：单击循环 M → L → R，按钮显示当前通道色；触发参考随显示通道自动决定",
           "示波器时间窗：拖动 10ms–2s（对数刻度；FREQ 扫描模式下变更即清空重扫）",
-          "示波器幅度倍率：拖动 1x–8x（对数刻度；双击波形区复位缩放与触发门限）",
-          "示波器触发开关：关闭后为自由扫描（画面持续扫描覆盖，不等待触发）",
+          "示波器幅度倍率：拖动 1x–8x（对数刻度；双击波形区复位缩放）",
       },
   };
   return kTable[lang][id];

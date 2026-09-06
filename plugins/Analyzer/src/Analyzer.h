@@ -136,7 +136,6 @@ private:
   FlatToggleControl *mFreezeBtn = nullptr;
   FlatCycleButton *mScopeTrigBtn = nullptr;
   FlatCycleButton *mScopeChanBtn = nullptr;
-  FlatToggleControl *mScopeTrgBtn = nullptr;
   ORMSlider *mScopeZoomSlider = nullptr;
   ORMSlider *mScopeTimeSlider = nullptr;
 
