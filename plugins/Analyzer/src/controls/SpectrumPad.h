@@ -854,7 +854,7 @@ private:
     LoudWindow(topL, botL);
     const bool tgtValid = mTarget > -100.f;
 
-    const IText t(14, COL_700(), kFontRegular, EAlign::Far, EVAlign::Bottom);
+    const IText t(14, COL_700(), kFontRegular, EAlign::Far, EVAlign::Top);
     auto drawTickText = [&](float v, const IRECT &labelR) {
       char buf[8];
       std::snprintf(buf, sizeof(buf), "%d", (int)std::lround(v));
@@ -977,7 +977,9 @@ private:
     g.MeasureText(txtT, valBuf, mr);
 
     const float textL = barsR + kGapBars;
-    g.DrawText(txtT, valBuf, IRECT(textL, midY - mr.H() * 0.5f, textL + mr.W(), midY + mr.H() * 0.5f));
+    // 分布偏低时读数不再居中, 整体上移到读数底缘 = 画区底缘, 避免被下缘裁掉 (偏高档顶部同理钳制)
+    const float textT = std::clamp(midY - mr.H() * 0.5f, plot.T, plot.B - mr.H());
+    g.DrawText(txtT, valBuf, IRECT(textL, textT, textL + mr.W(), textT + mr.H()));
 
     // 括弧跨度容不下文字时只显示文字, 避免横帽与文字打架
     if (mr.H() > span)

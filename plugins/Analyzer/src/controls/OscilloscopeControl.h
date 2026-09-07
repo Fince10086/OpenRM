@@ -680,8 +680,8 @@ private:
 
   // SYNC 基频检测读数: 底缘右下, 贴边纯文本 (同频谱刻度排版)
   IRECT DetRect(const IRECT &plot) const {
-    // 右对齐文字, 宽度只求容得下; 左缘避开画区左下角悬浮的模式/声道按钮 (约至 plot.L + 105)
-    return IRECT(plot.R - 168.f, plot.B - 2.f - kLabelH, plot.R - kTickRight, plot.B - 2.f);
+    // 右对齐文字, 宽度只求容得下 (模式/声道按钮已回到画区上方, 画区左下角无遮挡)
+    return IRECT(plot.R - 190.f, plot.B - 2.f - kLabelH, plot.R - kTickRight, plot.B - 2.f);
   }
 
   void DrawStatusReadout(IGraphics &g, const IRECT &plot) {

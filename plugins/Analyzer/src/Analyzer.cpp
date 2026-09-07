@@ -344,31 +344,59 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
       }
     };
 
-    // 下半区布局：左侧立体声像（Stereo Field），右侧时域示波器（Oscilloscope）；
-    // 模式/声道按钮悬浮于示波器画区左下角（见下），Det 读出在画区右下角
-    constexpr float kBotBtnY = 334.f;  // 两卡片顶缘: 频谱下沿 328 + 6（四周间距统一 6px）
+    // 下半区布局：示波器模式/声道按钮行回归卡片上方（同频谱顶行风格），下方左侧立体声像
+    // （Stereo Field）、右侧时域示波器（Oscilloscope）；声像图顶/底与示波器卡片对齐，其上方
+    // 留出与按钮行等高的空行，之后放声像图自己的按钮；Det 读出仍在画区右下角
+    constexpr float kBotBtnY = 334.f;  // 按钮行顶缘: 频谱下沿 328 + 6（四周间距统一 6px）
     constexpr float kBotBtnH = 26.f;
     constexpr float kBotBtnGap = 6.f;
-    constexpr float kBottomB = 640.f;  // 声像图底缘
+    constexpr float kBottomTop = kBotBtnY + kBotBtnH + 6.f; // 366：按钮行下距卡片 6, 卡片整体随之比上一版下移
     constexpr float kBottomMidX = 398.f;
+    // 示波器右缘 = LUFS Integrated 电平条左缘 = 频谱画区右缘 (784-200) + 增益条 28 + VU 刻度 28 + VU 条 28 + LUFS 刻度 28
+    constexpr float kScopeR = 784.f - kMeterStripW + 2.f * kGainBarW + kVuScaleW + 2.f * kVuBarW + kLufsScaleW;
+    constexpr float kScopeH = 233.f; // 卡片高度与上一版一致, 内部几何不变
+    constexpr float kScopeB = kBottomTop + kScopeH; // 599: 右栏标题下缘与之对齐, 声像图底缘随之对齐
 
-    // 声像图: 左缘与频谱区左缘 (20) 对齐
-    mScopeCtrl = new StereoFieldControl(IRECT(20.f, kBotBtnY, kBottomMidX - 4.f, kBottomB));
+    // 声道选择（最左）：单击循环 M → L → R，按钮填充当前通道色；触发参考随显示通道自动决定
+    IColor ccL, ccR, ccM;
+    GetChannelColors(ccL, ccR, ccM);
+    float scopeBtnX = kBottomMidX + 2.f + OscilloscopeControl::kSliderW; // 左缘与示波器画区（滑块右侧）左缘对齐
+    auto scopeBtnRect = [&](float w) {
+      const IRECT r(scopeBtnX, kBotBtnY, scopeBtnX + w, kBotBtnY + kBotBtnH);
+      scopeBtnX += w + kBotBtnGap;
+      return r;
+    };
+    mScopeChanBtn = new FlatCycleButton(scopeBtnRect(34.f), kNoParameter, {"M", "L", "R"}, btnStyle);
+    mScopeChanBtn->SetIndexColors({ccM, ccL, ccR});
+    mScopeChanBtn->SetCycleHandler([this](int v) {
+      if (!mOscilloscopeCtrl)
+        return;
+      static constexpr int kChanBits[3] = {OscilloscopeControl::kChanBitM, OscilloscopeControl::kChanBitL,
+                                           OscilloscopeControl::kChanBitR};
+      mOscilloscopeCtrl->SetChanMask(kChanBits[v]);
+    });
+    pGraphics->AttachControl(mScopeChanBtn);
+    bindTip(mScopeChanBtn, orm::kTxtTipScopeChan);
+
+    // 示波器模式（滚动 / 同步 / 扫描）在声道按钮右侧, 宽度与频谱模式按钮一致 (kTopBtnW)
+    mScopeTrigBtn = new FlatCycleButton(scopeBtnRect(kTopBtnW), kNoParameter, {"ROLL", "SYNC", "SWEEP"}, btnStyle);
+    mScopeTrigBtn->SetCycleHandler([this](int v) {
+      if (mOscilloscopeCtrl)
+        mOscilloscopeCtrl->SetTrigSource(v);
+    });
+    mScopeTrigBtn->SetFreeIndex(1); // 与示波器默认 SYNC 模式一致
+    pGraphics->AttachControl(mScopeTrigBtn);
+    bindTip(mScopeTrigBtn, orm::kTxtTipScopeTrig);
+
+    // 声像图: 顶/底与示波器卡片对齐 (kBottomTop..kScopeB), 左缘与频谱区左缘 (20) 对齐
+    mScopeCtrl = new StereoFieldControl(IRECT(20.f, kBottomTop, kBottomMidX - 4.f, kScopeB));
     pGraphics->AttachControl(mScopeCtrl, kCtrlTagScope);
 
-    // 示波器边界:
-    // 顶 = 声像图顶 (kBotBtnY);
-    // 右 = LUFS Integrated 电平条左缘 = 频谱画区右缘 (784-200) + 增益条 28 + VU 刻度 28 + VU 条 28 + LUFS 刻度 28 = 696;
-    // 底 = 使底部滑块把手下缘与声像图 Balance 读数文字下缘对齐:
-    //      Balance 读数行 = 扇形基线 (cv.T + rMax = 519) 下 537..559, 文字下缘 ≈ 554;
-    //      把手下缘 = 画区下缘 + 1 + 把手半径 8.5 → 画区下缘 545 → B = 545 + 22 = 567
-    constexpr float kScopeR = 784.f - kMeterStripW + 2.f * kGainBarW + kVuScaleW + 2.f * kVuBarW + kLufsScaleW;
-    constexpr float kScopeB = 567.f;
-    mOscilloscopeCtrl = new OscilloscopeControl(IRECT(kBottomMidX + 2.f, kBotBtnY, kScopeR, kScopeB));
+    mOscilloscopeCtrl = new OscilloscopeControl(IRECT(kBottomMidX + 2.f, kBottomTop, kScopeR, kScopeB));
     pGraphics->AttachControl(mOscilloscopeCtrl, kCtrlTagOscilloscope);
 
     // 示波器内嵌滑块：左侧幅度倍率（1x..8x，对数刻度），底部时间窗（1ms..2s，对数刻度）。
-    // 须在示波器之后、悬浮按钮之前 attach: 把手悬出部分要盖在画区上, 而与按钮重叠的边缘让按钮在上层
+    // 须在示波器之后 attach: 把手悬出部分要盖在画区上
     mScopeZoomSlider = new ORMSlider(mOscilloscopeCtrl->GetZoomSliderRect(),
                                      [this](IControl *p) {
                                        if (mOscilloscopeCtrl)
@@ -395,42 +423,6 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     pGraphics->AttachControl(mScopeTimeSlider);
     bindTip(mScopeTimeSlider, orm::kTxtTipScopeTime);
 
-    // 模式/声道按钮悬浮于画区左下角: 左/下边距 3/2 px (与右下角 Det 读出一致);
-    // 必须在示波器与滑块之后 attach, 才能绘制在它们上层
-    IColor ccL, ccR, ccM;
-    GetChannelColors(ccL, ccR, ccM);
-    const IRECT scopePlot = mOscilloscopeCtrl->GetPlotRect();
-    const float scopeBtnB = scopePlot.B - 2.f;
-    float scopeBtnX = scopePlot.L + 3.f;
-    auto scopeBtnRect = [&](float w) {
-      const IRECT r(scopeBtnX, scopeBtnB - kBotBtnH, scopeBtnX + w, scopeBtnB);
-      scopeBtnX += w + kBotBtnGap;
-      return r;
-    };
-
-    // 声道选择（最左）：单击循环 M → L → R，按钮填充当前通道色；触发参考随显示通道自动决定
-    mScopeChanBtn = new FlatCycleButton(scopeBtnRect(34.f), kNoParameter, {"M", "L", "R"}, btnStyle);
-    mScopeChanBtn->SetIndexColors({ccM, ccL, ccR});
-    mScopeChanBtn->SetCycleHandler([this](int v) {
-      if (!mOscilloscopeCtrl)
-        return;
-      static constexpr int kChanBits[3] = {OscilloscopeControl::kChanBitM, OscilloscopeControl::kChanBitL,
-                                           OscilloscopeControl::kChanBitR};
-      mOscilloscopeCtrl->SetChanMask(kChanBits[v]);
-    });
-    pGraphics->AttachControl(mScopeChanBtn);
-    bindTip(mScopeChanBtn, orm::kTxtTipScopeChan);
-
-    // 示波器模式（滚动 / 同步 / 扫描）在声道按钮右侧, 宽度与频谱模式按钮一致 (kTopBtnW)
-    mScopeTrigBtn = new FlatCycleButton(scopeBtnRect(kTopBtnW), kNoParameter, {"ROLL", "SYNC", "SWEEP"}, btnStyle);
-    mScopeTrigBtn->SetCycleHandler([this](int v) {
-      if (mOscilloscopeCtrl)
-        mOscilloscopeCtrl->SetTrigSource(v);
-    });
-    mScopeTrigBtn->SetFreeIndex(1); // 与示波器默认 SYNC 模式一致
-    pGraphics->AttachControl(mScopeTrigBtn);
-    bindTip(mScopeTrigBtn, orm::kTxtTipScopeTrig);
-
     // 动态范围按钮（频谱底部右缘）
     constexpr float kRangeBtnW = 38.f;
     constexpr float kRangeBtnH = 19.f;
@@ -442,10 +434,10 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     mRangeBtn->SetScaleLabelStyle(true);
     bindTip(mRangeBtn, orm::kTxtTipRange);
 
-    // 右栏控件组
+    // 右栏控件组: 图标行底 = 标题下缘 (kScopeB) 上方 74 (原布局 610 = 684-74), 整簇随标题对齐示波器下缘
     constexpr float kRowGap = kBtnGap;
     constexpr float kRowH = 26.f;
-    constexpr float kIconRowY = 610.f - kRowH;
+    constexpr float kIconRowY = kScopeB - 74.f - kRowH;
     constexpr float kHoldRowY = kIconRowY - kRowGap - kRowH;
     constexpr float kFreezeRowY = kHoldRowY - kRowGap - kRowH;
     constexpr float kCpuY = kFreezeRowY - kRowGap - kRowH;
@@ -531,19 +523,21 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     pGraphics->AttachControl(mLevelHoldTimeBtn);
     bindTip(mLevelHoldTimeBtn, orm::kTxtTipLevelHoldTime);
 
-    // 底部标题栏
+    // 底部标题栏: "Analyzer" 下缘与示波器卡片下缘 (kScopeB) 对齐
     IText ormText(32, COL_900(), kFontBold, EAlign::Near, EVAlign::Bottom);
-    pGraphics->AttachControl(new SectionTitleControl(IRECT(kCol1X, 618, kCol1X + 120, 652), "ORM", ormText, 0));
-    IRECT ormInk(kCol1X, 618, kCol1X + 120, 652);
+    pGraphics->AttachControl(new SectionTitleControl(IRECT(kCol1X, kScopeB - 66.f, kCol1X + 120, kScopeB - 32.f),
+                                                     "ORM", ormText, 0));
+    IRECT ormInk(kCol1X, kScopeB - 66.f, kCol1X + 120, kScopeB - 32.f);
     pGraphics->MeasureText(ormText, "ORM", ormInk);
     const float gearL = ormInk.R + 8.f;
     const float gearR = gearL + (ormInk.B - ormInk.T);
     pGraphics->AttachControl(
         new SettingsMenuButton(IRECT(gearL, ormInk.T, gearR, ormInk.B), [this]() { ToggleSettingsPanel(); }));
-    pGraphics->AttachControl(new SectionTitleControl(IRECT(kCol1X, 650, kPanelR, 684), "Analyzer",
+    pGraphics->AttachControl(new SectionTitleControl(IRECT(kCol1X, kScopeB - 34.f, kPanelR, kScopeB), "Analyzer",
                                                      IText(32, COL_900(), kFontBold, EAlign::Near, EVAlign::Middle),
                                                      0));
-    pGraphics->AttachControl(new SectionTitleControl(IRECT(gearR + 8.f, 615, kPanelR, 649), "v" PLUG_VERSION_STR,
+    pGraphics->AttachControl(new SectionTitleControl(IRECT(gearR + 8.f, kScopeB - 69.f, kPanelR, kScopeB - 35.f),
+                                                     "v" PLUG_VERSION_STR,
                                                      IText(20, COL_500(), kFontRegular, EAlign::Near, EVAlign::Bottom),
                                                      1, 0));
 
