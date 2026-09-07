@@ -91,6 +91,11 @@ enum EText {
   kTxtTipScopeChan,
   kTxtTipScopeTime,
   kTxtTipScopeZoom,
+  kTxtCorr,
+  kTxtBalance,
+  kTxtScopeRoll,
+  kTxtScopeSync,
+  kTxtScopeSweep,
   kNumTexts
 };
 
@@ -177,6 +182,11 @@ inline const char *Tr(int id, int lang) {
           "Oscilloscope channel display: click to cycle M -> L -> R (button shows the current channel color). Trigger reference follows the displayed channel",
           "Oscilloscope time window: drag 10 ms - 2 s (logarithmic; sweep mode clears and rescans on change)",
           "Oscilloscope amplitude zoom: drag 1x - 8x (logarithmic; double-click the plot to reset zoom)",
+          "CORRELATION",
+          "BALANCE",
+          "ROLL",
+          "SYNC",
+          "SWEEP",
       },
       {
           "释放",
@@ -259,6 +269,11 @@ inline const char *Tr(int id, int lang) {
           "示波器声道显示：单击循环 M → L → R，按钮显示当前通道色；触发参考随显示通道自动决定",
           "示波器时间窗：拖动 10ms–2s（对数刻度；SWEEP 扫描模式下变更即清空重扫）",
           "示波器幅度倍率：拖动 1x–8x（对数刻度；双击波形区复位缩放）",
+          "相关性",
+          "平衡",
+          "滚动",
+          "同步",
+          "扫描",
       },
   };
   return kTable[lang][id];

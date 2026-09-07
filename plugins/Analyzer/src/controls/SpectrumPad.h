@@ -423,11 +423,12 @@ private:
       }
 
       if (inZone0) {
-        dbText = IText(14, COL_700(), kFontRegular, EAlign::Far, EVAlign::Bottom);
-        if (yLine - kLabelH - 1.f >= plot.T)
-          dbSkip = IRECT(plot.R - 52.f, yLine - kLabelH - 1.f, plot.R - kTickRight, yLine - 1.f);
-        else
-          dbSkip = IRECT(plot.R - 52.f, yLine + 1.f, plot.R - kTickRight, yLine + 1.f + kLabelH);
+        // dB 读数与静态刻度一致: 恒在悬停线下方, 贴底时收敛进画区
+        dbText = IText(14, COL_700(), kFontRegular, EAlign::Far, EVAlign::Top);
+        float dbT = yLine + 1.f;
+        if (dbT + kLabelH > plot.B)
+          dbT = plot.B - kLabelH;
+        dbSkip = IRECT(plot.R - 52.f, dbT, plot.R - kTickRight, dbT + kLabelH);
       }
     }
 
@@ -633,11 +634,13 @@ private:
   float VuZoneR(const IRECT &plot) const { return LrZoneR(plot) + kVuScaleW + 2.f * kVuBarW; }
 
   IRECT VuTickRect(const IRECT &plot, float vu) const {
+    // 刻度字统一放在刻度位置下方; 贴顶缘的刻度(+3)从顶缘下 1px 起, 贴底缘的刻度(-20)收敛进画区
     const float scaleL = LrZoneR(plot);
     if (vu >= kVuTopDb)
       return IRECT(scaleL, plot.T + 1.f, scaleL + kVuScaleW - kTickRight, plot.T + 1.f + kLabelH);
     const float y = plot.B - (vu - kVuBottomVU) / (kVuTopDb - kVuBottomVU) * plot.H();
-    return IRECT(scaleL, y - kLabelH - 1.f, scaleL + kVuScaleW - kTickRight, y - 1.f);
+    const float t = std::min(y + 1.f, plot.B - kLabelH);
+    return IRECT(scaleL, t, scaleL + kVuScaleW - kTickRight, t + kLabelH);
   }
 
   void LoudWindow(float &topL, float &botL) const {
@@ -656,13 +659,15 @@ private:
   }
 
   IRECT LufsTickRect(const IRECT &plot, float lufs) const {
+    // 刻度字统一放在刻度位置下方; 贴顶缘的刻度从顶缘下 1px 起, 贴底缘的刻度(botL)收敛进画区
     const float scaleL = VuZoneR(plot);
     float topL, botL;
     LoudWindow(topL, botL);
     if (lufs >= topL)
       return IRECT(scaleL, plot.T + 1.f, scaleL + kLufsScaleW - kTickRight, plot.T + 1.f + kLabelH);
     const float y = LoudYOf(plot, lufs);
-    return IRECT(scaleL, y - kLabelH - 1.f, scaleL + kLufsScaleW - kTickRight, y - 1.f);
+    const float t = std::min(y + 1.f, plot.B - kLabelH);
+    return IRECT(scaleL, t, scaleL + kLufsScaleW - kTickRight, t + kLabelH);
   }
 
   static IRECT LoudTickBtnRect(const IRECT &labelR) {
@@ -693,7 +698,7 @@ private:
   }
 
   void DrawVuScale(IGraphics &g, const IRECT &plot, const IRECT &skipRect) {
-    const IText t(14, COL_700(), kFontRegular, EAlign::Far, EVAlign::Bottom);
+    const IText t(14, COL_700(), kFontRegular, EAlign::Far, EVAlign::Top);
     struct VuTick {
       int vu;
       const char *txt;
@@ -1129,7 +1134,7 @@ private:
       return;
 
     const int bottomDb = (int)mBottomDb;
-    const IText t(14, COL_700(), kFontRegular, EAlign::Far, EVAlign::Bottom);
+    const IText t(14, COL_700(), kFontRegular, EAlign::Far, EVAlign::Top);
 
     for (int db = 0; db >= bottomDb; db -= 20) {
       if (db == bottomDb)
@@ -1137,7 +1142,8 @@ private:
 
       const float y = plot.B - (float)(db - bottomDb) / (kTopDb - (float)bottomDb) * plot.H();
 
-      const IRECT labelR(plot.R - 52.f, y - kLabelH - 1.f, plot.R - kTickRight, y - 1.f);
+      // 刻度字统一放在刻度线 (20dB 分界) 下方; 最底一条线下方已出画区, 故跳过
+      const IRECT labelR(plot.R - 52.f, y + 1.f, plot.R - kTickRight, y + 1.f + kLabelH);
       if (!skipRect.Empty() && labelR.Intersects(skipRect))
         continue;
 

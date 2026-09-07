@@ -88,6 +88,11 @@ public:
     return IRECT(mRECT.L + kSliderW, mRECT.B - kSliderH - 2.f, mRECT.R - 2.f, mRECT.B - 2.f);
   }
 
+  IRECT GetPlotRect() const {
+    // 左缘 = 缩放滑块条右缘 (无缝), 下缘 = 时间滑块条上缘 (无缝), 右/上各留 2px
+    return IRECT(mRECT.L + kSliderW, mRECT.T + 2.f, mRECT.R - 2.f, mRECT.B - kSliderH - 2.f);
+  }
+
   // 触发参考通道随显示声道自动决定：M 开启（或 L+R 同显）用 M，仅 L/R 单显用该声道
   int EffectiveTrigChan() const {
     if (mChanMask & kChanBitM)
@@ -366,11 +371,6 @@ private:
   std::vector<float> mEnvTop;
   std::vector<float> mEnvBot;
   std::vector<float> mEnvX;
-
-  IRECT GetPlotRect() const {
-    // 左缘 = 缩放滑块条右缘 (无缝), 下缘 = 时间滑块条上缘 (无缝), 右/上各留 2px
-    return IRECT(mRECT.L + kSliderW, mRECT.T + 2.f, mRECT.R - 2.f, mRECT.B - kSliderH - 2.f);
-  }
 
   float GetCurrentZoom() const {
     return std::clamp(mZoomFactor, 1.f, kMaxZoom);
@@ -680,7 +680,8 @@ private:
 
   // SYNC 基频检测读数: 底缘右下, 贴边纯文本 (同频谱刻度排版)
   IRECT DetRect(const IRECT &plot) const {
-    return IRECT(plot.R - 190.f, plot.B - 2.f - kLabelH, plot.R - kTickRight, plot.B - 2.f);
+    // 右对齐文字, 宽度只求容得下; 左缘避开画区左下角悬浮的模式/声道按钮 (约至 plot.L + 105)
+    return IRECT(plot.R - 168.f, plot.B - 2.f - kLabelH, plot.R - kTickRight, plot.B - 2.f);
   }
 
   void DrawStatusReadout(IGraphics &g, const IRECT &plot) {

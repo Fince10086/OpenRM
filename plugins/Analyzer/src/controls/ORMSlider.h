@@ -44,6 +44,18 @@ public:
   // 轨道贴控件远端边 (垂直贴右缘 / 水平贴顶缘): 示波器内嵌滑块用, 轨道与画区边缘齐平, 圆形把手允许压到画区上
   void SetTrackFar(bool v) { mTrackFar = v; SetDirty(false); }
 
+  // 把手悬出扩边: iPlug2 区域渲染把每个控件裁剪到自身矩形, 悬出到画区上的把手部分若不在
+  // 控件矩形内就永远画不出来 (视觉上像被背景盖住)。调用后控件矩形向悬出侧扩边 knobR,
+  // mOverhang/mStrip 记录扩边量与滑条本体矩形, 供 OnResize/绘制/命中判定使用; 配合 SetTrackFar 使用
+  void EnableOverhang(float knobR) {
+    mOverhang = knobR;
+    if (mDirection == EDirection::Horizontal)
+      mRECT.T -= knobR; // 水平轨道贴顶缘: 把手向上悬出画区
+    else
+      mRECT.R += knobR; // 垂直轨道贴右缘: 把手向右悬出画区
+    OnResize();
+  }
+
   void SetValueFormatter(std::function<void(WDL_String &)> f) { mValueFormatter = std::move(f); }
   void SetHeaderLabel(const char *s) {
     mHeaderLabel.Set(s);
@@ -52,15 +64,21 @@ public:
 
   void OnResize() override {
     if (!mHeaderVisible) {
-      // 无表头：滑块完整占用控件矩形
-      mWidgetBounds = mRECT;
+      // 无表头: 行程/轨道基于滑条本体矩形; 控件矩形可能已向把手悬出侧扩边 (mOverhang)
+      if (mOverhang > 0.f) {
+        mStrip = (mDirection == EDirection::Horizontal)
+                     ? IRECT(mRECT.L, mRECT.T + mOverhang, mRECT.R, mRECT.B)
+                     : IRECT(mRECT.L, mRECT.T, mRECT.R - mOverhang, mRECT.B);
+      }
+      const IRECT &strip = (mStrip.W() > 0.f) ? mStrip : mRECT;
+      mWidgetBounds = strip;
       if (mDirection == EDirection::Horizontal) {
-        const IRECT travel = mRECT.GetPadded(-mHandleSize); // 把手行程: 左右各留把手半径
-        mTrackBounds = mTrackFar ? IRECT(travel.L, mRECT.T, travel.R, mRECT.T + mTrackSize)
+        const IRECT travel = strip.GetPadded(-mHandleSize); // 把手行程: 左右各留把手半径
+        mTrackBounds = mTrackFar ? IRECT(travel.L, strip.T, travel.R, strip.T + mTrackSize)
                                  : travel.GetMidVPadded(mTrackSize);
       } else {
-        const IRECT travel = mRECT.GetPadded(-mHandleSize); // 把手行程: 上下各留把手半径
-        mTrackBounds = mTrackFar ? IRECT(mRECT.R - mTrackSize, travel.T, mRECT.R, travel.B)
+        const IRECT travel = strip.GetPadded(-mHandleSize); // 把手行程: 上下各留把手半径
+        mTrackBounds = mTrackFar ? IRECT(strip.R - mTrackSize, travel.T, strip.R, travel.B)
                                  : travel.GetMidHPadded(mTrackSize);
       }
       SetTargetRECT(mRECT);
@@ -83,7 +101,8 @@ public:
   bool IsHit(float x, float y) const override { return mRECT.Contains(x, y); }
 
   void Draw(IGraphics &g) override {
-    g.FillRect(COL_100(), mRECT);
+    // 背景只填滑条本体: 悬出扩边区覆盖在画区上, 不能抹掉画区内容
+    g.FillRect(COL_100(), (mStrip.W() > 0.f) ? mStrip : mRECT);
     DrawWidget(g);
     if (mHeaderVisible)
       DrawHeader(g, mDirection == EDirection::Horizontal ? 0.f : -90.f);
@@ -96,6 +115,15 @@ public:
       if (GetParam())
         PromptUserInput(ValueRect());
       return;
+    }
+    // 悬出扩边区(画区上): 仅把手附近响应, 避免贴着画区边缘点击时误改滑块值
+    if (mStrip.W() > 0.f && !mStrip.Contains(x, y)) {
+      const IRECT filledTrack = mTrackBounds.FracRect(mDirection, (float)GetValue());
+      const float kcx = (mDirection == EDirection::Vertical) ? filledTrack.MW() : filledTrack.R;
+      const float kcy = (mDirection == EDirection::Vertical) ? filledTrack.T : filledTrack.MH();
+      const float dx = x - kcx, dy = y - kcy;
+      if (dx * dx + dy * dy > 10.5f * 10.5f) // 把手外缘半径 8.5 + 2 余量
+        return;
     }
     IVSliderControl::OnMouseDown(x, y, mod);
   }
@@ -178,6 +206,8 @@ protected:
   std::function<void(WDL_String &)> mValueFormatter;
   bool mHeaderVisible = true;
   bool mTrackFar = false;
+  float mOverhang = 0.f; // 把手悬出扩边量, 0 = 未扩边
+  IRECT mStrip;          // 滑条本体矩形 (扩边后排除悬出区)
 };
 
 END_IGRAPHICS_NAMESPACE

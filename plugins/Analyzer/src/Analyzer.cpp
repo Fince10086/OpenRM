@@ -344,36 +344,71 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
       }
     };
 
-    // 下半区布局：频谱下新增一排示波器按钮（同频谱顶行风格），
-    // 下方左侧立体声像（Stereo Field），右侧时域示波器（Oscilloscope）
-    constexpr float kBotBtnY = 334.f;  // 频谱下沿 328 + 6（四周间距统一 6px）
+    // 下半区布局：左侧立体声像（Stereo Field），右侧时域示波器（Oscilloscope）；
+    // 模式/声道按钮悬浮于示波器画区左下角（见下），Det 读出在画区右下角
+    constexpr float kBotBtnY = 334.f;  // 两卡片顶缘: 频谱下沿 328 + 6（四周间距统一 6px）
     constexpr float kBotBtnH = 26.f;
     constexpr float kBotBtnGap = 6.f;
-    constexpr float kBottomTop = kBotBtnY + kBotBtnH + 6.f; // 366：按钮下距示波器画区 6
-    constexpr float kBottomB = 640.f;                        // 面板底缘不变，卡片随上移略变高
+    constexpr float kBottomB = 640.f;  // 声像图底缘
     constexpr float kBottomMidX = 398.f;
 
-    // 示波器按钮位于示波器区域左上方，左缘与示波器画区（滑块右侧）左缘对齐
-    float scopeBtnX = kBottomMidX + 2.f + OscilloscopeControl::kSliderW;
+    // 声像图: 左缘与频谱区左缘 (20) 对齐
+    mScopeCtrl = new StereoFieldControl(IRECT(20.f, kBotBtnY, kBottomMidX - 4.f, kBottomB));
+    pGraphics->AttachControl(mScopeCtrl, kCtrlTagScope);
+
+    // 示波器边界:
+    // 顶 = 声像图顶 (kBotBtnY);
+    // 右 = LUFS Integrated 电平条左缘 = 频谱画区右缘 (784-200) + 增益条 28 + VU 刻度 28 + VU 条 28 + LUFS 刻度 28 = 696;
+    // 底 = 使底部滑块把手下缘与声像图 Balance 读数文字下缘对齐:
+    //      Balance 读数行 = 扇形基线 (cv.T + rMax = 519) 下 537..559, 文字下缘 ≈ 554;
+    //      把手下缘 = 画区下缘 + 1 + 把手半径 8.5 → 画区下缘 545 → B = 545 + 22 = 567
+    constexpr float kScopeR = 784.f - kMeterStripW + 2.f * kGainBarW + kVuScaleW + 2.f * kVuBarW + kLufsScaleW;
+    constexpr float kScopeB = 567.f;
+    mOscilloscopeCtrl = new OscilloscopeControl(IRECT(kBottomMidX + 2.f, kBotBtnY, kScopeR, kScopeB));
+    pGraphics->AttachControl(mOscilloscopeCtrl, kCtrlTagOscilloscope);
+
+    // 示波器内嵌滑块：左侧幅度倍率（1x..8x，对数刻度），底部时间窗（1ms..2s，对数刻度）。
+    // 须在示波器之后、悬浮按钮之前 attach: 把手悬出部分要盖在画区上, 而与按钮重叠的边缘让按钮在上层
+    mScopeZoomSlider = new ORMSlider(mOscilloscopeCtrl->GetZoomSliderRect(),
+                                     [this](IControl *p) {
+                                       if (mOscilloscopeCtrl)
+                                         mOscilloscopeCtrl->SetZoomFactor(std::pow(2.f, 3.f * (float)p->GetValue()));
+                                     },
+                                     "", style, EDirection::Vertical);
+    mScopeZoomSlider->SetHeaderVisible(false);
+    mScopeZoomSlider->SetTrackFar(true); // 轨道贴条右缘 = 画区左缘
+    mScopeZoomSlider->EnableOverhang(8.f); // 控件矩形向画区扩边: 区域渲染按控件矩形裁剪, 悬出的把手才能画出来
+    mScopeZoomSlider->SetValue(std::log2((double)OscilloscopeControl::kDefaultZoom) / 3.0);
+    pGraphics->AttachControl(mScopeZoomSlider);
+    bindTip(mScopeZoomSlider, orm::kTxtTipScopeZoom);
+
+    mScopeTimeSlider = new ORMSlider(mOscilloscopeCtrl->GetTimeSliderRect(),
+                                     [this](IControl *p) {
+                                       if (mOscilloscopeCtrl)
+                                         mOscilloscopeCtrl->SetWindowSec(0.010 * std::pow(200.0, p->GetValue()));
+                                     },
+                                     "", style, EDirection::Horizontal);
+    mScopeTimeSlider->SetHeaderVisible(false);
+    mScopeTimeSlider->SetTrackFar(true); // 轨道贴条顶缘 = 画区下缘, 与左滑块同款无缝
+    mScopeTimeSlider->EnableOverhang(8.f); // 把手向上悬出画区且可见
+    mScopeTimeSlider->SetValue(std::log(OscilloscopeControl::kDefaultWindowSec / 0.010) / std::log(200.0));
+    pGraphics->AttachControl(mScopeTimeSlider);
+    bindTip(mScopeTimeSlider, orm::kTxtTipScopeTime);
+
+    // 模式/声道按钮悬浮于画区左下角: 左/下边距 3/2 px (与右下角 Det 读出一致);
+    // 必须在示波器与滑块之后 attach, 才能绘制在它们上层
+    IColor ccL, ccR, ccM;
+    GetChannelColors(ccL, ccR, ccM);
+    const IRECT scopePlot = mOscilloscopeCtrl->GetPlotRect();
+    const float scopeBtnB = scopePlot.B - 2.f;
+    float scopeBtnX = scopePlot.L + 3.f;
     auto scopeBtnRect = [&](float w) {
-      const IRECT r(scopeBtnX, kBotBtnY, scopeBtnX + w, kBotBtnY + kBotBtnH);
+      const IRECT r(scopeBtnX, scopeBtnB - kBotBtnH, scopeBtnX + w, scopeBtnB);
       scopeBtnX += w + kBotBtnGap;
       return r;
     };
 
-    // 示波器模式（ROLL / SYNC / SWEEP）
-    mScopeTrigBtn = new FlatCycleButton(scopeBtnRect(88.f), kNoParameter, {"ROLL", "SYNC", "SWEEP"}, btnStyle);
-    mScopeTrigBtn->SetCycleHandler([this](int v) {
-      if (mOscilloscopeCtrl)
-        mOscilloscopeCtrl->SetTrigSource(v);
-    });
-    mScopeTrigBtn->SetFreeIndex(1); // 与示波器默认 SYNC 模式一致
-    pGraphics->AttachControl(mScopeTrigBtn);
-    bindTip(mScopeTrigBtn, orm::kTxtTipScopeTrig);
-
-    // 声道选择：单击循环 M → L → R，按钮填充当前通道色；触发参考随显示通道自动决定
-    IColor ccL, ccR, ccM;
-    GetChannelColors(ccL, ccR, ccM);
+    // 声道选择（最左）：单击循环 M → L → R，按钮填充当前通道色；触发参考随显示通道自动决定
     mScopeChanBtn = new FlatCycleButton(scopeBtnRect(34.f), kNoParameter, {"M", "L", "R"}, btnStyle);
     mScopeChanBtn->SetIndexColors({ccM, ccL, ccR});
     mScopeChanBtn->SetCycleHandler([this](int v) {
@@ -386,37 +421,15 @@ ORMAnalyzer::ORMAnalyzer(const InstanceInfo &info) : Plugin(info, MakeConfig(kNu
     pGraphics->AttachControl(mScopeChanBtn);
     bindTip(mScopeChanBtn, orm::kTxtTipScopeChan);
 
-    // 声像图顶缘与示波器按钮排顶对齐 (kBotBtnY), 左缘与频谱区左缘 (20) 对齐
-    mScopeCtrl = new StereoFieldControl(IRECT(20.f, kBotBtnY, kBottomMidX - 4.f, kBottomB));
-    pGraphics->AttachControl(mScopeCtrl, kCtrlTagScope);
-
-    // 右缘 780（原 784）：与右栏按钮留出间隙，不再紧贴
-    mOscilloscopeCtrl = new OscilloscopeControl(IRECT(kBottomMidX + 2.f, kBottomTop, 780.f, kBottomB));
-    pGraphics->AttachControl(mOscilloscopeCtrl, kCtrlTagOscilloscope);
-
-    // 示波器内嵌滑块：右侧幅度倍率（1x..8x，对数刻度），底部时间窗（1ms..2s，对数刻度）
-    mScopeZoomSlider = new ORMSlider(mOscilloscopeCtrl->GetZoomSliderRect(),
-                                     [this](IControl *p) {
-                                       if (mOscilloscopeCtrl)
-                                         mOscilloscopeCtrl->SetZoomFactor(std::pow(2.f, 3.f * (float)p->GetValue()));
-                                     },
-                                     "", style, EDirection::Vertical);
-    mScopeZoomSlider->SetHeaderVisible(false);
-    mScopeZoomSlider->SetTrackFar(true); // 轨道贴条右缘 = 画区左缘, 把手可压到画区上
-    mScopeZoomSlider->SetValue(std::log2((double)OscilloscopeControl::kDefaultZoom) / 3.0);
-    pGraphics->AttachControl(mScopeZoomSlider);
-    bindTip(mScopeZoomSlider, orm::kTxtTipScopeZoom);
-
-    mScopeTimeSlider = new ORMSlider(mOscilloscopeCtrl->GetTimeSliderRect(),
-                                     [this](IControl *p) {
-                                       if (mOscilloscopeCtrl)
-                                         mOscilloscopeCtrl->SetWindowSec(0.010 * std::pow(200.0, p->GetValue()));
-                                     },
-                                     "", style, EDirection::Horizontal);
-    mScopeTimeSlider->SetHeaderVisible(false);
-    mScopeTimeSlider->SetValue(std::log(OscilloscopeControl::kDefaultWindowSec / 0.010) / std::log(200.0));
-    pGraphics->AttachControl(mScopeTimeSlider);
-    bindTip(mScopeTimeSlider, orm::kTxtTipScopeTime);
+    // 示波器模式（滚动 / 同步 / 扫描）在声道按钮右侧, 宽度与频谱模式按钮一致 (kTopBtnW)
+    mScopeTrigBtn = new FlatCycleButton(scopeBtnRect(kTopBtnW), kNoParameter, {"ROLL", "SYNC", "SWEEP"}, btnStyle);
+    mScopeTrigBtn->SetCycleHandler([this](int v) {
+      if (mOscilloscopeCtrl)
+        mOscilloscopeCtrl->SetTrigSource(v);
+    });
+    mScopeTrigBtn->SetFreeIndex(1); // 与示波器默认 SYNC 模式一致
+    pGraphics->AttachControl(mScopeTrigBtn);
+    bindTip(mScopeTrigBtn, orm::kTxtTipScopeTrig);
 
     // 动态范围按钮（频谱底部右缘）
     constexpr float kRangeBtnW = 38.f;
@@ -1219,12 +1232,6 @@ void ORMAnalyzer::OnIdle() {
       mScopeTimeSlider->SetValueFromDelegate(want, 0);
   }
 
-  // 内嵌滑块把手悬出条外、覆盖在画区上; 示波器每帧重绘背景会盖住把手, 滑块需同步重绘保持在顶层
-  if (mScopeZoomSlider)
-    mScopeZoomSlider->SetDirty(false);
-  if (mScopeTimeSlider)
-    mScopeTimeSlider->SetDirty(false);
-
   // 转发电平表数据
   {
     LevelMeterUiData d;
@@ -1618,6 +1625,11 @@ void ORMAnalyzer::ApplyLanguage() {
                           orm::Tr(orm::kTxtSpeedMed, orm::UILang()),
                           orm::Tr(orm::kTxtSpeedFast, orm::UILang()),
                           orm::Tr(orm::kTxtSpeedMax, orm::UILang())});
+  }
+  if (mScopeTrigBtn) {
+    mScopeTrigBtn->SetLabels({orm::Tr(orm::kTxtScopeRoll, orm::UILang()),
+                              orm::Tr(orm::kTxtScopeSync, orm::UILang()),
+                              orm::Tr(orm::kTxtScopeSweep, orm::UILang())});
   }
   ApplyTooltips();
 #if IPLUG_EDITOR

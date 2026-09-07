@@ -131,13 +131,16 @@ inline IColor HoverOverlay() {
 }
 
 // 频谱背景格子灰。深色模式把亮度压缩到近黑窄带、饱和度减半，让频谱亮墨拉开对比；
-// 斜率 0.40 决定格子间灰度阶梯，觉得分界弱可调大、整体亮可调低基值 15
+// 斜率 0.40 决定格子间灰度阶梯，觉得分界弱可调大、整体深浅可调基值 30；
+// 浅色模式按 (255-v)*0.18 向白端提亮：最深的格子不再发闷，其余各档同比例跟随
 inline IColor WarmGray(int v) {
   float vv = (float)v;
   float sScale = 1.f;
   if (ThemeMode()) {
-    vv = 15.f + (255.f - (float)v) * 0.40f;
+    vv = 30.f + (255.f - (float)v) * 0.40f;
     sScale = 0.5f;
+  } else {
+    vv += (255.f - vv) * 0.18f;
   }
   const float b = vv / 255.f;
   const int B = (int)std::lround(b * 100.f);

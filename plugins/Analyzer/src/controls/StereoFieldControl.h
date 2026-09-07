@@ -103,7 +103,7 @@ private:
   static constexpr double kFftCal = 0.375 * (double)kFftN * (double)kFftN; // 满幅正弦 = 0 dB
 
   static constexpr float kBarH = 14.f;       // 复合条轨道厚度 (L/R 内嵌其中, 需容纳文字)
-  static constexpr float kReadoutH = 22.f;   // 基线下 CORR/BAL 读数行高
+  static constexpr float kReadoutH = 22.f;   // 基线下 CORRELATION/BALANCE 读数行高
   // 基线以下固定占用: 横条 + 间距 + 读数行 + 底缘边距, 供扇形半径计算预留
   static constexpr float kBelowH = kBarH + 4.f + kReadoutH + 2.f;
   static constexpr float kBalRangeDb = 24.f; // 平衡量程 ±24 dB
@@ -359,7 +359,7 @@ private:
     g.PathFill(IPattern(c));
   }
 
-  // 场内标注: L/R 在 ±45° 射线内侧，Anti Phase 在 ±90° 基线两端，dB 刻度沿中轴
+  // 场内标注: L/R 水印字居 ±15°~±45° 扇区最外圈 (仿 BandPass 频谱侧标样式), Anti Phase 在 ±90° 基线两端，dB 刻度沿中轴
   void DrawTicks(IGraphics &g, const IRECT &cv, const IRECT &skipRect) {
     float cx, cy, rMax;
     FanGeom(cv, cx, cy, rMax);
@@ -370,10 +370,24 @@ private:
       g.DrawText(it, txt, box);
     };
 
-    const float d45 = (rMax - 14.f) / (float)std::sqrt(2.f);
-    const IText lrT(14, COL_700(), kFontRegular, EAlign::Center, EVAlign::Middle);
-    draw(lrT, "L", IRECT(cx - d45 - 18.f, cy - d45 - 9.f, cx - d45 + 18.f, cy - d45 + 9.f));
-    draw(lrT, "R", IRECT(cx + d45 - 18.f, cy - d45 - 9.f, cx + d45 + 18.f, cy - d45 + 9.f));
+    // L/R 方向字: 居扇区角中值 ±30°、最外圈内侧, 字面沿半径朝外旋转 (旋转轴过圆心)
+    constexpr float kLrDeg = 30.f;   // 扇区 −45°~−15° / 15°~45° 的角中值
+    constexpr float kLrSize = 40.f;  // 同 BandPass 侧标字号
+    constexpr float kLrPad = 26.f;   // 字心到最外圈的距离 (字高一半 + 余量)
+    const float thRad = kLrDeg * (float)M_PI / 180.f;
+    const float rLbl = rMax - kLrPad;
+    for (int side = 0; side < 2; ++side) {
+      const bool isL = (side == 0);
+      const float th = (isL ? -1.f : 1.f) * thRad;
+      const IText t(kLrSize, COL_500(), kFontBold, EAlign::Center, EVAlign::Middle,
+                    th * 180.f / (float)M_PI); // IText 正角为顺时针(屏幕 y 向下): 字面朝外旋转 θ
+      const float px = cx + std::sin(th) * rLbl;
+      const float py = cy - std::cos(th) * rLbl;
+      IRECT mr;
+      g.MeasureText(t, isL ? "L" : "R", mr);
+      draw(t, isL ? "L" : "R",
+           IRECT(px - mr.W() * 0.5f, py - mr.H() * 0.5f, px + mr.W() * 0.5f, py + mr.H() * 0.5f));
+    }
 
     const IText apT(14, COL_700(), kFontRegular, EAlign::Center, EVAlign::Middle);
     const float ax = rMax - 50.f;
@@ -483,25 +497,29 @@ private:
     g.DrawText(lT, "L", IRECT(x0 + 5.f, trackT, x0 + 25.f, trackB));
     g.DrawText(rT, "R", IRECT(x1 - 25.f, trackT, x1 - 5.f, trackB));
 
-    // 两角读数: 左 CORR (状态色), 右 BAL
-    char buf[24];
+    // 两角读数: 左 CORRELATION (状态色), 右 BALANCE; 全称随界面语言切换
+    const char *corrLbl = orm::Tr(orm::kTxtCorr, orm::UILang());
+    const char *balLbl = orm::Tr(orm::kTxtBalance, orm::UILang());
+    char buf[48];
     if (mCorrValid) {
-      std::snprintf(buf, sizeof(buf), "CORR  %+.2f", mCorrDisp);
+      std::snprintf(buf, sizeof(buf), "%s  %+.2f", corrLbl, mCorrDisp);
       g.DrawText(IText(16, CorrColor(std::clamp(mCorrDisp, -1.f, 1.f)), kFontSemiBold, EAlign::Near,
                        EVAlign::Middle),
-                 buf, IRECT(x0, roT, x0 + 110.f, roB));
+                 buf, IRECT(x0, roT, x0 + 150.f, roB));
       if (std::fabs(mBalDisp) < 0.1f)
-        std::snprintf(buf, sizeof(buf), "BAL  C");
+        std::snprintf(buf, sizeof(buf), "%s  C", balLbl);
       else
-        std::snprintf(buf, sizeof(buf), "BAL  %s %.1f dB", (mBalDisp > 0.f) ? "R" : "L",
+        std::snprintf(buf, sizeof(buf), "%s  %s %.1f dB", balLbl, (mBalDisp > 0.f) ? "R" : "L",
                       std::fabs(mBalDisp));
       g.DrawText(IText(16, COL_900(), kFontSemiBold, EAlign::Far, EVAlign::Middle), buf,
-                 IRECT(x1 - 130.f, roT, x1, roB));
+                 IRECT(x1 - 160.f, roT, x1, roB));
     } else {
       const IText dimT(16, COL_500(), kFontSemiBold, EAlign::Near, EVAlign::Middle);
       const IText dimTF(16, COL_500(), kFontSemiBold, EAlign::Far, EVAlign::Middle);
-      g.DrawText(dimT, "CORR  —", IRECT(x0, roT, x0 + 110.f, roB));
-      g.DrawText(dimTF, "BAL  —", IRECT(x1 - 130.f, roT, x1, roB));
+      std::snprintf(buf, sizeof(buf), "%s  —", corrLbl);
+      g.DrawText(dimT, buf, IRECT(x0, roT, x0 + 150.f, roB));
+      std::snprintf(buf, sizeof(buf), "%s  —", balLbl);
+      g.DrawText(dimTF, buf, IRECT(x1 - 160.f, roT, x1, roB));
     }
   }
 
