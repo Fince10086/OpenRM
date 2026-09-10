@@ -35,6 +35,14 @@ function(openrm_add_plugin NAME)
     set(_p_FONT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/resources/fonts")
   endif()
 
+  # 三插件共用头 (plugins/common)
+  set(_orm_common_dir "${CMAKE_CURRENT_SOURCE_DIR}/../common")
+  list(APPEND _p_SOURCES
+    "${_orm_common_dir}/Theme.h"
+    "${_orm_common_dir}/controls/SectionTitleControl.h"
+    "${_orm_common_dir}/controls/ThemeCornerResizer.h"
+  )
+
   # 字体展开为完整路径, 经 RESOURCES 交给 iPlug2:
   #   Windows: 嵌入 dll 的 TTF 资源 (LocateResource 优先读取, 无需拷贝文件)
   #   macOS:   进 bundle Contents/Resources

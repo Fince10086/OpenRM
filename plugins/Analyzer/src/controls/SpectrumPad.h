@@ -617,7 +617,7 @@ private:
         const auto &fc = freqCells[i];
         const float xR = (i + 1 < nCols) ? fc.xR + 1.f : edge.R;
         const int v = (int)std::lround((fc.vFreq + vDb) * 0.5f);
-        g.FillRect(WarmGray(v), IRECT(fc.xL, yHigh, xR, yLow));
+        g.FillRect(GridGray(v), IRECT(fc.xL, yHigh, xR, yLow));
       }
     }
   }

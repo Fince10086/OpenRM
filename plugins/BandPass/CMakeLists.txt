@@ -25,12 +25,10 @@ openrm_add_plugin(${PROJECT_NAME}
     src/dsp/BandPassCore.h
     src/dsp/SpectrumSTFT.h
     src/controls/UiUtils.h
-    src/controls/ThemeCornerResizer.h
     src/controls/FlatButton.h
     src/controls/ORMSlider.h
     src/controls/GainSlider.h
     src/controls/PresetFadeSlider.h
-    src/controls/SectionTitleControl.h
     src/controls/RandomColorPickerControl.h
     src/controls/SettingsPanelControl.h
     src/controls/FilterNodePad.h

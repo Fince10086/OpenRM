@@ -4,10 +4,10 @@
 #include "ICornerResizerControl.h"
 #include "Theme.h"
 #include "controls/UiUtils.h"
-#include "controls/ThemeCornerResizer.h"
+#include "../../common/controls/ThemeCornerResizer.h"
 #include "controls/FlatButton.h"
 #include "controls/ORMSlider.h"
-#include "controls/SectionTitleControl.h"
+#include "../../common/controls/SectionTitleControl.h"
 #include "controls/SettingsPanelControl.h"
 #include "controls/PianoKeyboardControl.h"
 #include "controls/PhraseEditorControl.h"
@@ -1014,23 +1014,31 @@ void ORMNarrator::SaveSettingsToDisk() {
 #if IPLUG_DSP
 void ORMNarrator::ProcessMidiMsg(const IMidiMsg &msg) {
   const IMidiMsg::EStatusMsg status = msg.StatusMsg();
+  bool isNoteOn = false;
   if (status == IMidiMsg::kNoteOn && msg.Velocity() > 0)
-    mMidiQueue.push_back({msg.mOffset, true, msg.NoteNumber(), msg.Velocity()});
+    isNoteOn = true;
   else if (status == IMidiMsg::kNoteOff ||
            (status == IMidiMsg::kNoteOn && msg.Velocity() == 0))
-    mMidiQueue.push_back({msg.mOffset, false, msg.NoteNumber(), 0});
+    isNoteOn = false;
+  else
+    return;
+
+  if (mMidiCount >= kMaxMidiPerBlock)
+    return;
+  mMidiQueue[(size_t) mMidiCount++] = {msg.mOffset, isNoteOn, msg.NoteNumber(),
+                                       isNoteOn ? msg.Velocity() : 0};
 }
 
 void ORMNarrator::ProcessBlock(sample **inputs, sample **outputs, int nFrames) {
   nFrames = std::min(nFrames, kMaxBlock);
   if (nFrames <= 0) {
-    mMidiQueue.clear();
+    mMidiCount = 0;
     return;
   }
 
   const int nOuts = NOutChansConnected();
   if (nOuts <= 0) {
-    mMidiQueue.clear();
+    mMidiCount = 0;
     return;
   }
   sample *main = outputs[0];
@@ -1038,10 +1046,11 @@ void ORMNarrator::ProcessBlock(sample **inputs, sample **outputs, int nFrames) {
 
   // MIDI 事件按采样偏移分段处理
   int pos = 0;
-  if (!mMidiQueue.empty()) {
-    std::sort(mMidiQueue.begin(), mMidiQueue.end(),
+  if (mMidiCount > 0) {
+    std::sort(mMidiQueue.begin(), mMidiQueue.begin() + mMidiCount,
               [](const MidiEvent &a, const MidiEvent &b) { return a.offset < b.offset; });
-    for (const MidiEvent &ev : mMidiQueue) {
+    for (int i = 0; i < mMidiCount; ++i) {
+      const MidiEvent &ev = mMidiQueue[(size_t) i];
       const int off = std::clamp(ev.offset, pos, nFrames);
       RenderSegment(main, pos, off);
       if (ev.isNoteOn)
@@ -1050,7 +1059,7 @@ void ORMNarrator::ProcessBlock(sample **inputs, sample **outputs, int nFrames) {
         ReleaseVoice(ev.note);
       pos = off;
     }
-    mMidiQueue.clear();
+    mMidiCount = 0;
   }
   RenderSegment(main, pos, nFrames);
 

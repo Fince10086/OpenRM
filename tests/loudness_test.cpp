@@ -96,7 +96,27 @@ int main() {
     LoudnessMeter::Snapshot sM;
     lmMono.Store(sM);
     check("1c: mono calibration: 1kHz 0dBFS = -3.01 LUFS", std::fabs(sM.integrated + 3.01) < 0.15);
-    check("1d: I valid, LRA suppressed before 60s", s.iValid && !s.lraValid);
+    check("1d: I valid after 10s", s.iValid);
+  }
+
+  // ── 1e/1f. LRA 有效位阈值 ────────────────────────────────────────────────
+  // EBU 3342 的统计参考要求 ≥60s, 本引擎按插件惯例提前: mHops >= kLraMinHops
+  // (=30 hop = 3s) 即置 lraValid。此处锁定该阈值的两侧, 防止回归。
+  {
+    LoudnessMeter lmBefore;
+    lmBefore.SetSampleRate(kFs);
+    ProcessSine(lmBefore, 2.0, -20.0, 1000.0); // 2s < 3s
+    LoudnessMeter::Snapshot sBefore;
+    lmBefore.Store(sBefore);
+    check("1e: LRA not valid before 3s", sBefore.iValid && !sBefore.lraValid);
+
+    LoudnessMeter lmAfter;
+    lmAfter.SetSampleRate(kFs);
+    ProcessSine(lmAfter, 10.0, -20.0, 1000.0); // 10s > 3s (仍远早于 60s)
+    LoudnessMeter::Snapshot sAfter;
+    lmAfter.Store(sAfter);
+    check("1f: LRA valid from 3s (plugin convention, earlier than 60s reference)",
+          sAfter.iValid && sAfter.lraValid);
   }
 
   // ── 2. 线性: -8 与 -20 dBFS 差 12 LU ──────────────────────────────────────

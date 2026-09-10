@@ -108,6 +108,8 @@ private:
   std::array<Voice, kMaxVoices> mVoices;
   int mNextVoice = 0;
 
+  // MIDI 事件用定长数组: ProcessMidiMsg 在音频线程被调用, vector 扩容会分配内存
+  static constexpr int kMaxMidiPerBlock = 256;
   struct MidiEvent
   {
     int offset;
@@ -115,7 +117,8 @@ private:
     int note;
     int velocity;
   };
-  std::vector<MidiEvent> mMidiQueue;
+  std::array<MidiEvent, kMaxMidiPerBlock> mMidiQueue{};
+  int mMidiCount = 0;
   std::vector<float> mPhraseBuffer;
 
   // UI 侧每音保持标记: 屏幕键盘写 1, 试听按钮写 0 (预览不参与 Loop)

@@ -440,7 +440,7 @@ private:
       const float yT0 = cy - bnds[r] * zoom * halfH, yT1 = cy - bnds[r + 1] * zoom * halfH;
       const float yB0 = cy + bnds[r + 1] * zoom * halfH, yB1 = cy + bnds[r] * zoom * halfH;
       for (int c = 0; c + 1 < nCols; ++c) {
-        const IColor cell = WarmGray((int)std::lround(0.5f * (kHCol[c] + kVCol[r])));
+        const IColor cell = GridGray((int)std::lround(0.5f * (kHCol[c] + kVCol[r])));
         g.FillRect(cell, IRECT(xs[c + 1], yT0, xs[c], yT1));
         g.FillRect(cell, IRECT(xs[c + 1], yB0, xs[c], yB1));
       }

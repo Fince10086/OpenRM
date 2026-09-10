@@ -59,10 +59,8 @@ openrm_add_plugin(${PROJECT_NAME}
     src/dsp/DectalkEngine.cpp
     src/dsp/VoiceRenderer.h
     src/controls/UiUtils.h
-    src/controls/ThemeCornerResizer.h
     src/controls/FlatButton.h
     src/controls/ORMSlider.h
-    src/controls/SectionTitleControl.h
     src/controls/SettingsPanelControl.h
     src/controls/PianoKeyboardControl.h
     src/controls/PhraseEditorControl.h

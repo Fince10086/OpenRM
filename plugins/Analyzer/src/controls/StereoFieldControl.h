@@ -323,7 +323,7 @@ private:
         const float aa = std::fabs(a0 + 7.5f * kDeg);
         const float vAng = (aa <= 15.f * kDeg) ? 230.f : (aa <= 45.f * kDeg) ? 215.f : 195.f;
         const int v = (int)std::lround(0.5f * (vAng + vDb));
-        FillSector(g, cx, cy, rLo, rHi, a0, a1, WarmGray(v));
+        FillSector(g, cx, cy, rLo, rHi, a0, a1, GridGray(v));
       }
     }
   }
