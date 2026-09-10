@@ -11,7 +11,7 @@
 //
 // 附加: 峰值保持 (hold, 时长可调, 超时后 20 dB/s 衰减) 与过载锁存 (over latch, 手动清除)。
 
-#include "FastMath.h"
+#include "../../../common/dsp/FastMath.h"
 
 #include <algorithm>
 #include <array>

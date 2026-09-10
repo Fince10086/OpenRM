@@ -10,6 +10,8 @@ endif()
 file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/plugins/BandPass/config.h" _orm_version REGEX "PLUG_VERSION_STR \"[0-9.]+\"")
 string(REGEX MATCH "\"([0-9.]+)\"" _orm_version_match "${_orm_version}")
 project(OpenRM VERSION ${CMAKE_MATCH_1})
+configure_file(installer/ORM-version.iss.in
+               "${CMAKE_BINARY_DIR}/installer/ORM-version.iss" @ONLY)
 
 # macOS 最低系统版本: 11.0
 

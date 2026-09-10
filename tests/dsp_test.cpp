@@ -11,7 +11,7 @@
 // 构建:  c++ -std=c++17 -O2 -o dsp_test dsp_test.cpp
 #include "../plugins/BandPass/src/dsp/BandPassCore.h"
 #include "../plugins/BandPass/config.h"
-#include "../plugins/Analyzer/src/dsp/FastMath.h"
+#include "../plugins/common/dsp/FastMath.h"
 #include <cstdio>
 #include <cmath>
 #include <vector>

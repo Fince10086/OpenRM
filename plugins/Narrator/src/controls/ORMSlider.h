@@ -6,8 +6,6 @@
 #include "UiUtils.h"
 
 #include <algorithm>
-#include <cmath>
-#include <cstdio>
 #include <functional>
 #include <utility>
 
@@ -41,31 +39,8 @@ public:
     SetDirty(false);
   }
 
-  struct RandomHooks {
-    std::function<void()> randomToggle;
-    std::function<void(int colorIdx)> randomSetColor;
-  };
-
-  void SetHeaderSwatchColor(int colorIdx) {
-    mHeaderSwatchColor = colorIdx;
-    SetDirty(false);
-  }
   void SetHeaderFont(const char *font) {
     mHeaderFont = font;
-    SetDirty(false);
-  }
-  void SetRandomMapHooks(const RandomHooks &h) { mRandomHooks = h; }
-  void SetRandomMapState(bool on, int colorIdx) {
-    mRandomMapOn = on;
-    mRandomMapColor = colorIdx;
-    UpdateRandomGhost();
-    SetDirty(false);
-  }
-  void SetRandomDeltaMix(float d) {
-    if (std::fabs(d - mRandomMixDelta) < 1e-4f)
-      return;
-    mRandomMixDelta = d;
-    UpdateRandomGhost();
     SetDirty(false);
   }
 
@@ -98,13 +73,6 @@ public:
   void OnMouseDown(float x, float y, const IMouseMod &mod) override {
     if (mGhost)
       return;
-    if (mRandomHooks.randomToggle && mRandomSwatchRect.Contains(x, y)) {
-      if (mod.R)
-        OpenRandomColorMenu();
-      else
-        mRandomHooks.randomToggle();
-      return;
-    }
     if (mod.R)
       return;
     if (mod.L && !mod.A && ValueRect().Contains(x, y)) {
@@ -134,18 +102,6 @@ public:
   void DrawHandle(IGraphics &g, const IRECT &bounds) override {
     if (mGhost)
       return;
-    if (mRandomMapOn && mRandomGhostNorm >= 0.f) {
-      const IRECT tb = mTrackBounds;
-      if (mDirection == EDirection::Horizontal) {
-        const float x = std::clamp(tb.L + mRandomGhostNorm * tb.W(), tb.L, tb.R);
-        g.FillCircle(COL_100(), x, tb.MH(), HANDLE_R + HANDLE_RING);
-        g.FillCircle(RandomColorGhost(mRandomMapColor), x, tb.MH(), HANDLE_R);
-      } else {
-        const float y = std::clamp(tb.B - mRandomGhostNorm * tb.H(), tb.T, tb.B);
-        g.FillCircle(COL_100(), tb.MW(), y, HANDLE_R + HANDLE_RING);
-        g.FillCircle(RandomColorGhost(mRandomMapColor), tb.MW(), y, HANDLE_R);
-      }
-    }
     const float cx = bounds.MW(), cy = bounds.MH();
     DrawKnob(g, cx, cy);
   }
@@ -153,17 +109,6 @@ public:
 protected:
   static constexpr float kHeaderH = 26.f;
   static constexpr float kHeaderW = 26.f;
-
-  void UpdateRandomGhost() {
-    const IParam *p = GetParam();
-    if (!mRandomMapOn || !p) {
-      mRandomGhostNorm = -1.f;
-      return;
-    }
-    const double v = std::clamp(p->Value() + GhostDelta(), p->GetMin(), p->GetMax());
-    mRandomGhostNorm = (float)p->ToNormalized(v);
-  }
-  virtual double GhostDelta() const { return (double)mRandomMixDelta; }
 
   virtual IRECT ValueRect() const {
     if (mDirection == EDirection::Horizontal)
@@ -189,24 +134,10 @@ protected:
 
     if (rot == 0.f) {
       const IRECT hdr(mRECT.L, mRECT.T, mRECT.R, mRECT.T + kHeaderH);
-      float labelL = hdr.L;
-      if (mHeaderSwatchColor >= 0) {
-        g.FillRect(RandomColor(mHeaderSwatchColor), IRECT(hdr.L + 1.f, hdr.MH() - AG_SWATCH * 0.5f,
-                                                          hdr.L + 1.f + AG_SWATCH, hdr.MH() + AG_SWATCH * 0.5f));
-        labelL = hdr.L + AG_SWATCH + AG_SWATCH_GAP;
-      }
-      float valueR = hdr.R;
-      if (mRandomHooks.randomToggle) {
-        mRandomSwatchRect =
-            IRECT(hdr.R - 1.f - AG_SWATCH, hdr.MH() - AG_SWATCH * 0.5f, hdr.R - 1.f, hdr.MH() + AG_SWATCH * 0.5f);
-        g.FillRect(mRandomMapOn ? RandomColor(mRandomMapColor) : RandomColorDim(mRandomMapColor),
-                   mRandomSwatchRect);
-        valueR = mRandomSwatchRect.L - 6.f;
-      }
       g.DrawText(IText(20, COL_900(), mHeaderFont, EAlign::Near, EVAlign::Middle), mHeaderLabel.Get(),
-                 IRECT(labelL, hdr.T, hdr.MW(), hdr.B));
+                 IRECT(hdr.L, hdr.T, hdr.MW(), hdr.B));
       g.DrawText(IText(20, COL_700(), kFontRegular, EAlign::Far, EVAlign::Middle), ds.Get(),
-                 IRECT(hdr.MW(), hdr.T, valueR, hdr.B));
+                 IRECT(hdr.MW(), hdr.T, hdr.R, hdr.B));
     } else {
       const IRECT hdr(mRECT.L, mRECT.T, mRECT.L + kHeaderW, mRECT.B);
       g.DrawText(IText(20, COL_900(), kFontSemiBold, EAlign::Near, EVAlign::Bottom, rot), mHeaderLabel.Get(), hdr);
@@ -214,27 +145,10 @@ protected:
     }
   }
 
-  void OpenRandomColorMenu() {
-    if (!GetUI())
-      return;
-    OpenColorPopup(*GetUI(), *this, mRandomMenu, mRandomSwatchRect, mRandomMapColor, [this](int idx) {
-      if (mRandomHooks.randomSetColor)
-        mRandomHooks.randomSetColor(idx);
-    });
-  }
-
   WDL_String mHeaderLabel;
   const char *mHeaderFont = kFontSemiBold;
   std::function<void(WDL_String &, const IParam *)> mValueFormatter;
   bool mGhost = false;
-  int mHeaderSwatchColor = -1;
-  bool mRandomMapOn = false;
-  int mRandomMapColor = 0;
-  IRECT mRandomSwatchRect;
-  IPopupMenu mRandomMenu;
-  RandomHooks mRandomHooks;
-  float mRandomGhostNorm = -1.f;
-  float mRandomMixDelta = 0.f;
 };
 
 END_IGRAPHICS_NAMESPACE

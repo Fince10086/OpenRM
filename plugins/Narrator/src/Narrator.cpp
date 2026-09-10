@@ -844,6 +844,7 @@ void ORMNarrator::ToggleSettingsPanel() {
   if (mSettingsPanel)
     mSettingsPanel->SetVisible(mSettingsPanel->IsHidden());
 }
+#endif
 
 // 参数快照撤销/重做
 ParamSnapshot ORMNarrator::Snapshot() const {
@@ -866,10 +867,12 @@ void ORMNarrator::ApplySnapshot(const ParamSnapshot &s) {
 }
 
 void ORMNarrator::RefreshAfterEdit() {
+#if IPLUG_EDITOR
   if (GetUI()) {
     SendCurrentParamValuesFromDelegate();
     GetUI()->SetAllControlsDirty();
   }
+#endif
   MarkStateStable();
 }
 
@@ -920,6 +923,7 @@ void ORMNarrator::OnParamChangeUI(int paramIdx, EParamSource source) {
 }
 
 void ORMNarrator::OnIdle() {
+#if IPLUG_EDITOR
   if (!GetUI())
     return;
 
@@ -978,8 +982,8 @@ void ORMNarrator::OnIdle() {
     mDectalkVoiceSegment->SetActive((int) GetParam(kDectalkVoice)->Int());
   if (mMapSegment)
     mMapSegment->SetActive((int) GetParam(kMapMode)->Int());
-}
 #endif
+}
 
 void ORMNarrator::OnParentWindowResize(int width, int height) {
   if (auto *pGraphics = GetUI()) {

@@ -63,6 +63,7 @@ function(openrm_add_plugin NAME)
   set(_orm_common_dir "${CMAKE_CURRENT_SOURCE_DIR}/../common")
   list(APPEND _p_SOURCES
     "${_orm_common_dir}/Theme.h"
+    "${_orm_common_dir}/dsp/FastMath.h"
     "${_orm_common_dir}/controls/SectionTitleControl.h"
     "${_orm_common_dir}/controls/ThemeCornerResizer.h"
   )

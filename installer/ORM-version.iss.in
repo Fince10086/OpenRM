@@ -1,0 +1,6 @@
+; 由 CMake 生成, 请勿手工编辑。
+; 来源: plugins/BandPass/config.h 的 PLUG_VERSION_STR
+; 生成者: 根 CMakeLists.txt (configure_file)
+; 生成位置: <build>/installer/ORM-version.iss
+; 使用: installer/ORMBandPass.iss 通过 #include 引入本文件。
+#define MyAppVersion "@PROJECT_VERSION@"

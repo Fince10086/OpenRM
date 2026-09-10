@@ -6,7 +6,7 @@
 #include "ISender.h"
 #include "UiUtils.h"
 #include "../Theme.h"
-#include "../dsp/FastMath.h"
+#include "../../../common/dsp/FastMath.h"
 
 #include <algorithm>
 #include <array>

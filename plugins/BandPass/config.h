@@ -1,6 +1,6 @@
 #define PLUG_NAME "ORM BandPass"
 #define PLUG_MFR "OpenRM"
-#define PLUG_VERSION_HEX 0x00000400
+#define PLUG_VERSION_HEX 0x00000501
 #define PLUG_VERSION_STR "0.5.1"
 #define PLUG_UNIQUE_ID 'ORMB'
 #define PLUG_MFR_ID 'OpRM'

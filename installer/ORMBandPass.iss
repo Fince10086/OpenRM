@@ -1,10 +1,12 @@
 ; ORMBandPass Windows 安装器 (Inno Setup 6)
 ; 用法: 用 Inno Setup Compiler 打开本文件 -> Compile, 或命令行:
 ;   ISCC.exe installer\ORMBandPass.iss
-; 注意: 版本号需与 plugins/BandPass/config.h (PLUG_VERSION_STR) 同步。
+; 版本号不在本文件里手写: 由 CMake 从 plugins/BandPass/config.h (PLUG_VERSION_STR)
+; 生成 build\installer\ORM-version.iss, 再由下方 #include 引入。
+; 因此首次编译前需先执行一次 cmake 配置 (构建产物也必须已存在)。
 
 #define MyAppName "ORMBandPass"
-#define MyAppVersion "0.5.1"
+#include "..\build\installer\ORM-version.iss"
 #define MyAppExe "ORMBandPass-app.exe"
 
 [Setup]
