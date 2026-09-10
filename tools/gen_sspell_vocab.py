@@ -3,7 +3,7 @@
 
 生成 plugins/Narrator/src/dsp/tms/VocabSspell.h (orm::tms::sspell::kWords)。
 ROM 索引结构 (逆向自 BrerDawg/ti_lpc 的 build_rom_word_addr_list, 无许可证;
-数据本体为停产玩具的掩膜 ROM, 许可决策见 docs/Narrator-Design.md §2):
+数据本体为停产玩具的掩膜 ROM, 许可细节见 THIRD_PARTY_NOTICES.md):
   - vsm = rom0(0x0000-0x3FFF) + rom1(0x4000-0x7FFF) 拼接, 指针 >=0x4000 取第二盘
   - ROM 前 16 字节: 4 个词表 (第 k 项: vsm[k] = 词表字节数, 4+2k 起 2 字节 = 词表地址)
   - 词表项: 2 字节 = 词描述符地址 (word_ptr)
@@ -173,7 +173,7 @@ def header(words):
         "",
         "// TMS5110 (TMC0281, 1978 Speak & Spell) 完整词表 — 自动生成 (tools/gen_sspell_vocab.py).",
         "// 提取自 MAME snspell romset (tmc0351n2l.vsm + tmc0352n2l.vsm, 停产玩具掩膜 ROM,",
-        "// 许可决策见 docs/Narrator-Design.md §2)。索引结构逆向自 BrerDawg/ti_lpc 工具,",
+        "// 许可细节见 THIRD_PARTY_NOTICES.md)。索引结构逆向自 BrerDawg/ti_lpc 工具,",
         "// 位序与参数表见 Tms5110Engine.cpp。",
         "",
         '#include "TmsWords.h"',

@@ -1,0 +1,28 @@
+OpenRM Tools — 许可范围声明
+Copyright (c) 2026 Fince
+
+本仓库采用不同目录适用不同许可证的分层许可。
+
+1. 原创代码 —— MIT
+  · plugins/common/                      三插件共用的主题与控件
+  · plugins/BandPass/                    BandPass 插件
+  · plugins/Analyzer/                    Analyzer 插件
+  · plugins/Narrator/  中 src/dsp/ 以外的一切（Narrator.cpp、控件、参数、
+                                        字符串、主题等）
+  · tests/dsp_test.cpp  tests/loudness_test.cpp
+  · tools/  scripts/  cmake/
+  · 根 CMakeLists.txt 与各插件 CMakeLists.txt
+
+2. Narrator 语音引擎 —— GPL-3.0-or-later
+  · plugins/Narrator/src/dsp/
+  · tests/narrator_test.cpp
+
+3. 第三方组件
+
+    iPlug2 / WDL ................................. Zlib
+    Steinberg VST 3 SDK .......................... MIT
+    MAME ......................................... BSD-3-Clause
+    TMS5220 算法 .................................. GPL
+    GmEsoft SP0256 / CTS256A 算法 ................. GPL-3.0-or-later
+    s-macke/SAM ................................... 无许可证
+    DECtalk 4.x / DECtalkMini ..................... 专有

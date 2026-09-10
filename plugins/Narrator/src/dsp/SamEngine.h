@@ -1,7 +1,8 @@
 // SamEngine.h — SAM (Software Automatic Mouth, 1979/1982) 引擎封装
 //
-// 核心代码: s-macke/SAM (对 SoftVoice SAM 的逆向工程, 无许可证, abandonware;
-// 许可决策见 docs/Narrator-Design.md §2, 本插件以 GPL 分发)。
+// 核心代码: s-macke/SAM (对 SoftVoice SAM 的逆向工程, 无许可证, abandonware)。
+// Narrator 整体以 GPL-3.0-or-later 分发, 但 SAM 部分未获授权 —— 禁止公开发布,
+// 详见 THIRD_PARTY_NOTICES.md。
 //
 // 本封装把原命令行程序改造成可嵌入音频插件的离线渲染器:
 //   文本(或 SAM 音素串) → 单声道 float 缓冲, 22050 Hz。

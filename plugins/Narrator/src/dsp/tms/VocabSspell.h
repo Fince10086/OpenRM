@@ -2,7 +2,7 @@
 
 // TMS5110 (TMC0281, 1978 Speak & Spell) 完整词表 — 自动生成 (tools/gen_sspell_vocab.py).
 // 提取自 MAME snspell romset (tmc0351n2l.vsm + tmc0352n2l.vsm, 停产玩具掩膜 ROM,
-// 许可决策见 docs/Narrator-Design.md §2)。索引结构逆向自 BrerDawg/ti_lpc 工具,
+// 许可细节见 THIRD_PARTY_NOTICES.md)。索引结构逆向自 BrerDawg/ti_lpc 工具,
 // 位序与参数表见 Tms5110Engine.cpp。
 
 #include "TmsWords.h"

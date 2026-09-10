@@ -23,10 +23,34 @@
 #   2. APPLE: ad-hoc 签名 -> 部署到 ~/Library/Audio/Plug-Ins/... (POST_BUILD);
 #      独立 App 拷字体后部署到 ~/Applications (POST_BUILD, 不加签名)
 #   3. Extras include 目录 (nlohmann/json 等)
+#   4. macOS: 把仓库根的 LICENSE / THIRD_PARTY_NOTICES.md / LICENSES/*.txt
+#      拷进每个产物的 Contents/Resources/Licenses/ (随二进制分发许可声明)
 #
 # 注意: iPlug2.cmake 的 include 与 find_package 必须留在插件 CMakeLists 目录作用域,
 #        (其内部 enable_language(OBJC/OBJCXX) 在函数作用域调用会导致生成阶段缺
 #        CMAKE_OBJCXX_COMPILE_OBJECT 规则)。本函数只负责目标创建与部署样板。
+
+# 生成 "把许可文件拷进 <dest_dir>/Licenses/" 的 add_custom_command 指令序列。
+# dest_dir 传 bundle 的 Contents/Resources; 结果写入 out_var。
+# 许可文件位置固定为仓库根 (插件目录的 ../..), 与字体、签名无关。
+function(_orm_license_copy_cmds dest_dir out_var)
+  set(_orm_root "${CMAKE_CURRENT_SOURCE_DIR}/../..")
+  set(_cmds COMMAND ${CMAKE_COMMAND} -E make_directory "${dest_dir}/Licenses")
+  foreach(_orm_doc LICENSE THIRD_PARTY_NOTICES.md)
+    if(EXISTS "${_orm_root}/${_orm_doc}")
+      list(APPEND _cmds COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${_orm_root}/${_orm_doc}" "${dest_dir}/Licenses/")
+    endif()
+  endforeach()
+  if(EXISTS "${_orm_root}/LICENSES")
+    file(GLOB _orm_texts "${_orm_root}/LICENSES/*.txt")
+    foreach(_orm_text IN LISTS _orm_texts)
+      list(APPEND _cmds COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${_orm_text}" "${dest_dir}/Licenses/")
+    endforeach()
+  endif()
+  set(${out_var} "${_cmds}" PARENT_SCOPE)
+endfunction()
 
 function(openrm_add_plugin NAME)
   cmake_parse_arguments(_p "" "FONT_DIR" "SOURCES;DEFINES;FORMATS;FONTS" ${ARGN})
@@ -80,10 +104,12 @@ function(openrm_add_plugin NAME)
   endif()
 
   # 注意: 字体已通过上方 RESOURCES 参数进入 bundle (macOS) / 嵌入二进制 (Windows)。
-  # 这里在 mac 上重建 Resources 目录并重新拷贝字体, 再执行 ad-hoc 签名 -> 部署,
-  # 保证单目标 (--target ...) 构建时签名步骤也生效。
+  # 这里在 mac 上重建 Resources 目录并重新拷贝字体与许可文件, 再执行 ad-hoc 签名
+  # -> 部署, 保证单目标 (--target ...) 构建时这些步骤也生效。
   find_program(IPLUG2_CODESIGN_EXEC codesign)
-  if(NOT IPLUG2_CODESIGN_EXEC OR NOT _p_FONTS)
+
+  # 许可文件与字体、签名无关, 只要是 macOS 产物就随 bundle 分发
+  if(NOT APPLE)
     return()
   endif()
 
@@ -93,7 +119,7 @@ function(openrm_add_plugin NAME)
     set(_sig_src_v3  "${CMAKE_BINARY_DIR}/out/${NAME}.vst3")
     set(_sig_dst_v3  "$ENV{HOME}/Library/Audio/Plug-Ins/VST3/${NAME}.vst3")
 
-    # AU / VST3: copy fonts -> ad-hoc sign -> redeploy.
+    # AU / VST3: copy fonts + licenses -> ad-hoc sign -> redeploy.
     # Attached as POST_BUILD so single-target (`--target ...`) builds sign too.
     foreach(_sig_tgt ${NAME}-au ${NAME}-vst3)
       if(_sig_tgt MATCHES "-au$")
@@ -107,14 +133,27 @@ function(openrm_add_plugin NAME)
       foreach(_font IN LISTS _p_FONTS)
         list(APPEND _copy_cmds COMMAND ${CMAKE_COMMAND} -E copy "${_p_FONT_DIR}/${_font}" "${_sig_src}/Contents/Resources/")
       endforeach()
+      _orm_license_copy_cmds("${_sig_src}/Contents/Resources" _lic_cmds)
+      # 仅当本插件要重新写入字体时才清空 Resources, 否则会抹掉 iPlug2 经
+      # MACOSX_PACKAGE_LOCATION 放入的其他资源。
+      set(_reset_cmds)
+      if(_p_FONTS)
+        list(APPEND _reset_cmds
+          COMMAND ${CMAKE_COMMAND} -E rm -rf "${_sig_src}/Contents/Resources"
+          COMMAND ${CMAKE_COMMAND} -E make_directory "${_sig_src}/Contents/Resources")
+      endif()
+      set(_sign_cmd)
+      if(IPLUG2_CODESIGN_EXEC)
+        list(APPEND _sign_cmd COMMAND ${IPLUG2_CODESIGN_EXEC} --force --deep --sign - "${_sig_src}")
+      endif()
       add_custom_command(TARGET ${_sig_tgt} POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E rm -rf "${_sig_src}/Contents/Resources"
-        COMMAND ${CMAKE_COMMAND} -E make_directory "${_sig_src}/Contents/Resources"
+        ${_reset_cmds}
         ${_copy_cmds}
-        COMMAND ${IPLUG2_CODESIGN_EXEC} --force --deep --sign - "${_sig_src}"
+        ${_lic_cmds}
+        ${_sign_cmd}
         COMMAND ${CMAKE_COMMAND} -E rm -rf "${_sig_dst}"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${_sig_src}" "${_sig_dst}"
-        COMMENT "Copy fonts + ad-hoc sign + deploy ${_sig_src}"
+        COMMENT "Copy fonts + licenses + ad-hoc sign + deploy ${_sig_src}"
       )
     endforeach()
   endif()
@@ -127,6 +166,7 @@ function(openrm_add_plugin NAME)
     foreach(_font IN LISTS _p_FONTS)
       list(APPEND _copy_cmds COMMAND ${CMAKE_COMMAND} -E copy "${_p_FONT_DIR}/${_font}" "${_sig_app}/Contents/Resources/")
     endforeach()
+    _orm_license_copy_cmds("${_sig_app}/Contents/Resources" _lic_cmds)
     # iPlug2 的 bundle 资源 (主菜单 nib / 图标 icns) 走 MACOSX_PACKAGE_LOCATION
     # 复制, 在 Makefile 生成器上这些复制发生在 POST_BUILD 之后, 且本步骤会
     # rm -rf 整个 Resources 目录, 因此必须在部署前从源文件补拷 nib/icns,
@@ -145,7 +185,7 @@ function(openrm_add_plugin NAME)
     if(EXISTS "${_app_icns}")
       list(APPEND _app_extra_res_cmds COMMAND ${CMAKE_COMMAND} -E copy "${_app_icns}" "${_sig_app}/Contents/Resources/")
     endif()
-    # 拷字体 -> 部署到用户 Applications。挂 POST_BUILD 保证 `--target ...-app`
+    # 拷字体 + 许可 -> 部署到用户 Applications。挂 POST_BUILD 保证 `--target ...-app`
     # 单目标构建时也生效 (与上方 AU / VST3 一致)。不做 ad-hoc 签名,
     # 与文件头部 "独立 App 链接时不加 ad-hoc 签名" 的约定保持一致。
     add_custom_command(TARGET ${NAME}-app POST_BUILD
@@ -153,15 +193,17 @@ function(openrm_add_plugin NAME)
       COMMAND ${CMAKE_COMMAND} -E make_directory "${_sig_app}/Contents/Resources"
       ${_copy_cmds}
       ${_app_extra_res_cmds}
+      ${_lic_cmds}
       COMMAND ${CMAKE_COMMAND} -E rm -rf "${_app_dst}"
       COMMAND ${CMAKE_COMMAND} -E copy_directory "${_sig_app}" "${_app_dst}"
-      COMMENT "Copy fonts + deploy ${_sig_app} -> ${_app_dst}"
+      COMMENT "Copy fonts + licenses + deploy ${_sig_app} -> ${_app_dst}"
     )
     add_custom_target(${NAME}-app-sign ALL
       COMMAND ${CMAKE_COMMAND} -E make_directory "${_sig_app}/Contents/Resources"
       ${_copy_cmds}
+      ${_lic_cmds}
       DEPENDS ${NAME}-app
-      COMMENT "Copy fonts ${_sig_app}"
+      COMMENT "Copy fonts + licenses ${_sig_app}"
     )
   endif()
 endfunction()

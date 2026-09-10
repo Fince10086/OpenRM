@@ -6,7 +6,7 @@ Open Realtime Music Tools （开源实时音乐工具），启发自 GRM Tools�
 |---|---|---|
 | BandPass | 效果器 | 双通道带通/带阻，启自 GRM Tools BandPass |
 | Analyzer | 分析器 | 频谱/响度/立体声场测量 |
-| Narrator | 乐器 | 复古 TTS 语音合成器（MIDI 触发说话）。引擎：SAM 1979/82、TMS5220、TMS5110、TSI S14001A、SP0256-AL2、DECtalk 4.x；**GPL 分发** |
+| Narrator | 乐器 | 复古 TTS 语音合成器（MIDI 触发说话）。引擎：SAM 1979/82、TMS5220、TMS5110、TSI S14001A、SP0256-AL2、DECtalk 4.x |
 
 ## 构建
 
@@ -44,18 +44,28 @@ sudo xattr -r -d com.apple.quarantine /Applications/ORMBandPass.app
 ```
 （或替换为 App 所在目录）
 
+## 许可
+
+本仓库采用分层许可，许可证全文见 `LICENSE` 与 `LICENSES/`。
+
 ## 参考与致谢
 
 本项目构建过程中使用和借鉴了以下开源项目与文献：
 
-### 代码复用
+### 第三方组件
 
 | 项目 | 许可 | 用途 |
 |---|---|---|
-| [iPlug2](https://github.com/iPlug2/iPlug2) | MIT | 插件框架（BandPass / Analyzer / 公共 UI） |
+| [iPlug2](https://github.com/iPlug2/iPlug2)（含 WDL） | Zlib | 插件框架、图形、各格式封装 |
+| Steinberg VST 3 SDK（≥ 3.8） | MIT | VST3 接口 |
+| [MAME](https://github.com/mamedev/mame) sound 设备实现 | BSD-3-Clause | TMS5110 / S14001A / SP0256 状态机与参数表 |
+| [Talkie](https://github.com/ArminJo/Talkie) | GPL | TMS5220 LPC 算法与量化表 |
+| [GmEsoft SP0256_CTS256A-AL2](https://github.com/GmEsoft/SP0256_CTS256A-AL2) | GPL-3.0-or-later | CTS256A 控制器 |
+| [nlohmann/json](https://github.com/nlohmann/json) 3.12.0 | MIT | 预设 / 设置文件读写 |
 | [s-macke/SAM](https://github.com/s-macke/SAM) | 无许可证 | SAM 内核 |
-| [MAME](https://github.com/mamedev/mame) | GPLv2+ | TMS5220 / TMS5110 / S14001A 合成参数 |
-| [DECtalkMini / DECtalk 4.x](https://github.com/dectalk/DECtalkMini) |  abandonware | DECtalk 4.x |
+| [DECtalkMini / DECtalk 4.x](https://github.com/dectalk/DECtalkMini) | 废弃 | DECtalk 4.x 内核 |
+| [Outfit](https://github.com/Outfitio/Outfit-Fonts) | OFL-1.1 | 界面西文字体 |
+| OPPO Sans 4.0 | 专有（免费使用） | 界面中文字体 |
 
 ### 算法参考
 

@@ -1,7 +1,7 @@
 // DectalkEngine.h — DECtalk 4.x (DTC01 软件版) 引擎封装
 //
 // 核心代码: dectalk/ 目录 (DECtalkMini 移植, 原 DECtalk 4.x 源码; 来源与
-// 许可说明见 dectalk/README.md 与 docs/Narrator-Design.md §1)。
+// 许可说明见 dectalk/README.md 与 THIRD_PARTY_NOTICES.md)。
 //
 // 本封装把嵌入式 TTS API (epsonapi.h 的 TextToSpeech*) 改造成可嵌入音频插件
 // 的离线渲染器: 文本(或 DECtalk 音素串) → 单声道 float 缓冲, 11025 Hz。
